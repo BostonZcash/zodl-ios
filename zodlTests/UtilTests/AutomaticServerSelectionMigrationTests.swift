@@ -38,9 +38,19 @@ final class AutomaticServerSelectionMigrationTests: XCTestCase {
         XCTAssertEqual(runMigration(network: .mainnet, server: config), false)
     }
 
-    func testNonDefaultKnownServerSelectsManual() {
+    func testNonDefaultKnownServerEnablesAutomatic() {
+        // A known server picked from the old server list is stored as non-custom; with no
+        // user-entered custom server, the user migrates to Automatic.
         let config = UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
-        XCTAssertEqual(runMigration(network: .mainnet, server: config), false)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
+    }
+
+    func testLegacyBuiltInServerEnablesAutomatic() {
+        // A legacy built-in host (e.g. *.zcash-infra.com) was never a user-typed custom server: it is
+        // stored non-custom, so it migrates to Automatic even though it no longer appears in the list
+        // and is display-normalized to "custom" elsewhere.
+        let config = UserPreferencesStorage.ServerConfig(host: "lwd1.zcash-infra.com", port: 443, isCustom: false)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
     }
 
     func testRunsOnlyOnce() {
