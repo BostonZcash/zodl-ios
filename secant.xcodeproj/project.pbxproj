@@ -6657,7 +6657,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6686,7 +6686,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6715,7 +6715,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6745,7 +6745,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6784,7 +6784,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6903,7 +6903,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6943,7 +6943,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -6972,7 +6972,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -7001,7 +7001,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.5.3;
+				MARKETING_VERSION = 3.6.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
