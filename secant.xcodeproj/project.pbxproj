@@ -7074,6 +7074,8 @@
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.25.5;
 			};
+			traits = (
+			);
 		};
 		34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -7176,7 +7178,7 @@
 			repositoryURL = "https://github.com/zcash/zcash-swift-wallet-sdk.git";
 			requirement = {
 				kind = revision;
-				revision = 381f2dee38d2db28d7c642dc11ec7e1e83399b55;
+				revision = 9122dea679f7e9933dd0204783e44966d1d7338e;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
