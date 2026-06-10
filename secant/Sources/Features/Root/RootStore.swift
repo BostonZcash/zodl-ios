@@ -131,7 +131,15 @@ struct Root {
             if signWithKeystoneCoordFlowBinding { return true }
             guard let path else { return false }
             switch path {
-            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow, .settings:
+            // The voting flow has no `Path` case of its own — it is presented from inside Settings
+            // (`SettingsStore`'s `@Presents var votingCoordFlow`), so `path` stays `.settings` for its
+            // whole duration. Its broadcasts (submitVoteCommitment / submitDelegation / delegateShares /
+            // getTreeState) must not be interrupted by an automatic server switch, so `.settings` is
+            // classified sensitive to cover them. Do NOT declassify `.settings` while voting lives under
+            // it; if voting ever gets its own `Path` case, move the sensitivity there.
+            case .settings:
+                return true
+            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
