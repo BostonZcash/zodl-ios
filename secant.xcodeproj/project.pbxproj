@@ -4506,6 +4506,7 @@
 			buildConfigurationList = 9E41FFB72CB2814500783CFD /* Build configuration list for PBXNativeTarget "zodl-testnet" */;
 			buildPhases = (
 				9E41FFA12CB2814500783CFD /* Generate PartnerKeys.plist */,
+				3463CACE2FD8549600A2AE50 /* Validate PartnerKeys.plist */,
 				9E41FFA32CB2814500783CFD /* Swiftgen */,
 				9E41FFA42CB2814500783CFD /* SwiftLint */,
 				9E41FFA52CB2814500783CFD /* Sources */,
@@ -4543,6 +4544,7 @@
 			buildConfigurationList = 9E4AB2B42BA1BEE900F5D6DB /* Build configuration list for PBXNativeTarget "zodl-production" */;
 			buildPhases = (
 				9E599F302C3EEE83000E4997 /* Generate PartnerKeys.plist */,
+				3463CACD2FD8548500A2AE50 /* Validate PartnerKeys.plist */,
 				9E4AB29F2BA1BEE900F5D6DB /* Swiftgen */,
 				9E4AB2A02BA1BEE900F5D6DB /* SwiftLint */,
 				9E4AB2A12BA1BEE900F5D6DB /* Sources */,
@@ -4580,6 +4582,7 @@
 			buildConfigurationList = 9E5AB47E2C94777800065483 /* Build configuration list for PBXNativeTarget "zodl-internal" */;
 			buildPhases = (
 				9E5AB4682C94777800065483 /* Generate PartnerKeys.plist */,
+				3463CACC2FD8544800A2AE50 /* Validate PartnerKeys.plist */,
 				9E5AB46A2C94777800065483 /* Swiftgen */,
 				9E5AB46B2C94777800065483 /* SwiftLint */,
 				9E5AB46C2C94777800065483 /* Sources */,
@@ -4812,6 +4815,63 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		3463CACC2FD8544800A2AE50 /* Validate PartnerKeys.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Validate PartnerKeys.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/validate-partner-keys.sh\"\n";
+		};
+		3463CACD2FD8548500A2AE50 /* Validate PartnerKeys.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Validate PartnerKeys.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/validate-partner-keys.sh\"\n";
+		};
+		3463CACE2FD8549600A2AE50 /* Validate PartnerKeys.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Validate PartnerKeys.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/validate-partner-keys.sh\"\n";
+		};
 		9E41FFA12CB2814500783CFD /* Generate PartnerKeys.plist */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -7074,6 +7134,8 @@
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.25.5;
 			};
+			traits = (
+			);
 		};
 		34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */ = {
 			isa = XCRemoteSwiftPackageReference;
