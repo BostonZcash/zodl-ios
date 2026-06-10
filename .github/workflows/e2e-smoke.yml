@@ -231,23 +231,22 @@ jobs:
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
-      # Foundry / cast — needed by Layer-2b for the on-chain USDC
-      # transfer that funds the swap-receive-usdc-to-zec deposit
-      # address. Same setup as the Android workflow. GITHUB_TOKEN
-      # authenticates the action's release-tag fetch so it doesn't
-      # hit the unauthenticated GitHub API rate limit (60/hr/IP).
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # zbar / zbarimg — needed by the wrapper to decode the deposit-
-      # address QR from the maestro screenshot. The on-screen address
-      # text is truncated and iOS pasteboard reads via `simctl pbpaste`
-      # are unreliable on a freshly-booted sim, so the QR is the only
-      # robust surface for the full 0x... address.
-      - name: Install zbar
-        run: brew install zbar
+      # Foundry / cast + zbar / zbarimg — installed via brew. Foundry
+      # provides `cast` for the Layer-2b on-chain USDC transfer; zbar
+      # provides `zbarimg` for QR decode (on-screen deposit-address
+      # text is truncated, and `simctl pbpaste` reads on a cold sim
+      # are unreliable, so the QR is the only robust surface).
+      #
+      # Why not foundry-rs/foundry-toolchain@v1: the action's
+      # foundryup runs an unauthenticated curl against
+      # api.github.com/repos/foundry-rs/foundry/releases/latest, and
+      # the macos-26 runner pool's egress IP regularly hits 403 from
+      # GitHub's rate limit. Even with GITHUB_TOKEN passed via env,
+      # the action's cached SHA doesn't always forward it to the
+      # underlying script. brew installs from its own bottle mirror
+      # with no GitHub API hop, which sidesteps the issue entirely.
+      - name: Install Foundry + zbar
+        run: brew install foundry zbar
 
       - name: Run smoke tests
         env:
