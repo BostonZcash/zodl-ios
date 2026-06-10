@@ -5,49 +5,49 @@
 //  Created by Lukáš Korba on 06.02.2023.
 //
 
-import XCTest
+import Testing
 @preconcurrency import MnemonicSwift
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-class SensitiveDataTests: XCTestCase {
-    func testSeedPhraseConformsToUndescribable() throws {
+@Suite struct SensitiveDataTests {
+    @Test func seedPhraseConformsToUndescribable() throws {
         #if UNREDACTED
-        XCTAssertNil(SeedPhrase.self as? Undescribable)
+        #expect((SeedPhrase.self as? Undescribable) == nil)
         #else
-        XCTAssertNotNil(SeedPhrase.self as? Undescribable)
+        #expect((SeedPhrase.self as? Undescribable) != nil)
         #endif
     }
-    
-    func testBirthdayConformsToUndescribable() throws {
+
+    @Test func birthdayConformsToUndescribable() throws {
         #if UNREDACTED
-        XCTAssertNil(Birthday.self as? Undescribable)
+        #expect((Birthday.self as? Undescribable) == nil)
         #else
-        XCTAssertNotNil(Birthday.self as? Undescribable)
+        #expect((Birthday.self as? Undescribable) != nil)
         #endif
     }
-    
-    func testRedactableStringConformsToUndescribable() throws {
+
+    @Test func redactableStringConformsToUndescribable() throws {
         #if UNREDACTED
-        XCTAssertNil(RedactableString.self as? Undescribable)
+        #expect((RedactableString.self as? Undescribable) == nil)
         #else
-        XCTAssertNotNil(RedactableString.self as? Undescribable)
+        #expect((RedactableString.self as? Undescribable) != nil)
         #endif
     }
-    
-    func testRedactableBlockHeightConformsToUndescribable() throws {
+
+    @Test func redactableBlockHeightConformsToUndescribable() throws {
         #if UNREDACTED
-        XCTAssertNil(RedactableBlockHeight.self as? Undescribable)
+        #expect((RedactableBlockHeight.self as? Undescribable) == nil)
         #else
-        XCTAssertNotNil(RedactableBlockHeight.self as? Undescribable)
+        #expect((RedactableBlockHeight.self as? Undescribable) != nil)
         #endif
     }
-        
-    func testRedactableInt64ConformsToUndescribable() throws {
+
+    @Test func redactableInt64ConformsToUndescribable() throws {
         #if UNREDACTED
-        XCTAssertNil(RedactableInt64.self as? Undescribable)
+        #expect((RedactableInt64.self as? Undescribable) == nil)
         #else
-        XCTAssertNotNil(RedactableInt64.self as? Undescribable)
+        #expect((RedactableInt64.self as? Undescribable) != nil)
         #endif
     }
 }

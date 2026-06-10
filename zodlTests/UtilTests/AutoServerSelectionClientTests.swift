@@ -1,9 +1,9 @@
-import XCTest
+import Testing
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-final class AutoServerSelectionClientTests: XCTestCase {
+@Suite struct AutoServerSelectionClientTests {
     private final class Recorder: @unchecked Sendable {
         var switchedTo: LightWalletEndpoint?
         var persisted: UserPreferencesStorage.ServerConfig?
@@ -40,28 +40,28 @@ final class AutoServerSelectionClientTests: XCTestCase {
         return recorder
     }
 
-    func testNoOpWhenFlagOff() async {
+    @Test func noOpWhenFlagOff() async {
         let r = await run(flag: false, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertNil(r.switchedTo)
-        XCTAssertNil(r.persisted)
+        #expect(r.switchedTo == nil)
+        #expect(r.persisted == nil)
     }
 
-    func testNoSwitchWhenBestEqualsCurrent() async {
+    @Test func noSwitchWhenBestEqualsCurrent() async {
         let r = await run(flag: true, current: endpoint("zec.rocks"), best: endpoint("zec.rocks"))
-        XCTAssertNil(r.switchedTo)
-        XCTAssertNil(r.persisted)
+        #expect(r.switchedTo == nil)
+        #expect(r.persisted == nil)
     }
 
-    func testSwitchesAndPersistsWhenIdle() async {
+    @Test func switchesAndPersistsWhenIdle() async {
         let r = await run(flag: true, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertEqual(r.switchedTo?.host, "na.zec.rocks")
-        XCTAssertEqual(r.persisted?.host, "na.zec.rocks")
-        XCTAssertEqual(r.persisted?.isCustom, false)
+        #expect(r.switchedTo?.host == "na.zec.rocks")
+        #expect(r.persisted?.host == "na.zec.rocks")
+        #expect(r.persisted?.isCustom == false)
     }
 
-    func testSkipsWhenGuardBusy() async {
+    @Test func skipsWhenGuardBusy() async {
         let r = await run(flag: true, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"), guardBusy: true)
-        XCTAssertNil(r.switchedTo)
-        XCTAssertNil(r.persisted)
+        #expect(r.switchedTo == nil)
+        #expect(r.persisted == nil)
     }
 }

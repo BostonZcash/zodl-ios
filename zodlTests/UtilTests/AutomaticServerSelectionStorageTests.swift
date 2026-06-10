@@ -1,23 +1,24 @@
-import XCTest
+import Testing
+import Foundation
 import ComposableArchitecture
 import os
 @testable import zodl_internal
 
-final class AutomaticServerSelectionStorageTests: XCTestCase {
-    func testFlagDefaultsToNilThenRoundTrips() {
+@Suite struct AutomaticServerSelectionStorageTests {
+    @Test func flagDefaultsToNilThenRoundTrips() {
         let storage = UserPreferencesStorage(
             defaultExchangeRate: Data(),
             defaultServer: Data(),
             userDefaults: .ephemeralForTests()
         )
 
-        XCTAssertNil(storage.automaticServerSelection, "Flag must be nil before it is ever set")
+        #expect(storage.automaticServerSelection == nil, "Flag must be nil before it is ever set")
 
         storage.setAutomaticServerSelection(true)
-        XCTAssertEqual(storage.automaticServerSelection, true)
+        #expect(storage.automaticServerSelection == true)
 
         storage.setAutomaticServerSelection(false)
-        XCTAssertEqual(storage.automaticServerSelection, false)
+        #expect(storage.automaticServerSelection == false)
     }
 }
 

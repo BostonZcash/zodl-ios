@@ -5,28 +5,29 @@
 //  Created by Lukáš Korba on 04.04.2023.
 //
 
-import XCTest
+import Testing
+import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @MainActor
-final class ReviewRequestTests: XCTestCase {
-    func testSyncFinishedPersistency() async throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testSyncFinishedPersistency") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
-        
+@Suite struct ReviewRequestTests {
+    @Test func syncFinishedPersistency() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testSyncFinishedPersistency"),
+            "Review Request: UserDefaults failed to initialize"
+        )
+
         let store = TestStore(
             initialState: .initial
         ) {
             Home()
         }
-        
+
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
-        
+
         store.dependencies.reviewRequest =
             .live(
                 appVersion: .mock,
@@ -35,21 +36,21 @@ final class ReviewRequestTests: XCTestCase {
                 ),
                 userDefaults: userDefaultsClient
             )
-        
+
         var syncState: SynchronizerState = .zero
         syncState.syncStatus = .upToDate
-        
+
         await store.send(.synchronizerStateChanged(syncState.redacted))
-        
+
         let storedDate = userDefaultsClient.objectForKey(ReviewRequestClient.Constants.latestSyncKey) as? TimeInterval
-        XCTAssertEqual(now.timeIntervalSince1970, storedDate, "Review Request: stored date doesn't match the input.")
+        #expect(now.timeIntervalSince1970 == storedDate, "Review Request: stored date doesn't match the input.")
     }
-    
-    func testFoundTransactionsPersistency() async throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testFoundTransactionsPersistency") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func foundTransactionsPersistency() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testFoundTransactionsPersistency"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let store = TestStore(
             initialState: .initial
@@ -74,14 +75,14 @@ final class ReviewRequestTests: XCTestCase {
         await store.send(.foundTransactions)
 
         let storedDate = userDefaultsClient.objectForKey(ReviewRequestClient.Constants.foundTransactionsKey) as? TimeInterval
-        XCTAssertEqual(now.timeIntervalSince1970, storedDate, "Review Request: stored date doesn't match the input.")
+        #expect(now.timeIntervalSince1970 == storedDate, "Review Request: stored date doesn't match the input.")
     }
-    
-    func testCanRequestReview_FirstTime() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testCanRequestReview_FirstTime") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func canRequestReview_FirstTime() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCanRequestReview_FirstTime"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
@@ -96,15 +97,15 @@ final class ReviewRequestTests: XCTestCase {
             ),
             userDefaults: userDefaultsClient
         )
-        
-        XCTAssertTrue(reviewRequest.canRequestReview())
+
+        #expect(reviewRequest.canRequestReview())
     }
-    
-    func testCanRequestReview_NewerVersion() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testCanRequestReview_NewerVersion") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func canRequestReview_NewerVersion() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCanRequestReview_NewerVersion"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
@@ -123,15 +124,15 @@ final class ReviewRequestTests: XCTestCase {
             ),
             userDefaults: userDefaultsClient
         )
-        
-        XCTAssertTrue(reviewRequest.canRequestReview())
+
+        #expect(reviewRequest.canRequestReview())
     }
-    
-    func testCanRequestReview_OlderVersion() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testCanRequestReview_OlderVersion") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func canRequestReview_OlderVersion() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCanRequestReview_OlderVersion"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
@@ -150,15 +151,15 @@ final class ReviewRequestTests: XCTestCase {
             ),
             userDefaults: userDefaultsClient
         )
-        
-        XCTAssertFalse(reviewRequest.canRequestReview())
+
+        #expect(!reviewRequest.canRequestReview())
     }
-    
-    func testCanRequestReview_MissingSync() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testCanRequestReview_MissingSync") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func canRequestReview_MissingSync() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCanRequestReview_MissingSync"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
@@ -170,15 +171,15 @@ final class ReviewRequestTests: XCTestCase {
             ),
             userDefaults: userDefaultsClient
         )
-        
-        XCTAssertFalse(reviewRequest.canRequestReview())
+
+        #expect(!reviewRequest.canRequestReview())
     }
-    
-    func testCanRequestReview_MissingTransaction() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "testCanRequestReview_MissingTransaction") else {
-            XCTFail("Review Request: UserDefaults failed to initialize")
-            return
-        }
+
+    @Test func canRequestReview_MissingTransaction() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCanRequestReview_MissingTransaction"),
+            "Review Request: UserDefaults failed to initialize"
+        )
 
         let now = Date.now
         let userDefaultsClient: UserDefaultsClient = .live(userDefaults: userDefaults)
@@ -196,7 +197,7 @@ final class ReviewRequestTests: XCTestCase {
             ),
             userDefaults: userDefaultsClient
         )
-        
-        XCTAssertFalse(reviewRequest.canRequestReview())
+
+        #expect(!reviewRequest.canRequestReview())
     }
 }

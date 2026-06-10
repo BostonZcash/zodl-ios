@@ -5,7 +5,9 @@
 //  Created by Lukáš Korba on 12.04.2022.
 //
 
-import XCTest
+import Testing
+import Foundation
+import Security
 @testable import zodl_internal
 
 extension WalletStorage.KeychainError {
@@ -20,124 +22,88 @@ extension WalletStorage.KeychainError {
     }
 }
 
-class SecItemClientTests: XCTestCase {
-    func test_secItemAdd_KeychainErrorDuplicate() throws {
+@Suite struct SecItemClientTests {
+    @Test func secItemAdd_KeychainErrorDuplicate() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecDuplicateItem },
             update: { _, _ in errSecSuccess },
             delete: { _ in errSecSuccess }
         )
-        
-        let walletStorage = WalletStorage(secItem: secItemDuplicate)
-        
-        do {
-            try walletStorage.setData(Data(), forKey: "")
 
-            XCTFail("SecItemClient: test_secItemAdd_KeychainErrorDuplicate expected to fail but passed.")
-        } catch {
-            guard let error = error as? WalletStorage.KeychainError else {
-                XCTFail("SecItemClient: the error is expected to be WalletStorage.KeychainError but it's \(error).")
-                
-                return
-            }
-            
-            XCTAssertEqual(
-                error.debugValue,
-                WalletStorage.KeychainError.duplicate.debugValue,
-                "SecItemClient: error must be .duplicate but it's \(error)."
-            )
+        let walletStorage = WalletStorage(secItem: secItemDuplicate)
+
+        let error = #expect(throws: WalletStorage.KeychainError.self) {
+            try walletStorage.setData(Data(), forKey: "")
         }
+
+        #expect(
+            error?.debugValue == WalletStorage.KeychainError.duplicate.debugValue,
+            "SecItemClient: error must be .duplicate but it's \(String(describing: error))."
+        )
     }
-    
-    func test_secItemAdd_KeychainErrorUnknown() throws {
+
+    @Test func secItemAdd_KeychainErrorUnknown() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecCoreFoundationUnknown },
             update: { _, _ in errSecSuccess },
             delete: { _ in errSecSuccess }
         )
-        
-        let walletStorage = WalletStorage(secItem: secItemDuplicate)
-        
-        do {
-            try walletStorage.setData(Data(), forKey: "")
 
-            XCTFail("SecItemClient: test_secItemAdd_KeychainErrorUnknown expected to fail but passed.")
-        } catch {
-            guard let error = error as? WalletStorage.KeychainError else {
-                XCTFail("SecItemClient: the error is expected to be WalletStorage.KeychainError but it's \(error).")
-                
-                return
-            }
-            
-            XCTAssertEqual(
-                error.debugValue,
-                WalletStorage.KeychainError.unknown(0).debugValue,
-                "SecItemClient: error must be .unknown but it's \(error)."
-            )
+        let walletStorage = WalletStorage(secItem: secItemDuplicate)
+
+        let error = #expect(throws: WalletStorage.KeychainError.self) {
+            try walletStorage.setData(Data(), forKey: "")
         }
+
+        #expect(
+            error?.debugValue == WalletStorage.KeychainError.unknown(0).debugValue,
+            "SecItemClient: error must be .unknown but it's \(String(describing: error))."
+        )
     }
-    
-    func test_secItemUpdate_KeychainErrorNoDataFound() throws {
+
+    @Test func secItemUpdate_KeychainErrorNoDataFound() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecSuccess },
             update: { _, _ in errSecItemNotFound },
             delete: { _ in errSecSuccess }
         )
-        
-        let walletStorage = WalletStorage(secItem: secItemDuplicate)
-        
-        do {
-            try walletStorage.updateData(Data(), forKey: "")
 
-            XCTFail("SecItemClient: test_secItemUpdate_KeychainErrorNoDataFound expected to fail but passed.")
-        } catch {
-            guard let error = error as? WalletStorage.KeychainError else {
-                XCTFail("SecItemClient: the error is expected to be WalletStorage.KeychainError but it's \(error).")
-                
-                return
-            }
-            
-            XCTAssertEqual(
-                error.debugValue,
-                WalletStorage.KeychainError.noDataFound.debugValue,
-                "SecItemClient: error must be .noDataFound but it's \(error)."
-            )
+        let walletStorage = WalletStorage(secItem: secItemDuplicate)
+
+        let error = #expect(throws: WalletStorage.KeychainError.self) {
+            try walletStorage.updateData(Data(), forKey: "")
         }
+
+        #expect(
+            error?.debugValue == WalletStorage.KeychainError.noDataFound.debugValue,
+            "SecItemClient: error must be .noDataFound but it's \(String(describing: error))."
+        )
     }
-    
-    func test_secItemUpdate_KeychainErrorUnknown() throws {
+
+    @Test func secItemUpdate_KeychainErrorUnknown() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecSuccess },
             update: { _, _ in errSecCoreFoundationUnknown },
             delete: { _ in errSecSuccess }
         )
-        
-        let walletStorage = WalletStorage(secItem: secItemDuplicate)
-        
-        do {
-            try walletStorage.updateData(Data(), forKey: "")
 
-            XCTFail("SecItemClient: test_secItemUpdate_KeychainErrorUnknown expected to fail but passed.")
-        } catch {
-            guard let error = error as? WalletStorage.KeychainError else {
-                XCTFail("SecItemClient: the error is expected to be WalletStorage.KeychainError but it's \(error).")
-                
-                return
-            }
-            
-            XCTAssertEqual(
-                error.debugValue,
-                WalletStorage.KeychainError.unknown(0).debugValue,
-                "SecItemClient: error must be .unknown but it's \(error)."
-            )
+        let walletStorage = WalletStorage(secItem: secItemDuplicate)
+
+        let error = #expect(throws: WalletStorage.KeychainError.self) {
+            try walletStorage.updateData(Data(), forKey: "")
         }
+
+        #expect(
+            error?.debugValue == WalletStorage.KeychainError.unknown(0).debugValue,
+            "SecItemClient: error must be .unknown but it's \(String(describing: error))."
+        )
     }
-    
-    func test_secItemDelete_Succeeded() throws {
+
+    @Test func secItemDelete_Succeeded() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecSuccess },
@@ -147,10 +113,12 @@ class SecItemClientTests: XCTestCase {
 
         let walletStorage = WalletStorage(secItem: secItemDuplicate)
 
-        XCTAssertNoThrow(try walletStorage.deleteData(forKey: ""))
+        #expect(throws: Never.self) {
+            try walletStorage.deleteData(forKey: "")
+        }
     }
 
-    func test_secItemDelete_Failed() throws {
+    @Test func secItemDelete_Failed() {
         let secItemDuplicate = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
             add: { _, _ in errSecSuccess },
@@ -160,6 +128,8 @@ class SecItemClientTests: XCTestCase {
 
         let walletStorage = WalletStorage(secItem: secItemDuplicate)
 
-        XCTAssertThrowsError(try walletStorage.deleteData(forKey: ""))
+        #expect(throws: (any Error).self) {
+            try walletStorage.deleteData(forKey: "")
+        }
     }
 }

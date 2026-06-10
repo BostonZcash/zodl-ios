@@ -5,19 +5,20 @@
 //  Created by Lukáš Korba on 01.11.2023.
 //
 
-import XCTest
+import Testing
+import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
 
 @MainActor
-final class PrivateDataConsentTests: XCTestCase {
-    func testURLsProperlyPrepared() async throws {
+@Suite struct PrivateDataConsentTests {
+    @Test func urlsProperlyPrepared() async throws {
         let store = TestStore(
             initialState: .initial
         ) {
             PrivateDataConsent()
         }
-        
+
         let URL = URL(string: "https://electriccoin.co")!
 
         store.dependencies.databaseFiles = .noOp
@@ -26,11 +27,11 @@ final class PrivateDataConsentTests: XCTestCase {
         await store.send(.onAppear) { state in
             state.dataDbURL = [URL]
         }
-        
+
         await store.finish()
     }
-    
-    func testExportRequestSet() async throws {
+
+    @Test func exportRequestSet() async throws {
         let store = TestStore(
             initialState: PrivateDataConsent.State(
                 dataDbURL: [],
@@ -41,18 +42,18 @@ final class PrivateDataConsentTests: XCTestCase {
         ) {
             PrivateDataConsent()
         }
-        
+
         store.dependencies.logsHandler = .noOp
-        
+
         await store.send(.exportRequested) { state in
             state.exportOnlyLogs = false
             state.isExportingData = true
         }
-        
+
         await store.receive(.exportLogs(.start)) { state in
             state.exportLogsState.exportLogsDisabled = true
         }
-        
+
         await store.receive(.exportLogs(.finished(nil))) { state in
             state.exportLogsState.exportLogsDisabled = false
             state.exportLogsState.isSharingLogs = true
@@ -61,8 +62,8 @@ final class PrivateDataConsentTests: XCTestCase {
 
         await store.finish()
     }
-    
-    func testExportLogsRequestSet() async throws {
+
+    @Test func exportLogsRequestSet() async throws {
         let store = TestStore(
             initialState: PrivateDataConsent.State(
                 dataDbURL: [],
@@ -73,18 +74,18 @@ final class PrivateDataConsentTests: XCTestCase {
         ) {
             PrivateDataConsent()
         }
-        
+
         store.dependencies.logsHandler = .noOp
-        
+
         await store.send(.exportLogsRequested) { state in
             state.exportOnlyLogs = true
             state.isExportingLogs = true
         }
-        
+
         await store.receive(.exportLogs(.start)) { state in
             state.exportLogsState.exportLogsDisabled = true
         }
-        
+
         await store.receive(.exportLogs(.finished(nil))) { state in
             state.exportLogsState.exportLogsDisabled = false
             state.exportLogsState.isSharingLogs = true
@@ -92,8 +93,8 @@ final class PrivateDataConsentTests: XCTestCase {
         }
         await store.finish()
     }
-    
-    func testExportingDoneWhenFinished() async throws {
+
+    @Test func exportingDoneWhenFinished() async throws {
         let store = TestStore(
             initialState: PrivateDataConsent.State(
                 dataDbURL: [],
@@ -105,17 +106,17 @@ final class PrivateDataConsentTests: XCTestCase {
         ) {
             PrivateDataConsent()
         }
-        
+
         await store.send(.shareFinished) { state in
             state.exportBinding = false
             state.isExportingData = false
             state.isExportingLogs = false
         }
-        
+
         await store.finish()
     }
-    
-    func testExportURLs_logsOnly() async throws {
+
+    @Test func exportURLs_logsOnly() async throws {
         let URLdb = URL(string: "http://db.url")!
         let URLlogs = URL(string: "http://logs.url")!
 
@@ -125,11 +126,11 @@ final class PrivateDataConsentTests: XCTestCase {
             exportLogsState: .init(zippedLogsURLs: [URLlogs]),
             exportOnlyLogs: true
         )
-        
-        XCTAssertEqual(state.exportURLs, [URLlogs])
+
+        #expect(state.exportURLs == [URLlogs])
     }
-    
-    func testExportURLs_dbAndlogs() async throws {
+
+    @Test func exportURLs_dbAndlogs() async throws {
         let URLdb = URL(string: "http://db.url")!
         let URLlogs = URL(string: "http://logs.url")!
 
@@ -139,11 +140,11 @@ final class PrivateDataConsentTests: XCTestCase {
             exportLogsState: .init(zippedLogsURLs: [URLlogs]),
             exportOnlyLogs: false
         )
-        
-        XCTAssertEqual(state.exportURLs, [URLdb, URLlogs])
+
+        #expect(state.exportURLs == [URLdb, URLlogs])
     }
-    
-    func testIsExportPossible_NoBecauseNotAcknowledged() async throws {
+
+    @Test func isExportPossible_NoBecauseNotAcknowledged() async throws {
         let state = PrivateDataConsent.State(
             dataDbURL: [],
             exportBinding: true,
@@ -151,11 +152,11 @@ final class PrivateDataConsentTests: XCTestCase {
             exportOnlyLogs: true,
             isAcknowledged: false
         )
-        
-        XCTAssertFalse(state.isExportPossible)
+
+        #expect(!state.isExportPossible)
     }
-    
-    func testIsExportPossible_NoBecauseExportingLogs() async throws {
+
+    @Test func isExportPossible_NoBecauseExportingLogs() async throws {
         let state = PrivateDataConsent.State(
             dataDbURL: [],
             exportBinding: true,
@@ -164,11 +165,11 @@ final class PrivateDataConsentTests: XCTestCase {
             isAcknowledged: true,
             isExportingLogs: true
         )
-        
-        XCTAssertFalse(state.isExportPossible)
+
+        #expect(!state.isExportPossible)
     }
-    
-    func testIsExportPossible_NoBecauseExportingData() async throws {
+
+    @Test func isExportPossible_NoBecauseExportingData() async throws {
         let state = PrivateDataConsent.State(
             dataDbURL: [],
             exportBinding: true,
@@ -177,11 +178,11 @@ final class PrivateDataConsentTests: XCTestCase {
             isAcknowledged: true,
             isExportingData: true
         )
-        
-        XCTAssertFalse(state.isExportPossible)
+
+        #expect(!state.isExportPossible)
     }
-    
-    func testIsExportPossible() async throws {
+
+    @Test func isExportPossible() async throws {
         let state = PrivateDataConsent.State(
             dataDbURL: [],
             exportBinding: true,
@@ -189,7 +190,7 @@ final class PrivateDataConsentTests: XCTestCase {
             exportOnlyLogs: true,
             isAcknowledged: true
         )
-        
-        XCTAssertTrue(state.isExportPossible)
+
+        #expect(state.isExportPossible)
     }
 }

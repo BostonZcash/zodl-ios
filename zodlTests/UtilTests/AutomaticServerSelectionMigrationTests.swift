@@ -1,9 +1,9 @@
-import XCTest
+import Testing
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-final class AutomaticServerSelectionMigrationTests: XCTestCase {
+@Suite struct AutomaticServerSelectionMigrationTests {
     /// In-memory stand-in for the parts of `userStoredPreferences` the migration touches.
     private final class Box: @unchecked Sendable {
         var server: UserPreferencesStorage.ServerConfig?
@@ -23,27 +23,27 @@ final class AutomaticServerSelectionMigrationTests: XCTestCase {
         return box.flag
     }
 
-    func testNoStoredServerEnablesAutomatic() {
-        XCTAssertEqual(runMigration(network: .mainnet, server: nil), true)
+    @Test func noStoredServerEnablesAutomatic() {
+        #expect(runMigration(network: .mainnet, server: nil) == true)
     }
 
-    func testDefaultServerEnablesAutomatic() {
+    @Test func defaultServerEnablesAutomatic() {
         let def = ZcashSDKEnvironment.defaultEndpoint(for: .mainnet)
         let config = UserPreferencesStorage.ServerConfig(host: def.host, port: def.port, isCustom: false)
-        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
+        #expect(runMigration(network: .mainnet, server: config) == true)
     }
 
-    func testCustomServerSelectsManual() {
+    @Test func customServerSelectsManual() {
         let config = UserPreferencesStorage.ServerConfig(host: "my.server.example", port: 9067, isCustom: true)
-        XCTAssertEqual(runMigration(network: .mainnet, server: config), false)
+        #expect(runMigration(network: .mainnet, server: config) == false)
     }
 
-    func testNonDefaultKnownServerSelectsManual() {
+    @Test func nonDefaultKnownServerSelectsManual() {
         let config = UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
-        XCTAssertEqual(runMigration(network: .mainnet, server: config), false)
+        #expect(runMigration(network: .mainnet, server: config) == false)
     }
 
-    func testRunsOnlyOnce() {
+    @Test func runsOnlyOnce() {
         let box = Box(server: nil)
         box.flag = false // pretend the user already chose Manual
         withDependencies {
@@ -53,6 +53,6 @@ final class AutomaticServerSelectionMigrationTests: XCTestCase {
         } operation: {
             ZcashSDKEnvironment.initializeAutomaticServerSelectionIfNeeded(for: .mainnet)
         }
-        XCTAssertEqual(box.flag, false, "Migration must not overwrite an already-set flag")
+        #expect(box.flag == false, "Migration must not overwrite an already-set flag")
     }
 }

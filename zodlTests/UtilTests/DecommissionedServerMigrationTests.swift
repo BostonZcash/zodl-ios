@@ -5,23 +5,26 @@
 //  Created on 2026-06-05.
 //
 
-import XCTest
+import Testing
+import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-final class DecommissionedServerMigrationTests: XCTestCase {
+// Uses a real, named UserDefaults suite shared across its test methods, so the suite is
+// serialized to keep each test's makeStorage()/removeAll() setup isolated.
+@Suite(.serialized) struct DecommissionedServerMigrationTests {
     // MARK: - Removal of decommissioned servers
 
-    func test_endpoints_doNotContainDecommissionedServers() {
+    @Test func endpoints_doNotContainDecommissionedServers() {
         let hosts = ZcashSDKEnvironment.endpoints(for: .mainnet).map { $0.host }
 
-        XCTAssertFalse(hosts.contains("eu2.zec.stardust.rest"), "eu2.zec.stardust.rest must be removed from endpoints()")
-        XCTAssertFalse(hosts.contains("jp.zec.stardust.rest"), "jp.zec.stardust.rest must be removed from endpoints()")
+        #expect(!hosts.contains("eu2.zec.stardust.rest"), "eu2.zec.stardust.rest must be removed from endpoints()")
+        #expect(!hosts.contains("jp.zec.stardust.rest"), "jp.zec.stardust.rest must be removed from endpoints()")
 
         let mainnetServers = ZcashSDKEnvironment.servers(for: .mainnet)
-        XCTAssertFalse(mainnetServers.contains(.hardcoded("eu2.zec.stardust.rest:443")), "eu2 must be removed from servers(for:)")
-        XCTAssertFalse(mainnetServers.contains(.hardcoded("jp.zec.stardust.rest:443")), "jp must be removed from servers(for:)")
+        #expect(!mainnetServers.contains(.hardcoded("eu2.zec.stardust.rest:443")), "eu2 must be removed from servers(for:)")
+        #expect(!mainnetServers.contains(.hardcoded("jp.zec.stardust.rest:443")), "jp must be removed from servers(for:)")
     }
 
     // MARK: - Helpers
@@ -30,7 +33,7 @@ final class DecommissionedServerMigrationTests: XCTestCase {
 
     /// A real `UserPreferencesStorage` backed by an isolated, cleared UserDefaults suite (stateful).
     private func makeStorage() throws -> UserPreferencesStorage {
-        let suite = try XCTUnwrap(UserDefaults(suiteName: Self.suiteName))
+        let suite = try #require(UserDefaults(suiteName: Self.suiteName))
         let storage = UserPreferencesStorage(
             defaultExchangeRate: Data(),
             defaultServer: Data(),
@@ -59,7 +62,7 @@ final class DecommissionedServerMigrationTests: XCTestCase {
 
     // MARK: - Rule 1: default server -> no migration
 
-    func test_noStoredServer_noMigration() throws {
+    @Test func noStoredServer_noMigration() throws {
         let storage = try makeStorage()
 
         withDependencies {
@@ -68,10 +71,10 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertNil(storage.server)
+        #expect(storage.server == nil)
     }
 
-    func test_storedDefaultServer_noMigration() throws {
+    @Test func storedDefaultServer_noMigration() throws {
         let storage = try makeStorage()
         try storage.setServer(mainnetDefault)
 
@@ -81,12 +84,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
     // MARK: - Rule 2: manual server, not removed -> no migration
 
-    func test_manualServerNotRemoved_noMigration() throws {
+    @Test func manualServerNotRemoved_noMigration() throws {
         let storage = try makeStorage()
         let original = UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
         try storage.setServer(original)
@@ -97,12 +100,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, original)
+        #expect(storage.server == original)
     }
 
     // MARK: - Rule 3: manual server, removed -> migrate to default
 
-    func test_manualServerRemoved_eu2_migratesToDefault() throws {
+    @Test func manualServerRemoved_eu2_migratesToDefault() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "eu2.zec.stardust.rest", port: 443, isCustom: false))
 
@@ -112,10 +115,10 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
-    func test_manualServerRemoved_jp_migratesToDefault() throws {
+    @Test func manualServerRemoved_jp_migratesToDefault() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "jp.zec.stardust.rest", port: 443, isCustom: false))
 
@@ -125,12 +128,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
     // MARK: - Rule 4: custom server, other URL -> no migration
 
-    func test_customServerOther_noMigration() throws {
+    @Test func customServerOther_noMigration() throws {
         let storage = try makeStorage()
         let original = UserPreferencesStorage.ServerConfig(host: "my.custom.node", port: 443, isCustom: true)
         try storage.setServer(original)
@@ -141,12 +144,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, original)
+        #expect(storage.server == original)
     }
 
     // MARK: - Rule 5: custom server, exact decommissioned URL -> migrate to default
 
-    func test_customServerExact_eu2_migratesToDefault() throws {
+    @Test func customServerExact_eu2_migratesToDefault() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "eu2.zec.stardust.rest", port: 443, isCustom: true))
 
@@ -156,10 +159,10 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
-    func test_customServerExact_jp_migratesToDefault() throws {
+    @Test func customServerExact_jp_migratesToDefault() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "jp.zec.stardust.rest", port: 443, isCustom: true))
 
@@ -169,12 +172,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
     // MARK: - Edge: decommissioned host on a non-443 port -> no migration ("exactly :443")
 
-    func test_customDecommissionedHost_nonDefaultPort_noMigration() throws {
+    @Test func customDecommissionedHost_nonDefaultPort_noMigration() throws {
         let storage = try makeStorage()
         let original = UserPreferencesStorage.ServerConfig(host: "eu2.zec.stardust.rest", port: 9067, isCustom: true)
         try storage.setServer(original)
@@ -185,12 +188,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, original)
+        #expect(storage.server == original)
     }
 
     // MARK: - Edge: testnet user on a decommissioned custom URL -> migrate to testnet default
 
-    func test_testnetCustomDecommissioned_migratesToTestnetDefault() throws {
+    @Test func testnetCustomDecommissioned_migratesToTestnetDefault() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "eu2.zec.stardust.rest", port: 443, isCustom: true))
 
@@ -200,12 +203,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .testnet)
         }
 
-        XCTAssertEqual(storage.server, UserPreferencesStorage.ServerConfig(host: "testnet.zec.rocks", port: 443, isCustom: false))
+        #expect(storage.server == UserPreferencesStorage.ServerConfig(host: "testnet.zec.rocks", port: 443, isCustom: false))
     }
 
     // MARK: - Idempotency
 
-    func test_migrationIsIdempotent() throws {
+    @Test func migrationIsIdempotent() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "jp.zec.stardust.rest", port: 443, isCustom: true))
 
@@ -217,12 +220,12 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.migrateDecommissionedServersIfNeeded(for: .mainnet)
         }
 
-        XCTAssertEqual(storage.server, mainnetDefault)
+        #expect(storage.server == mainnetDefault)
     }
 
     // MARK: - Integration: serverConfig(for:) returns the default after migrating
 
-    func test_serverConfig_returnsDefault_afterMigratingDecommissionedServer() throws {
+    @Test func serverConfig_returnsDefault_afterMigratingDecommissionedServer() throws {
         let storage = try makeStorage()
         try storage.setServer(UserPreferencesStorage.ServerConfig(host: "eu2.zec.stardust.rest", port: 443, isCustom: false))
 
@@ -233,7 +236,7 @@ final class DecommissionedServerMigrationTests: XCTestCase {
             ZcashSDKEnvironment.serverConfig(for: .mainnet)
         }
 
-        XCTAssertEqual(result, mainnetDefault, "serverConfig(for:) must return the default that the SDK Initializer will use")
-        XCTAssertEqual(storage.server, mainnetDefault, "the migration must be persisted")
+        #expect(result == mainnetDefault, "serverConfig(for:) must return the default that the SDK Initializer will use")
+        #expect(storage.server == mainnetDefault, "the migration must be persisted")
     }
 }
