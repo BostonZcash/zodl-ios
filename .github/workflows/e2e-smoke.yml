@@ -88,6 +88,34 @@ jobs:
           path: build/Build/Products/Debug-iphonesimulator
           key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
+      # Write the real PartnerKeys.plist before xcodebuild so the
+      # "Generate PartnerKeys.plist" build phase doesn't overwrite it
+      # with the empty `<dict/>` dummy. Without this, the app archives
+      # with no partner keys → NEAR (swap/crosspay quotes), Flexa,
+      # Coinbase, CoinMarketCap all silently broken — same root cause
+      # as the MOB-1357 prod regression in 3.5.2. PR #1817 added the
+      # archive-time validator; this step ensures CI builds have the
+      # real keys present so the validator (and our swap e2e flows)
+      # pass.
+      # Secret holds the plist contents base64-encoded:
+      #   base64 -i secant/Resources/PartnerKeys.plist | pbcopy
+      # Skip silently if not set; the build will use the dummy and
+      # the e2e swap/crosspay flows will fail with the recognizable
+      # "Quote Unavailable / Swift.String error 1" message.
+      - name: Inject PartnerKeys.plist
+        if: steps.app-cache.outputs.cache-hit != 'true' && env.ZODL_IOS_PARTNER_KEYS_PLIST_B64 != ''
+        env:
+          ZODL_IOS_PARTNER_KEYS_PLIST_B64: ${{ secrets.ZODL_IOS_PARTNER_KEYS_PLIST_B64 }}
+        run: |
+          mkdir -p secant/Resources
+          echo "$ZODL_IOS_PARTNER_KEYS_PLIST_B64" | base64 -d > secant/Resources/PartnerKeys.plist
+          if ! plutil -lint secant/Resources/PartnerKeys.plist >/dev/null 2>&1; then
+              echo "::error::Decoded PartnerKeys.plist is not a valid plist."
+              rm -f secant/Resources/PartnerKeys.plist
+              exit 1
+          fi
+          echo "PartnerKeys.plist written ($(wc -c <secant/Resources/PartnerKeys.plist) bytes)"
+
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
         # Ad-hoc sign ("-") so the app's entitlements (Keychain access group
@@ -203,6 +231,24 @@ jobs:
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
+      # Foundry / cast — needed by Layer-2b for the on-chain USDC
+      # transfer that funds the swap-receive-usdc-to-zec deposit
+      # address. Same setup as the Android workflow. GITHUB_TOKEN
+      # authenticates the action's release-tag fetch so it doesn't
+      # hit the unauthenticated GitHub API rate limit (60/hr/IP).
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # zbar / zbarimg — needed by the wrapper to decode the deposit-
+      # address QR from the maestro screenshot. The on-screen address
+      # text is truncated and iOS pasteboard reads via `simctl pbpaste`
+      # are unreliable on a freshly-booted sim, so the QR is the only
+      # robust surface for the full 0x... address.
+      - name: Install zbar
+        run: brew install zbar
+
       - name: Run smoke tests
         env:
           # 600s (was 300s). The first XCTest driver init on a cold
@@ -220,7 +266,7 @@ jobs:
           ZODL_TEST_CONTACT_NAME_IOS: ${{ vars.ZODL_TEST_CONTACT_NAME_IOS || 'iOS Shield' }}
           ZODL_TEST_DIRECTION: ${{ vars.ZODL_TEST_DIRECTION || 'AUTO_ALTERNATE' }}
           ZODL_TEST_PHASE: ${{ matrix.phase }}
-          ZODL_TEST_SEND_AMOUNT: ${{ vars.ZODL_TEST_SEND_AMOUNT || '0.005' }}
+          ZODL_TEST_SEND_AMOUNT: ${{ vars.ZODL_TEST_SEND_AMOUNT || '0.001' }}
           ZODL_TEST_BALANCE_MIN: ${{ vars.ZODL_TEST_BALANCE_MIN || '1.3' }}
           ZODL_TEST_BALANCE_WARN: ${{ vars.ZODL_TEST_BALANCE_WARN || '1.36' }}
           ZODL_TEST_CROSSPAY_TARGET_ADDRESS: ${{ vars.ZODL_TEST_CROSSPAY_TARGET_ADDRESS || '0xf90bd7c30fd538efde8729ea61fdf20920ed3171' }}
@@ -228,6 +274,24 @@ jobs:
           ZODL_TEST_CROSSPAY_CHAIN: ${{ vars.ZODL_TEST_CROSSPAY_CHAIN || 'BASE' }}
           ZODL_TEST_CROSSPAY_USDC_AMOUNT: ${{ vars.ZODL_TEST_CROSSPAY_USDC_AMOUNT || '0.5' }}
           ZODL_TEST_SWAP_ZEC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_ZEC_AMOUNT || '0.005' }}
+          ZODL_TEST_SWAP_RECV_USDC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_RECV_USDC_AMOUNT || '2.3' }}
+          # Layer-2b: the wrapper auto-funds the reverse-swap deposit
+          # address (USDC on Base) after swap-receive-usdc-to-zec.yaml
+          # runs whenever ZODL_USDC_BASE_PRIVKEY is set. Same model
+          # as the other tx tests in the suite — they spend real
+          # mainnet funds whenever their respective secrets/seeds
+          # are present. Each fire = ~$2.30 USDC + ~$0.05 ETH gas
+          # from the counterparty wallet. NEAR 1Click JWT is
+          # auto-extracted by the wrapper from the in-checkout
+          # PartnerKeys.plist (FDroid reproducible-build constraint
+          # on Android keeps it in source; iOS uses the plist), so
+          # no JWT secret is required — kept here as an override
+          # hatch only.
+          ZODL_USDC_BASE_PRIVKEY: ${{ secrets.ZODL_USDC_BASE_PRIVKEY }}
+          ZODL_NEAR_1CLICK_JWT: ${{ secrets.ZODL_NEAR_1CLICK_JWT }}
+          # Phase 2 verifies arrival via activity-accuracy at the
+          # suite tail rather than blocking on the 10-min 1Click poll.
+          ZODL_LAYER_2B_POLL: ${{ vars.ZODL_LAYER_2B_POLL || '0' }}
           ZODL_TEST_STATE_DIR: ${{ github.workspace }}/.zodl-qa-state
         run: |
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
