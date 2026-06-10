@@ -6268,6 +6268,23 @@
         }
       }
     },
+    "currencyConversion.currencyLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moneda"
+          }
+        }
+      }
+    },
     "currencyConversion.enable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6451,6 +6468,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guardar cambios"
+          }
+        }
+      }
+    },
+    "currencyConversion.selectCurrencyTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar Moneda"
           }
         }
       }
@@ -12962,6 +12996,23 @@
         }
       }
     },
+    "serverSetup.allServers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse all servers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explorar todos los servidores"
+          }
+        }
+      }
+    },
     "serverSetup.automatic" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12992,57 +13043,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modo de conexión"
-          }
-        }
-      }
-    },
-    "serverSetup.manual" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        }
-      }
-    },
-    "serverSetup.testing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Testing"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Probando"
-          }
-        }
-      }
-    },
-    "serverSetup.allServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browse all servers"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Explorar todos los servidores"
           }
         }
       }
@@ -13111,6 +13111,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Servidores más rápidos"
+          }
+        }
+      }
+    },
+    "serverSetup.manual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
           }
         }
       }
@@ -13196,6 +13213,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guardar selección"
+          }
+        }
+      }
+    },
+    "serverSetup.testing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testing"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Probando"
           }
         }
       }

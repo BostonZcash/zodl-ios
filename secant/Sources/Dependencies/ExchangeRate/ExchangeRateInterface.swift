@@ -32,4 +32,5 @@ struct ExchangeRateClient: Sendable {
 
     var exchangeRateEventStream: @Sendable () -> AnyPublisher<EchangeRateEvent, Never> = { Empty().eraseToAnyPublisher() }
     var refreshExchangeRateUSD: @Sendable () -> Void = { }
+    var selectedCurrency: @Sendable () -> CurrencyISO4217 = { .usd }
 }

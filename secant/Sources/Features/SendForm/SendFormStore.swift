@@ -78,6 +78,15 @@ struct SendForm {
             currencyConversion?.iso4217.symbol ?? ""
         }
 
+        var currencyCode: String {
+            currencyConversion?.iso4217.code ?? CurrencyISO4217.usd.code
+        }
+
+        var hasCurrencySymbol: Bool {
+            guard let iso = currencyConversion?.iso4217 else { return false }
+            return iso.symbol != iso.code
+        }
+
         var feeFormat: String {
             "(\(ZatoshiStringRepresentation.feeFormat))"
         }
@@ -219,6 +228,7 @@ struct SendForm {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.derivationTool) var derivationTool
+    @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -295,7 +305,8 @@ struct SendForm {
                 switch result {
                 case .value(let rate), .refreshEnable(let rate):
                     if let rate {
-                        state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
+                        let currency = exchangeRate.selectedCurrency()
+                        state.$currencyConversion.withLock { $0 = CurrencyConversion(currency, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
                         return .send(.syncAmounts(true))
                     }
                 case .stale:

@@ -119,11 +119,15 @@ struct SendFormView: View {
                                                         
                                                         ZashiTextField(
                                                             text: store.bindingForCurrency,
-                                                            placeholder: String(localizable: .sendCurrencyPlaceholder),
+                                                            placeholder: store.currencyCode,
                                                             error: store.invalidCurrencyAmountErrorText,
                                                             prefixView:
-                                                                Asset.Assets.Icons.currencyDollar.image
-                                                                .zImage(size: 20, style: Design.Inputs.Default.text)
+                                                                Group {
+                                                                    if store.hasCurrencySymbol {
+                                                                        Text(store.currencySymbol)
+                                                                            .zFont(.semiBold, size: 24, style: Design.Inputs.Default.text)
+                                                                    }
+                                                                }
                                                         )
                                                         .keyboardType(.decimalPad)
                                                         .focused($isCurrencyFocused)

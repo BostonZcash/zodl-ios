@@ -41,6 +41,12 @@ struct CurrencyConversionSetupView: View {
             .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 torSheetContent()
             }
+            .sheet(isPresented: $store.isCurrencyPickerSheetPresented) {
+                currencyPickerSheetContent()
+                    .applySheetBackground()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .applyScreenBackground()
@@ -132,11 +138,123 @@ struct CurrencyConversionSetupView: View {
                     }
                 }
             }
-            .padding(.bottom, 12)
+            .padding(.bottom, Design.Spacing._3xl)
+
+            if store.currentSettingsOption == .optIn {
+                currencyPickerSection()
+            }
         }
         .padding(.horizontal, 8)
     }
-    
+
+    private func currencyPickerSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localizable: .currencyConversionSelectCurrencyTitle))
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+
+            Button {
+                store.send(.currencyPickerTapped)
+            } label: {
+                HStack {
+                    Text("\(store.selectedCurrency.code)")
+                        .zFont(.medium, size: 16, style: Design.Dropdowns.Filled.textMain)
+
+                    Text("\(store.selectedCurrency.displayName)")
+                        .zFont(size: 16, style: Design.Text.tertiary)
+
+                    Spacer()
+
+                    Asset.Assets.chevronRight.image
+                        .zImage(size: 20, style: Design.Background.dark)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Design.Background.input.color(colorScheme))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder private func currencyPickerSheetContent() -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Text(String(localizable: .currencyConversionSelectCurrencyTitle).uppercased())
+                    .zFont(.semiBold, size: 17, style: Design.Text.primary)
+
+                HStack {
+                    Button {
+                        store.send(.binding(.set(\.isCurrencyPickerSheetPresented, false)))
+                    } label: {
+                        if #available(iOS 26.0, *) {
+                            Asset.Assets.buttonCloseX.image
+                                .zImage(size: 20, style: Design.Text.primary)
+                                .padding(10)
+                                .glassEffect(.regular.interactive(), in: .circle)
+                        } else {
+                            Asset.Assets.buttonCloseX.image
+                                .zImage(size: 20, style: Design.Text.primary)
+                                .padding(10)
+                                .background {
+                                    Circle()
+                                        .fill(Design.Surfaces.bgTertiary.color(colorScheme))
+                                }
+                        }
+                    }
+
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(CurrencyISO4217.allCases.enumerated()), id: \.element) { index, currency in
+                        Button {
+                            store.send(.currencyChanged(currency))
+                        } label: {
+                            HStack(spacing: 8) {
+                                if store.selectedCurrency.code == currency.code {
+                                    Text(currency.code)
+                                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+
+                                    Text(currency.displayName)
+                                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                                } else {
+                                    Text(currency.code)
+                                        .zFont(.medium, size: 16, style: Design.Text.primary)
+
+                                    Text(currency.displayName)
+                                        .zFont(size: 16, style: Design.Text.primary)
+                                }
+
+                                Spacer()
+
+                                Asset.Assets.chevronRight.image
+                                    .zImage(size: 20, style: Design.Text.quaternary)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 20)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if index < CurrencyISO4217.allCases.count - 1 {
+                            Design.Surfaces.divider.color(colorScheme)
+                                .frame(height: 1)
+                                .padding(.horizontal, 20)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func learnMoreLayout() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header(String(localizable: .currencyConversionLearnMoreDesc))
@@ -148,7 +266,9 @@ struct CurrencyConversionSetupView: View {
                 }
                 .padding(.top, 20)
             }
-            .padding(.bottom, 12)
+            .padding(.bottom, Design.Spacing._3xl)
+
+            currencyPickerSection()
         }
         .screenHorizontalPadding()
     }

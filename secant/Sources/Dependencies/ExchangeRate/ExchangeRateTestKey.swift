@@ -10,6 +10,7 @@
 extension ExchangeRateClient {
     static let noOp = Self(
         exchangeRateEventStream: { Empty().eraseToAnyPublisher() },
-        refreshExchangeRateUSD: { }
+        refreshExchangeRateUSD: { },
+        selectedCurrency: { .usd }
     )
 }
