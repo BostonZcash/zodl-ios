@@ -1,0 +1,28 @@
+name: Linear release tracking
+
+# Fires on every release tag push (`<major>.<minor>.<patch>`, e.g. `3.5.2`).
+# The single job runs Linear's release action, which scans commits since the
+# previous tag for `MOB-###` references and creates a matching release under
+# the iOS Linear pipeline (Settings → Releases → zodl-ios in Linear).
+#
+# Requires the LINEAR_ACCESS_KEY repo secret, generated against the iOS
+# pipeline in Linear's UI.
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  linear-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so the Linear release action sees every commit since the previous tag
+
+      - name: Create Linear release
+        uses: linear/linear-release-action@v0
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
