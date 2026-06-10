@@ -1889,9 +1889,7 @@ extension VotingCoordFlow {
                         let castVoteSig = try await votingCrypto.signCastVote(hotkeySeed, networkId, builtBundle)
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
-                        let txResult = try await transactionGuard.withSubmission {
-                            try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
-                        }
+                        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
                         try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
 
                         let voteDeadline = Date().addingTimeInterval(90)
@@ -1936,14 +1934,12 @@ extension VotingCoordFlow {
                             }
                         }
                         try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, builtBundle, vcIdx)
-                        let batchDelegationResult = try await transactionGuard.withSubmission {
-                            try await Voting.delegateSharesWithFallback(
-                                payloads,
-                                roundId: roundId,
-                                votingAPI: votingAPI,
-                                serverURLs: shareServerURLs
-                            )
-                        }
+                        let batchDelegationResult = try await Voting.delegateSharesWithFallback(
+                            payloads,
+                            roundId: roundId,
+                            votingAPI: votingAPI,
+                            serverURLs: shareServerURLs
+                        )
                         shareServerURLs = batchDelegationResult.remainingServerURLs
                         for info in batchDelegationResult.delegatedShares {
                             guard let payload = payloads.first(where: {
@@ -2908,9 +2904,7 @@ extension VotingCoordFlow {
                         registration.sighash != sig.sighash {
                         throw VotingFlowError.invalidDelegationSignature
                     }
-                    let delegTxResult = try await transactionGuard.withSubmission {
-                        try await votingAPI.submitDelegation(registration)
-                    }
+                    let delegTxResult = try await votingAPI.submitDelegation(registration)
                     try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
                     let vanPosition = try await Self.requireKeystoneDelegationVanPosition(
                         txHash: delegTxResult.txHash,
@@ -3308,10 +3302,7 @@ extension VotingCoordFlow {
         // (the slow part of the pipeline) completes.
         await send(.earlyEligibilityConfirmed(roundId: roundId))
 
-        @Dependency(\.transactionGuard) var transactionGuard
-        let treeStateBytes = try await transactionGuard.withSubmission {
-            try await sdkSynchronizer.getTreeState(snapshotHeight)
-        }
+        let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
         try await votingCrypto.storeTreeState(roundId, treeStateBytes)
 
         let noteChunks = notes.smartBundles().bundles
@@ -3480,15 +3471,12 @@ extension VotingCoordFlow {
             }
         }
 
-        @Dependency(\.transactionGuard) var transactionGuard
-        let recoveryResult = try await transactionGuard.withSubmission {
-            try await Voting.delegateSharesWithFallback(
-                payloads,
-                roundId: roundId,
-                votingAPI: votingAPI,
-                serverURLs: shareServerURLs
-            )
-        }
+        let recoveryResult = try await Voting.delegateSharesWithFallback(
+            payloads,
+            roundId: roundId,
+            votingAPI: votingAPI,
+            serverURLs: shareServerURLs
+        )
         shareServerURLs = recoveryResult.remainingServerURLs
         for info in recoveryResult.delegatedShares {
             guard let payload = payloads.first(where: {
@@ -3603,10 +3591,7 @@ extension VotingCoordFlow {
                     roundId, bundleIndex, senderSeed, networkId, accountIndex
                 )
             }
-            @Dependency(\.transactionGuard) var transactionGuard
-            let delegTxResult = try await transactionGuard.withSubmission {
-                try await votingAPI.submitDelegation(registration)
-            }
+            let delegTxResult = try await votingAPI.submitDelegation(registration)
             LoggerProxy.info("Delegation TX \(bundleIndex) submitted: \(delegTxResult.txHash)")
 
             try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)
