@@ -174,11 +174,14 @@ jobs:
   e2e-ios:
     needs: build
     runs-on: macos-26
-    # Cold-cache phase 2 runs (no cached SDK DB yet for the seed)
-    # spend most of the budget scanning blocks from birthday height.
-    # 45 min leaves headroom for the first run; warm-cache runs
-    # finish in ~10-15 min.
-    timeout-minutes: 45
+    # Cold-cache phase 2 runs spend ~25-30 min on the
+    # restore-existing-wallet sync alone (chain-tip catchup from the
+    # birthday height on the iOS sim — no inter-run cache like the
+    # Android wrapper has via ~/.zodl-qa/cache). After sync we still
+    # need ~30 min for the 7 tx + verification flows that follow.
+    # 75 min covers cold cases; warm-cache runs (when we add that)
+    # will land well under.
+    timeout-minutes: 75
     permissions:
       contents: read
     strategy:
