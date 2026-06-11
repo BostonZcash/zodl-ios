@@ -274,6 +274,31 @@ jobs:
       - name: Install Foundry + zbar
         run: brew install foundry zbar
 
+      # Warm-cache the iOS SDK DB across CI runs. The wrapper pushes
+      # this DB into the booted sim's app Documents/ before maestro
+      # runs; the Zcash SDK then warm-resumes from the cached scan
+      # state instead of replaying the full birthday-to-tip span
+      # (~25 min cold). Restore is best-effort — first run after this
+      # lands, plus runs after a key invalidation, fall back to cold
+      # scan and re-seed the cache on save.
+      #
+      # Only phase 2 participates: phase 1 uses random create-new-
+      # wallet seeds whose DB scan state would poison the next run's
+      # deterministic-seed warm-resume. The wrapper itself also
+      # short-circuits its cache-save block when ZODL_TEST_PHASE=1.
+      #
+      # Key is per-run-id so each successful run produces a fresh
+      # cache entry; restore-keys falls back to the most recent
+      # matching prefix.
+      - name: Restore Zcash SDK DB cache
+        if: ${{ matrix.phase == 2 }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.zodl-qa/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-
+
       - name: Run smoke tests
         env:
           # 600s (was 300s). The first XCTest driver init on a cold
@@ -321,6 +346,19 @@ jobs:
         run: |
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
           ./zodl-qa/scripts/run-smoke-ios.sh
+
+      # Persist the SDK DB regardless of test outcome — partial sync
+      # progress is still useful for the next run's warm-resume. If
+      # the job is hard-killed by the 75-min timeout the save won't
+      # fire, but the prior run's cache entry stays in the pool and
+      # restore-keys will pick it up next time.
+      - name: Save Zcash SDK DB cache
+        if: ${{ always() && matrix.phase == 2 }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.zodl-qa/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
 
       - name: Upload test results
         if: always()
