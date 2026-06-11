@@ -88,33 +88,49 @@ jobs:
           path: build/Build/Products/Debug-iphonesimulator
           key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
-      # Write the real PartnerKeys.plist before xcodebuild so the
+      # Write a minimal PartnerKeys.plist before xcodebuild so the
       # "Generate PartnerKeys.plist" build phase doesn't overwrite it
-      # with the empty `<dict/>` dummy. Without this, the app archives
-      # with no partner keys → NEAR (swap/crosspay quotes), Flexa,
-      # Coinbase, CoinMarketCap all silently broken — same root cause
-      # as the MOB-1357 prod regression in 3.5.2. PR #1817 added the
-      # archive-time validator; this step ensures CI builds have the
-      # real keys present so the validator (and our swap e2e flows)
-      # pass.
-      # Secret holds the plist contents base64-encoded:
-      #   base64 -i secant/Resources/PartnerKeys.plist | pbcopy
-      # Skip silently if not set; the build will use the dummy and
-      # the e2e swap/crosspay flows will fail with the recognizable
-      # "Quote Unavailable / Swift.String error 1" message.
+      # with the empty `<dict/>` dummy. Without this, the e2e swap /
+      # crosspay / swap-receive flows fail at quote fetch with the
+      # MOB-1357 symptom (Quote Unavailable / "Swift.String error 1").
+      #
+      # Two surgical secrets instead of the whole plist base64: the
+      # e2e suite only exercises the NEAR swap/pay paths, which
+      # `Near1Click.swift` reads via PartnerKeys.{nearKey,
+      # nearFeeDepositAddress}. Flexa/Coinbase/CMC paths aren't part
+      # of phase 1 or phase 2, so their keys can stay out of CI
+      # secrets. Both values are straightforward strings (JWT-shaped
+      # for nearKey; 0x... hex for the deposit address) so no XML
+      # escaping needed in the heredoc below.
+      #
+      # Skips silently when either secret is unset; the build then
+      # uses the empty dummy plist and the swap/crosspay flows will
+      # fail with the recognizable "Quote Unavailable" message.
       - name: Inject PartnerKeys.plist
-        if: steps.app-cache.outputs.cache-hit != 'true' && env.ZODL_IOS_PARTNER_KEYS_PLIST_B64 != ''
+        if: steps.app-cache.outputs.cache-hit != 'true' && env.ZODL_IOS_NEAR_KEY != '' && env.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS != ''
         env:
-          ZODL_IOS_PARTNER_KEYS_PLIST_B64: ${{ secrets.ZODL_IOS_PARTNER_KEYS_PLIST_B64 }}
+          ZODL_IOS_NEAR_KEY: ${{ secrets.ZODL_IOS_NEAR_KEY }}
+          ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS: ${{ secrets.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS }}
         run: |
           mkdir -p secant/Resources
-          echo "$ZODL_IOS_PARTNER_KEYS_PLIST_B64" | base64 -d > secant/Resources/PartnerKeys.plist
+          cat > secant/Resources/PartnerKeys.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>nearKey</key>
+              <string>${ZODL_IOS_NEAR_KEY}</string>
+              <key>nearFeeDepositAddress</key>
+              <string>${ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS}</string>
+          </dict>
+          </plist>
+          EOF
           if ! plutil -lint secant/Resources/PartnerKeys.plist >/dev/null 2>&1; then
-              echo "::error::Decoded PartnerKeys.plist is not a valid plist."
+              echo "::error::Composed PartnerKeys.plist is not a valid plist (secret value may contain unescaped XML chars)."
               rm -f secant/Resources/PartnerKeys.plist
               exit 1
           fi
-          echo "PartnerKeys.plist written ($(wc -c <secant/Resources/PartnerKeys.plist) bytes)"
+          echo "PartnerKeys.plist written ($(wc -c <secant/Resources/PartnerKeys.plist) bytes, 2 keys)"
 
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
