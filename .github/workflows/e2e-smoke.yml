@@ -88,50 +88,6 @@ jobs:
           path: build/Build/Products/Debug-iphonesimulator
           key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
-      # Write a minimal PartnerKeys.plist before xcodebuild so the
-      # "Generate PartnerKeys.plist" build phase doesn't overwrite it
-      # with the empty `<dict/>` dummy. Without this, the e2e swap /
-      # crosspay / swap-receive flows fail at quote fetch with the
-      # MOB-1357 symptom (Quote Unavailable / "Swift.String error 1").
-      #
-      # Two surgical secrets instead of the whole plist base64: the
-      # e2e suite only exercises the NEAR swap/pay paths, which
-      # `Near1Click.swift` reads via PartnerKeys.{nearKey,
-      # nearFeeDepositAddress}. Flexa/Coinbase/CMC paths aren't part
-      # of phase 1 or phase 2, so their keys can stay out of CI
-      # secrets. Both values are straightforward strings (JWT-shaped
-      # for nearKey; 0x... hex for the deposit address) so no XML
-      # escaping needed in the heredoc below.
-      #
-      # Skips silently when either secret is unset; the build then
-      # uses the empty dummy plist and the swap/crosspay flows will
-      # fail with the recognizable "Quote Unavailable" message.
-      - name: Inject PartnerKeys.plist
-        if: steps.app-cache.outputs.cache-hit != 'true' && env.ZODL_IOS_NEAR_KEY != '' && env.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS != ''
-        env:
-          ZODL_IOS_NEAR_KEY: ${{ secrets.ZODL_IOS_NEAR_KEY }}
-          ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS: ${{ secrets.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS }}
-        run: |
-          mkdir -p secant/Resources
-          cat > secant/Resources/PartnerKeys.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>nearKey</key>
-              <string>${ZODL_IOS_NEAR_KEY}</string>
-              <key>nearFeeDepositAddress</key>
-              <string>${ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS}</string>
-          </dict>
-          </plist>
-          EOF
-          if ! plutil -lint secant/Resources/PartnerKeys.plist >/dev/null 2>&1; then
-              echo "::error::Composed PartnerKeys.plist is not a valid plist (secret value may contain unescaped XML chars)."
-              rm -f secant/Resources/PartnerKeys.plist
-              exit 1
-          fi
-          echo "PartnerKeys.plist written ($(wc -c <secant/Resources/PartnerKeys.plist) bytes, 2 keys)"
-
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
         # Ad-hoc sign ("-") so the app's entitlements (Keychain access group
@@ -152,6 +108,57 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGNING_REQUIRED=NO \
             IPHONEOS_DEPLOYMENT_TARGET=16.0
+
+      # Inject the real PartnerKeys.plist DIRECTLY into the built .app
+      # bundle, replacing the empty `<dict/>` dummy that the Xcode build
+      # phase writes when the source plist is absent (it's gitignored).
+      # Writing post-build (not pre-build) handles both code paths
+      # uniformly: cache hit (no xcodebuild ran) AND fresh build (the
+      # plist generation phase wrote the dummy into the bundle). In
+      # either case the .app bundle at the path below exists and we
+      # overwrite the bundle's PartnerKeys.plist resource.
+      #
+      # Two surgical secrets instead of the whole plist base64: the
+      # e2e suite only exercises NEAR swap/pay paths, which
+      # `Near1Click.swift` reads via PartnerKeys.{nearKey,
+      # nearFeeDepositAddress}. Flexa / Coinbase / CMC keys aren't on
+      # any e2e code path. Values are JWT-shaped and 0x-prefixed hex
+      # — both safe to drop into XML without escaping.
+      #
+      # Skips silently when either secret is unset; the .app then
+      # ships the empty dummy and the swap/crosspay flows fail with
+      # the recognizable "Quote Unavailable" message (so the broken
+      # state is loud rather than silently green).
+      - name: Inject PartnerKeys.plist into .app bundle
+        if: env.ZODL_IOS_NEAR_KEY != '' && env.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS != ''
+        env:
+          ZODL_IOS_NEAR_KEY: ${{ secrets.ZODL_IOS_NEAR_KEY }}
+          ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS: ${{ secrets.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS }}
+        run: |
+          APP_PLIST=$(ls build/Build/Products/Debug-iphonesimulator/*.app/PartnerKeys.plist 2>/dev/null | head -1)
+          if [ -z "$APP_PLIST" ]; then
+              echo "::error::Could not locate PartnerKeys.plist inside the built .app bundle."
+              echo "build/Build/Products/Debug-iphonesimulator/ contents:"
+              ls -la build/Build/Products/Debug-iphonesimulator/ || true
+              exit 1
+          fi
+          cat > "$APP_PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>nearKey</key>
+              <string>${ZODL_IOS_NEAR_KEY}</string>
+              <key>nearFeeDepositAddress</key>
+              <string>${ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS}</string>
+          </dict>
+          </plist>
+          EOF
+          if ! plutil -lint "$APP_PLIST" >/dev/null 2>&1; then
+              echo "::error::Composed PartnerKeys.plist is not a valid plist."
+              exit 1
+          fi
+          echo "Injected PartnerKeys.plist into $APP_PLIST ($(wc -c <"$APP_PLIST") bytes, 2 keys)"
 
       - name: Upload .app bundle
         uses: actions/upload-artifact@v4
