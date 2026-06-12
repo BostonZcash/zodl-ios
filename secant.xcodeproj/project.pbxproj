@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		051F035A06D6092E00704BAB /* HomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A5D635BF4FBF530D1B6880 /* HomeTests.swift */; };
+		349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */; };
 		05F96BC8C109B80ED685D9CD /* PrivateDataConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE450F4E98D0B7054611598 /* PrivateDataConsentTests.swift */; };
 		161B27ACDB3C31A163EC8AFF /* SensitiveDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53B4B2244B2E608A11AC552 /* SensitiveDataTests.swift */; };
 		2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD04B216486D7A0AAB329F2 /* UserPreferencesStorageTests.swift */; };
@@ -1623,6 +1624,7 @@
 		348EC5112FD7FF45008495FB /* AutoServerSelectionInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoServerSelectionInterface.swift; sourceTree = "<group>"; };
 		348EC5122FD7FF45008495FB /* AutoServerSelectionLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoServerSelectionLiveKey.swift; sourceTree = "<group>"; };
 		348EC5132FD7FF45008495FB /* AutoServerSelectionTestKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoServerSelectionTestKey.swift; sourceTree = "<group>"; };
+		349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiServerSubmissionTests.swift; sourceTree = "<group>"; };
 		34AA6BA42F85774F00D244E2 /* ABv1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABv1.swift; sourceTree = "<group>"; };
 		34AA6BA62F85774F00D244E2 /* AddressBookContacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookContacts.swift; sourceTree = "<group>"; };
 		34AA6BA72F85774F00D244E2 /* AddressBookEncryption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryption.swift; sourceTree = "<group>"; };
@@ -2336,6 +2338,7 @@
 				9E612C7729913F2300D09B09 /* SensitiveDataTests */,
 				9EF8135927ECC25E0075AF48 /* UtilTests */,
 				9E139AAD2B07B39700D104B8 /* ZatoshiStringRepresentation */,
+				349CE5D42FDC0EDF00E2B9CF /* SendTests */,
 			);
 			path = zodlTests;
 			sourceTree = "<group>";
@@ -2406,6 +2409,14 @@
 				348EC5132FD7FF45008495FB /* AutoServerSelectionTestKey.swift */,
 			);
 			path = AutoServerSelection;
+			sourceTree = "<group>";
+		};
+		349CE5D42FDC0EDF00E2B9CF /* SendTests */ = {
+			isa = PBXGroup;
+			children = (
+				349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */,
+			);
+			path = SendTests;
 			sourceTree = "<group>";
 		};
 		34AA6BA52F85774F00D244E2 /* Migration */ = {
@@ -5056,6 +5067,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */,
 				34D06C912FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift in Sources */,
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
 				AD0D00202D00000100000001 /* VotingAPIResponseParserTests.swift in Sources */,

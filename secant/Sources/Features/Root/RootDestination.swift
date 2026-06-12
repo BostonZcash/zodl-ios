@@ -126,7 +126,7 @@ extension Root {
                         switch result {
                         case .partial:
                             await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
-                        case .success(let txIds), .grpcFailure(let txIds), .failure(let txIds, _, _):
+                        case .success(let txIds), .grpcFailure(let txIds, _, _), .failure(let txIds, _, _):
                             if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
                                 flexaHandler.transactionSent(transaction.commerceSessionId, txId)
                             }

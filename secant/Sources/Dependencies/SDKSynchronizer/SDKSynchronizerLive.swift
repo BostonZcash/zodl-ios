@@ -183,6 +183,22 @@ extension SDKSynchronizerClient: DependencyKey {
                     return .partial(txIds: txIds, statuses: statuses)
                 }
             },
+            createAndSubmitProposedTransactions: { proposal, spendingKey in
+                let transactions = try await synchronizer.broadcaster.createProposedTransactions(
+                    proposal: proposal,
+                    spendingKey: spendingKey
+                )
+
+                return await Self.submitCreatedTransactions(
+                    transactions,
+                    logPrefix: "[MultiSubmit]",
+                    userStoredPreferences: userStoredPreferences,
+                    zcashSDKEnvironment: zcashSDKEnvironment,
+                    submit: { createdTransactions, endpoints in
+                        await synchronizer.broadcaster.submit(transactions: createdTransactions, to: endpoints)
+                    }
+                )
+            },
             proposeShielding: { accountUUID, shieldingThreshold, memo, transparentReceiver in
                 try await synchronizer.proposeShielding(
                     accountUUID: accountUUID,
@@ -286,6 +302,22 @@ extension SDKSynchronizerClient: DependencyKey {
                     return .partial(txIds: txIds, statuses: statuses)
                 }
             },
+            createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
+                let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
+                    pcztWithProofs: pcztWithProofs,
+                    pcztWithSigs: pcztWithSigs
+                )
+
+                return await Self.submitCreatedTransactions(
+                    transactions,
+                    logPrefix: "[MultiSubmit/PCZT]",
+                    userStoredPreferences: userStoredPreferences,
+                    zcashSDKEnvironment: zcashSDKEnvironment,
+                    submit: { createdTransactions, endpoints in
+                        await synchronizer.broadcaster.submit(transactions: createdTransactions, to: endpoints)
+                    }
+                )
+            },
             urEncoderForPCZT: { pczt in
                 let keystoneSDK = KeystoneZcashSDK()
 
@@ -336,6 +368,154 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.getTreeState(height: height)
             }
         )
+    }
+}
+
+// MARK: - Multi-server submission
+
+extension SDKSynchronizerClient {
+    enum MultiServerSubmission {
+        static let noTransactionsDescription = "No transactions created"
+        static let notAttemptedStatus = "notAttempted"
+        static let timeoutDescription = "Timed out waiting for endpoint response; transaction may still have been broadcast"
+        static let unreachableStatus = "rejected by all servers"
+    }
+
+    /// Submits already-created transactions to the endpoints selected by the user's connection
+    /// mode and maps the SDK submission reports onto `CreateProposedTransactionsResult`.
+    static func submitCreatedTransactions(
+        _ transactions: [CreatedTransaction],
+        logPrefix: String,
+        userStoredPreferences: UserPreferencesStorageClient,
+        zcashSDKEnvironment: ZcashSDKEnvironment,
+        submit: ([CreatedTransaction], [LightWalletEndpoint]) async -> [TransactionSubmissionReport]
+    ) async -> CreateProposedTransactionsResult {
+        guard !transactions.isEmpty else {
+            return .failure(txIds: [], code: -1, description: MultiServerSubmission.noTransactionsDescription)
+        }
+
+        let txIds = transactions.map { $0.txId.toHexStringTxId() }
+        let endpoints = selectedSubmissionEndpoints(
+            userStoredPreferences: userStoredPreferences,
+            zcashSDKEnvironment: zcashSDKEnvironment
+        )
+
+        LoggerProxy.event("\(logPrefix) Submitting \(transactions.count) transaction(s) to \(endpoints.count) server(s).")
+
+        let reports = await submit(transactions, endpoints)
+        let result = mapSubmissionOutcomes(
+            txIds: txIds,
+            outcomes: reports.map { $0.outcome },
+            endpoints: endpoints
+        )
+
+        switch result {
+        case .success:
+            LoggerProxy.event("\(logPrefix) All \(transactions.count) transaction(s) accepted.")
+        case let .failure(_, code, _):
+            LoggerProxy.error("\(logPrefix) Submission rejected with code \(code).")
+        case let .grpcFailure(_, _, reason):
+            if reason == .timeout {
+                LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
+            } else {
+                LoggerProxy.error("\(logPrefix) Submission failed on all \(endpoints.count) server(s).")
+            }
+        case let .partial(_, statuses):
+            LoggerProxy.error("\(logPrefix) Partial submission: \(statuses.joined(separator: ", ")).")
+        }
+
+        return result
+    }
+
+    /// Endpoint selection policy for multi-server submission:
+    /// - Automatic connection mode -> all known endpoints for the current network
+    /// - Manual connection mode (or mode not yet initialized) -> the currently selected endpoint
+    static func selectedSubmissionEndpoints(
+        userStoredPreferences: UserPreferencesStorageClient,
+        zcashSDKEnvironment: ZcashSDKEnvironment
+    ) -> [LightWalletEndpoint] {
+        if userStoredPreferences.automaticServerSelection() == true {
+            return ZcashSDKEnvironment.endpoints(for: zcashSDKEnvironment.network().networkType)
+        }
+
+        return [zcashSDKEnvironment.endpoint()]
+    }
+
+    /// Pure mapping of per-transaction SDK submission outcomes onto the app-side result contract.
+    /// `outcomes[i]` belongs to `txIds[i]`; `endpoints` is the ordered list the transactions were
+    /// submitted to and is only used to derive redacted "endpoint N" labels (never hostnames).
+    ///
+    /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
+    /// resumed a nil winner on cancellation and routed it through the "rejected by all servers"
+    /// branch, and the caller was being torn down anyway.
+    static func mapSubmissionOutcomes(
+        txIds: [String],
+        outcomes: [TransactionSubmissionOutcome],
+        endpoints: [LightWalletEndpoint]
+    ) -> CreateProposedTransactionsResult {
+        guard !txIds.isEmpty else {
+            return .failure(txIds: [], code: -1, description: MultiServerSubmission.noTransactionsDescription)
+        }
+
+        // The SDK reports one outcome per submitted transaction. Should it ever return fewer,
+        // treat the missing ones as not attempted rather than silently reporting success.
+        var outcomes = outcomes
+        if outcomes.count < txIds.count {
+            outcomes.append(contentsOf: Array(repeating: .notAttempted, count: txIds.count - outcomes.count))
+        }
+
+        let firstNotAcceptedIndex = outcomes.firstIndex { outcome in
+            if case .accepted = outcome { return false }
+            return true
+        }
+
+        guard let firstNotAcceptedIndex else {
+            return .success(txIds: txIds)
+        }
+
+        let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
+        let acceptedCount = firstNotAcceptedIndex
+        let notAttemptedCount = outcomes.count - firstNotAcceptedIndex - 1
+
+        switch outcomes[firstNotAcceptedIndex] {
+        case .accepted:
+            return .success(txIds: txIds)
+        case let .rejected(code, message):
+            return acceptedCount == 0
+                ? .failure(txIds: txIds, code: code, description: message)
+                : .partial(txIds: txIds, statuses: statuses)
+        case .timedOut:
+            return acceptedCount == 0 && notAttemptedCount == 0
+                ? .grpcFailure(txIds: txIds, description: MultiServerSubmission.timeoutDescription, reason: .timeout)
+                : .partial(txIds: txIds, statuses: statuses)
+        case .unreachable, .cancelled, .notAttempted:
+            return acceptedCount == 0 && notAttemptedCount == 0
+                ? .grpcFailure(txIds: txIds)
+                : .partial(txIds: txIds, statuses: statuses)
+        }
+    }
+
+    private static func status(for outcome: TransactionSubmissionOutcome, endpoints: [LightWalletEndpoint]) -> String {
+        switch outcome {
+        case .accepted(let endpoint):
+            return "accepted by \(endpointLabel(for: endpoint, in: endpoints))"
+        case let .rejected(code, _):
+            return "rejected code: \(code)"
+        case .unreachable, .cancelled:
+            return MultiServerSubmission.unreachableStatus
+        case .timedOut:
+            return MultiServerSubmission.timeoutDescription
+        case .notAttempted:
+            return MultiServerSubmission.notAttemptedStatus
+        }
+    }
+
+    /// Redacted label for an endpoint: its 1-based position in the submission list. The label never
+    /// exposes the hostname, so a privately configured server cannot leak into support emails.
+    private static func endpointLabel(for endpoint: LightWalletEndpoint, in endpoints: [LightWalletEndpoint]) -> String {
+        guard let index = endpoints.firstIndex(of: endpoint) else { return "endpoint" }
+
+        return "endpoint \(index + 1)"
     }
 }
 

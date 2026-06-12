@@ -295,7 +295,7 @@ struct SendConfirmation {
                         }
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, _, _):
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
@@ -547,7 +547,7 @@ struct SendConfirmation {
                         await send(.resetPCZTs)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, _, _):
                             await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
                             let txId = txIds.last
                             await send(.updateTxIdToExpand(txId))
