@@ -352,8 +352,14 @@ extension SDKSynchronizerClient {
         let clearedTransactions = zcashTransactions.compactMap { rawTransaction in
             rawTransaction.accountUUID == accountUUID ? rawTransaction : nil
         }
-        
+
         var clearedTxs: [TransactionState] = []
+        // Snapshot the chain tip once so TransactionState can fall back to an expiry-vs-tip
+        // check when the SDK's `expired_unmined` column hasn't caught up (post-hardfork case
+        // tracked in PRO-334). `latestBlockHeight == 0` means we haven't synced yet, so
+        // hand nil to the init in that case to disable the fallback.
+        let tipNow = synchronizer.latestState.latestBlockHeight
+        let currentChainTip: BlockHeight? = tipNow > 0 ? tipNow : nil
 
         for clearedTransaction in clearedTransactions {
             var hasTransparentOutputs = false
@@ -368,7 +374,8 @@ extension SDKSynchronizerClient {
             var transaction = TransactionState.init(
                 transaction: clearedTransaction,
                 memos: nil,
-                hasTransparentOutputs: hasTransparentOutputs
+                hasTransparentOutputs: hasTransparentOutputs,
+                currentChainTip: currentChainTip
             )
 
             let recipients = await synchronizer.getRecipients(for: clearedTransaction)
