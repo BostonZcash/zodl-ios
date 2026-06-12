@@ -36,6 +36,7 @@ struct ExportLogs {
         case finished(URL?)
         case failed(ZcashError)
         case shareFinished
+        case shareSheetClosed
     }
 
     @Dependency(\.logsHandler) var logsHandler
@@ -86,6 +87,13 @@ struct ExportLogs {
 
             case .shareFinished:
                 state.isSharingLogs = false
+                return .none
+
+            case .shareSheetClosed:
+                // The share sheet is gone (shared or cancelled), the exported logs
+                // must not stay behind in the temp directory.
+                state.zippedLogsURLs = []
+                try? logsHandler.cleanupExports()
                 return .none
             }
         }

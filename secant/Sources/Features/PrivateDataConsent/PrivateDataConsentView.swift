@@ -104,9 +104,15 @@ struct PrivateDataConsentView: View {
 private extension PrivateDataConsentView {
     @ViewBuilder func shareLogsView() -> some View {
         if store.exportBinding {
-            UIShareDialogView(activityItems: store.exportURLs) {
-                store.send(.shareFinished)
-            }
+            UIShareDialogView(
+                activityItems: store.exportURLs,
+                completion: {
+                    store.send(.shareFinished)
+                },
+                onDismiss: {
+                    store.send(.exportLogs(.shareSheetClosed))
+                }
+            )
             // UIShareDialogView only wraps UIActivityViewController presentation
             // so frame is set to 0 to not break SwiftUI's layout
             .frame(width: 0, height: 0)

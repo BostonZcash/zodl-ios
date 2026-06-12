@@ -10,6 +10,7 @@ import XCTestDynamicOverlay
 
 extension LogsHandlerClient {
     static let noOp = Self(
-        exportAndStoreLogs: { _, _, _ in nil }
+        exportAndStoreLogs: { _, _, _ in nil },
+        cleanupExports: { }
     )
 }

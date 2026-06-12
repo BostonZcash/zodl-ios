@@ -341,10 +341,14 @@ private extension RootView {
     @ViewBuilder func shareLogsView(_ store: StoreOf<Root>) -> some View {
         if store.exportLogsState.isSharingLogs {
             UIShareDialogView(
-                activityItems: store.exportLogsState.zippedLogsURLs
-            ) {
-                store.send(.exportLogs(.shareFinished))
-            }
+                activityItems: store.exportLogsState.zippedLogsURLs,
+                completion: {
+                    store.send(.exportLogs(.shareFinished))
+                },
+                onDismiss: {
+                    store.send(.exportLogs(.shareSheetClosed))
+                }
+            )
             // UIShareDialogView only wraps UIActivityViewController presentation
             // so frame is set to 0 to not break SwiftUI's layout
             .frame(width: 0, height: 0)
