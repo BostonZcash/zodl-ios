@@ -290,7 +290,9 @@ extension SwapAndPayCoordFlow {
 
             case .swapRequested:
                 guard let proposal = state.swapAndPayState.proposal else {
-                    return .send(.sendFailed("missing proposal".toZcashError(), true))
+                    // `false`: nothing was created or submitted, so there is no transaction in the
+                    // wallet the pending screen could be waiting for (matches SendConfirmation).
+                    return .send(.sendFailed("missing proposal".toZcashError(), false))
                 }
                 guard let zip32AccountIndex = state.selectedWalletAccount?.zip32AccountIndex else {
                     return .none
@@ -343,9 +345,9 @@ extension SwapAndPayCoordFlow {
                         }
 
                         switch result {
-                        case let .grpcFailure(txIds, description, reason):
+                        case let .grpcFailure(txIds, reason):
                             await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
                             ))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)

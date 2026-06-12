@@ -26,7 +26,9 @@ struct SDKSynchronizerClient: Sendable {
         }
 
         case failure(txIds: [String], code: Int, description: String)
-        case grpcFailure(txIds: [String], description: String? = nil, reason: GrpcFailureReason? = nil)
+        // No description payload on purpose: transport-level failures carry no server message,
+        // and the UI derives its copy from `reason` (timeouts get dedicated localized copy).
+        case grpcFailure(txIds: [String], reason: GrpcFailureReason? = nil)
         case partial(txIds: [String], statuses: [String])
         case success(txIds: [String])
     }

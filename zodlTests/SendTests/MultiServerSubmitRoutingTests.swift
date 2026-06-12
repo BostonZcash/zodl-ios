@@ -62,7 +62,7 @@ import ComposableArchitecture
     @Test func partialSubmissionRoutesToFailureSupportState() async {
         let firstTxId = Data([0xAA]).toHexStringTxId()
         let secondTxId = Data([0xBB]).toHexStringTxId()
-        let statuses = ["accepted by endpoint 1", "rejected by all servers"]
+        let statuses = ["accepted by endpoint 1", "all servers unreachable"]
         let store = makeStore(result: .partial(txIds: [firstTxId, secondTxId], statuses: statuses))
 
         await store.send(.sendTriggered)
@@ -94,11 +94,7 @@ import ComposableArchitecture
     @Test func timeoutRoutesToPendingWithTimeoutCopy() async {
         let txId = Data([0xAA]).toHexStringTxId()
         let store = makeStore(
-            result: .grpcFailure(
-                txIds: [txId],
-                description: "Timed out waiting for endpoint response",
-                reason: .timeout
-            ),
+            result: .grpcFailure(txIds: [txId], reason: .timeout),
             txIdExists: true
         )
 
@@ -235,6 +231,41 @@ import ComposableArchitecture
         #expect(store.state.pcztWithProofs == nil)
         #expect(store.state.pcztWithSigs == nil)
     }
+
+    @Test func pcztTimeoutRoutesToPendingWithTimeoutCopy() async {
+        let txId = Data([0xAA]).toHexStringTxId()
+
+        var initialState = SendConfirmation.State(
+            address: "ztestaddr",
+            amount: Zatoshi(100_000),
+            feeRequired: Zatoshi(10_000),
+            message: "",
+            proposal: .testOnlyFakeProposal(totalFee: 10_000)
+        )
+        initialState.pcztWithProofs = Pczt([0x10, 0x11])
+        initialState.pcztWithSigs = Pczt([0x20, 0x21])
+
+        let store = TestStore(initialState: initialState) {
+            SendConfirmation()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        store.dependencies.mainQueue = .immediate
+        store.dependencies.zcashSDKEnvironment = .testnet
+        store.dependencies.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in
+            .grpcFailure(txIds: [txId], reason: .timeout)
+        }
+        store.dependencies.sdkSynchronizer.txIdExists = { _ in true }
+
+        await store.send(.createTransactionFromPCZT)
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.result == .pending)
+        #expect(store.state.txIdToExpand == txId)
+        #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
+    }
 }
 // MARK: - Swap & Pay routing
 
@@ -279,10 +310,30 @@ import ComposableArchitecture
         }
     }
 
+    @Test func missingProposalRoutesToFailureNotPending() async {
+        // No proposal means nothing was created or submitted, so there is no transaction the
+        // "pending" screen could be waiting for — this must land on the failure screen.
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = Store(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+        }
+
+        store.send(.swapRequested)
+        await waitForStore {
+            if case .sendResultFailure = store.state.path.last { return true }
+            return false
+        }
+    }
+
     @Test func partialSubmissionRoutesToFailureSupportState() async throws {
         let firstTxId = Data([0xAA]).toHexStringTxId()
         let secondTxId = Data([0xBB]).toHexStringTxId()
-        let statuses = ["accepted by endpoint 1", "rejected by all servers"]
+        let statuses = ["accepted by endpoint 1", "all servers unreachable"]
         let store = makeStore(result: .partial(txIds: [firstTxId, secondTxId], statuses: statuses))
 
         store.send(.swapRequested)
@@ -310,11 +361,7 @@ import ComposableArchitecture
     @Test func timeoutSubmissionRoutesToPendingWithTimeoutCopy() async throws {
         let txId = Data([0xAA]).toHexStringTxId()
         let store = makeStore(
-            result: .grpcFailure(
-                txIds: [txId],
-                description: "Timed out waiting for endpoint response",
-                reason: .timeout
-            ),
+            result: .grpcFailure(txIds: [txId], reason: .timeout),
             txIdExists: true
         )
 
@@ -502,22 +549,31 @@ import ComposableArchitecture
         return (transactionSentCalls.withValue { $0 }, alertCalls.withValue { $0 })
     }
 
-    @Test func grpcFailureFailsEvenWhenTxExistsLocally() async {
+    @Test func grpcFailureReportsSentWhenTxExistsLocally() async {
+        // A transport-level failure is not a definitive failure: the SDK recorded a retry plan
+        // before any network attempt and keeps rebroadcasting until the transaction mines or
+        // expires, so it may still settle. Telling Flexa "failed" here would prompt the user
+        // to pay again and risk a double payment.
         let outcome = await runFlexa(result: .grpcFailure(txIds: [FlexaTestConstants.txId]), txIdExists: true)
 
-        #expect(outcome.sent.isEmpty)
-        #expect(outcome.alerts.count == 1)
+        #expect(outcome.sent.count == 1)
+        #expect(outcome.sent.first?.1 == FlexaTestConstants.txId)
+        #expect(outcome.alerts.isEmpty)
     }
 
-    @Test func grpcFailureTimeoutFailsEvenWhenTxExistsLocally() async {
+    @Test func grpcFailureTimeoutReportsSentWhenTxExistsLocally() async {
         let outcome = await runFlexa(
-            result: .grpcFailure(
-                txIds: [FlexaTestConstants.txId],
-                description: "Timed out waiting for endpoint response",
-                reason: .timeout
-            ),
+            result: .grpcFailure(txIds: [FlexaTestConstants.txId], reason: .timeout),
             txIdExists: true
         )
+
+        #expect(outcome.sent.count == 1)
+        #expect(outcome.sent.first?.1 == FlexaTestConstants.txId)
+        #expect(outcome.alerts.isEmpty)
+    }
+
+    @Test func grpcFailureFailsWhenTxIsMissingLocally() async {
+        let outcome = await runFlexa(result: .grpcFailure(txIds: [FlexaTestConstants.txId]), txIdExists: false)
 
         #expect(outcome.sent.isEmpty)
         #expect(outcome.alerts.count == 1)
@@ -527,7 +583,7 @@ import ComposableArchitecture
         let outcome = await runFlexa(
             result: .partial(
                 txIds: [FlexaTestConstants.txId],
-                statuses: ["accepted by endpoint 1", "rejected by all servers"]
+                statuses: ["accepted by endpoint 1", "all servers unreachable"]
             ),
             txIdExists: true
         )
@@ -555,7 +611,10 @@ import ComposableArchitecture
 
 @MainActor
 private func waitForStore(
-    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    // Generous deadline: the polling runs on the main actor, which the rest of the test suite
+    // contends for during a full parallel run. The poll exits as soon as the condition holds,
+    // so a healthy test never waits this long.
+    timeoutNanoseconds: UInt64 = 15_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {

@@ -33,8 +33,19 @@ import ComposableArchitecture
             zcashSDKEnvironment: environment(networkType: .mainnet, endpointHost: "fallback.server")
         )
 
+        // Hardcoded on purpose: comparing against `ZcashSDKEnvironment.endpoints(for:)` would
+        // pass even if the known-server list shrank or changed, since the implementation
+        // returns exactly that call.
         #expect(
-            endpoints.map { $0.server() } == ZcashSDKEnvironment.endpoints(for: .mainnet).map { $0.server() }
+            endpoints.map { $0.server() } == [
+                "zec.rocks:443",
+                "na.zec.rocks:443",
+                "sa.zec.rocks:443",
+                "eu.zec.rocks:443",
+                "ap.zec.rocks:443",
+                "us.zec.stardust.rest:443",
+                "eu.zec.stardust.rest:443"
+            ]
         )
     }
 
@@ -123,44 +134,50 @@ import ComposableArchitecture
     @Test func singleTimeoutMapsToTimeoutGrpcFailure() {
         let result = map(txIds: [txIdA], outcomes: [.timedOut])
 
-        #expect(
-            result == .grpcFailure(
-                txIds: [txIdA],
-                description: timeoutDescription,
-                reason: .timeout
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA], reason: .timeout))
     }
 
-    @Test func unreachableFirstTransactionInBatchMapsToPartial() {
+    @Test func unreachableFirstTransactionInBatchWithNoAcceptanceMapsToGrpcFailure() {
+        // Zero acceptances must never read as "partially accepted": trailing `.notAttempted`
+        // reports are ignored the same way the `.rejected` branch ignores them.
         let result = map(txIds: [txIdA, txIdB], outcomes: [.unreachable, .notAttempted])
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: ["rejected by all servers", "notAttempted"]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
-    @Test func cancelledFirstTransactionInBatchMapsToPartialLikeUnreachable() {
+    @Test func cancelledFirstTransactionInBatchMapsToGrpcFailureLikeUnreachable() {
         let result = map(txIds: [txIdA, txIdB], outcomes: [.cancelled, .notAttempted])
 
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
+    }
+
+    @Test func timeoutFirstTransactionInBatchWithNoAcceptanceMapsToTimeoutGrpcFailure() {
+        let result = map(txIds: [txIdA, txIdB], outcomes: [.timedOut, .notAttempted])
+
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
+    }
+
+    @Test func acceptanceAfterTransportFailureMapsToPartial() {
+        // With per-transaction submission a later transaction can be accepted after an
+        // earlier one failed, so acceptances are counted across the whole batch, not
+        // just the prefix before the first failure.
+        let result = map(txIds: [txIdA, txIdB], outcomes: [.timedOut, .accepted(by: endpoints[0])])
+
         #expect(
             result == .partial(
                 txIds: [txIdA, txIdB],
-                statuses: ["rejected by all servers", "notAttempted"]
+                statuses: [timeoutDescription, "accepted by endpoint 1"]
             )
         )
     }
 
-    @Test func timeoutFirstTransactionInBatchMapsToPartial() {
-        let result = map(txIds: [txIdA, txIdB], outcomes: [.timedOut, .notAttempted])
+    @Test func cancelledStatusIsDistinctFromUnreachable() {
+        let result = map(txIds: [txIdA, txIdB], outcomes: [.accepted(by: endpoints[0]), .cancelled])
 
         #expect(
             result == .partial(
                 txIds: [txIdA, txIdB],
-                statuses: [timeoutDescription, "notAttempted"]
+                statuses: ["accepted by endpoint 1", "submission cancelled"]
             )
         )
     }
@@ -207,7 +224,7 @@ import ComposableArchitecture
         #expect(
             result == .partial(
                 txIds: [txIdA, txIdB],
-                statuses: ["accepted by endpoint 3", "rejected by all servers"]
+                statuses: ["accepted by endpoint 3", "all servers unreachable"]
             )
         )
     }
@@ -305,7 +322,7 @@ import ComposableArchitecture
                 submittedEndpoints.withValue { $0.append(contentsOf: endpoints.map { $0.server() }) }
                 submittedRawTxs.withValue { $0.append(contentsOf: transactions.map { $0.raw }) }
                 return transactions.map { transaction in
-                    TransactionSubmissionReport(txId: transaction.txId, outcome: .accepted(by: manualEndpoint))
+                    (txId: transaction.txId, outcome: .accepted(by: manualEndpoint))
                 }
             }
         )
@@ -327,10 +344,64 @@ import ComposableArchitecture
             submit: { _, _ in [] }
         )
 
+        // Nothing was accepted, so this must not surface as "partially accepted" either —
+        // the transactions are in the wallet and may still be broadcast by retries.
+        #expect(
+            result == .grpcFailure(
+                txIds: [Data([0xAA]).toHexStringTxId(), Data([0xBB]).toHexStringTxId()]
+            )
+        )
+    }
+
+    @Test func everyTransactionIsSubmittedEvenAfterEarlierFailures() async throws {
+        let tx1 = try makeCreatedTransaction(raw: Data([0x01]), rawID: Data([0xAA]))
+        let tx2 = try makeCreatedTransaction(raw: Data([0x02]), rawID: Data([0xBB]))
+        let tx3 = try makeCreatedTransaction(raw: Data([0x03]), rawID: Data([0xCC]))
+        let endpoint = LightWalletEndpoint(address: "manual.server", port: 9067)
+        let submittedTxIds = LockIsolated<[Data]>([])
+
+        let reports = await SDKSynchronizerClient.submitTransactionsIndividually(
+            [tx1, tx2, tx3],
+            to: [endpoint],
+            submitSingle: { transaction, _ in
+                submittedTxIds.withValue { $0.append(transaction.txId) }
+                if transaction.txId == tx1.txId { return .timedOut }
+                if transaction.txId == tx2.txId { return .rejected(code: -25, message: "low fee") }
+                return .accepted(by: endpoint)
+            }
+        )
+
+        // A failure must not stop the later transactions from being submitted: an unsubmitted
+        // transaction never gets a retry plan in the SDK and would be stranded forever.
+        #expect(submittedTxIds.withValue { $0 } == [tx1.txId, tx2.txId, tx3.txId])
+        #expect(reports.map { $0.txId } == [tx1.txId, tx2.txId, tx3.txId])
+        #expect(reports.map { $0.outcome } == [.timedOut, .rejected(code: -25, message: "low fee"), .accepted(by: endpoint)])
+    }
+
+    @Test func reportsArePairedByTxIdNotPosition() async throws {
+        let tx1 = try makeCreatedTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = try makeCreatedTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let endpoint = LightWalletEndpoint(address: "manual.server", port: 9067)
+
+        let result = await SDKSynchronizerClient.submitCreatedTransactions(
+            [tx1, tx2],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: manualPreferences(),
+            zcashSDKEnvironment: environment(endpoint: endpoint),
+            submit: { transactions, _ in
+                // Reports deliberately returned out of order: pairing must use the report's
+                // txId, not its position.
+                [
+                    (txId: transactions[1].txId, outcome: .accepted(by: endpoint)),
+                    (txId: transactions[0].txId, outcome: .rejected(code: -25, message: "low fee"))
+                ]
+            }
+        )
+
         #expect(
             result == .partial(
                 txIds: [Data([0xAA]).toHexStringTxId(), Data([0xBB]).toHexStringTxId()],
-                statuses: ["notAttempted", "notAttempted"]
+                statuses: ["rejected code: -25", "accepted by endpoint 1"]
             )
         )
     }

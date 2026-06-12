@@ -76,6 +76,57 @@ import ComposableArchitecture
         #expect(prefs.server?.host == "na.zec.rocks")
     }
 
+    @Test func modeOnlyChangeSerializesThroughTransactionGuard() async throws {
+        // Submission endpoints are read at submit time, so a connection-mode flip that lands
+        // mid-submission changes where in-flight transactions fan out (e.g. a send pinned to a
+        // private server fanning out to all public servers). A Save that needs no actual server
+        // switch must still serialize the preference write through the transaction guard.
+        let prefs = Prefs()
+        let events = LockIsolated<[String]>([])
+        let switched = LockIsolated(false)
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .automatic
+        initial.initialConnectionMode = .manual // a real change so hasChanges is true
+        initial.topKServers = [ZcashSDKEnvironment.Server.hardcoded("na.zec.rocks:443")]
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                // Same host and port as the recommended server: no switch is needed.
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in switched.setValue(true) }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in [] }
+            $0.userStoredPreferences.setAutomaticServerSelection = { value in
+                prefs.automatic = value
+                events.withValue { $0.append("setMode") }
+            }
+            $0.userStoredPreferences.setServer = { prefs.server = $0 }
+            $0.transactionGuard = .testValue
+            $0.transactionGuard.acquire = { events.withValue { $0.append("acquire") } }
+            $0.transactionGuard.release = { events.withValue { $0.append("release") } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        #expect(!switched.value, "same host and port must not trigger an actual server switch")
+        #expect(prefs.automatic == true)
+
+        let order = events.withValue { $0 }
+        let acquireIndex = try #require(order.firstIndex(of: "acquire"))
+        let setModeIndex = try #require(order.firstIndex(of: "setMode"))
+        let releaseIndex = try #require(order.lastIndex(of: "release"))
+        #expect(acquireIndex < setModeIndex, "the mode flip must wait for the guard")
+        #expect(setModeIndex < releaseIndex, "the mode flip must happen before the guard is released")
+    }
+
     @Test func noChangesDoesNothing() async {
         let store = TestStore(initialState: ServerSetup.State()) {
             ServerSetup()

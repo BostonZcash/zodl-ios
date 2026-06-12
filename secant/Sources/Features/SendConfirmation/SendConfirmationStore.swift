@@ -300,9 +300,9 @@ struct SendConfirmation {
                         }
 
                         switch result {
-                        case let .grpcFailure(txIds, description, reason):
+                        case let .grpcFailure(txIds, reason):
                             await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
                             ))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
@@ -574,11 +574,11 @@ struct SendConfirmation {
                         await send(.resetPCZTs)
 
                         switch result {
-                        case let .grpcFailure(txIds, description, reason):
+                        case let .grpcFailure(txIds, reason):
                             await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
                             ))
-                            await send(.updateFailedData(-999, "PCZT transaction rejected by all servers", pcztMessage))
+                            await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed(

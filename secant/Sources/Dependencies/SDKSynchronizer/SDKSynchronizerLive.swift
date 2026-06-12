@@ -144,7 +144,9 @@ extension SDKSynchronizerClient: DependencyKey {
                     userStoredPreferences: userStoredPreferences,
                     zcashSDKEnvironment: zcashSDKEnvironment,
                     submit: { createdTransactions, endpoints in
-                        await synchronizer.broadcaster.submit(transactions: createdTransactions, to: endpoints)
+                        await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                            await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                        }
                     }
                 )
             },
@@ -215,7 +217,9 @@ extension SDKSynchronizerClient: DependencyKey {
                     userStoredPreferences: userStoredPreferences,
                     zcashSDKEnvironment: zcashSDKEnvironment,
                     submit: { createdTransactions, endpoints in
-                        await synchronizer.broadcaster.submit(transactions: createdTransactions, to: endpoints)
+                        await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                            await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                        }
                     }
                 )
             },
@@ -279,17 +283,46 @@ extension SDKSynchronizerClient {
         static let noTransactionsDescription = "No transactions created"
         static let notAttemptedStatus = "notAttempted"
         static let timeoutDescription = "Timed out waiting for endpoint response; transaction may still have been broadcast"
-        static let unreachableStatus = "rejected by all servers"
+        // The SDK reports `.unreachable` when every endpoint failed at the transport level and
+        // no server-level rejection was observed — never label that "rejected" in support data.
+        static let unreachableStatus = "all servers unreachable"
+        static let cancelledStatus = "submission cancelled"
+    }
+
+    /// Submits one transaction at a time so every one of them gets its retry plan recorded by the
+    /// SDK. The SDK's batch `submit(transactions:to:)` stops at the first transaction that isn't
+    /// accepted and leaves the remaining ones awaiting — excluded from the SDK's background
+    /// resubmission until the app submits them, which it never does separately. Submitting each
+    /// transaction restores the pre-Broadcaster behavior where background resubmission kept
+    /// rebroadcasting every created transaction until it mined or expired.
+    static func submitTransactionsIndividually(
+        _ transactions: [CreatedTransaction],
+        to endpoints: [LightWalletEndpoint],
+        submitSingle: (CreatedTransaction, [LightWalletEndpoint]) async -> TransactionSubmissionOutcome
+    ) async -> [(txId: Data, outcome: TransactionSubmissionOutcome)] {
+        var reports: [(txId: Data, outcome: TransactionSubmissionOutcome)] = []
+        for transaction in transactions {
+            let outcome = await submitSingle(transaction, endpoints)
+            reports.append((txId: transaction.txId, outcome: outcome))
+        }
+
+        return reports
     }
 
     /// Submits already-created transactions to the endpoints selected by the user's connection
     /// mode and maps the SDK submission reports onto `CreateProposedTransactionsResult`.
+    ///
+    /// Note on the transaction guard: the SDK resumes each submission as soon as its outcome is
+    /// decided; after a first acceptance, the remaining in-flight broadcasts continue for a short
+    /// grace window in the background, slightly outliving the caller's `withSubmission` window.
+    /// That tail is safe — those broadcasts run on their own ephemeral connections, so a server
+    /// switch that follows the guard release cannot corrupt them.
     static func submitCreatedTransactions(
         _ transactions: [CreatedTransaction],
         logPrefix: String,
         userStoredPreferences: UserPreferencesStorageClient,
         zcashSDKEnvironment: ZcashSDKEnvironment,
-        submit: ([CreatedTransaction], [LightWalletEndpoint]) async -> [TransactionSubmissionReport]
+        submit: ([CreatedTransaction], [LightWalletEndpoint]) async -> [(txId: Data, outcome: TransactionSubmissionOutcome)]
     ) async -> CreateProposedTransactionsResult {
         guard !transactions.isEmpty else {
             return .failure(txIds: [], code: -1, description: MultiServerSubmission.noTransactionsDescription)
@@ -304,9 +337,23 @@ extension SDKSynchronizerClient {
         LoggerProxy.event("\(logPrefix) Submitting \(transactions.count) transaction(s) to \(endpoints.count) server(s).")
 
         let reports = await submit(transactions, endpoints)
+
+        // Pair each transaction with its report through the report's txId — never by position.
+        // A transaction the SDK didn't report on counts as not attempted.
+        let outcomesByTxId = Dictionary(
+            reports.map { ($0.txId.toHexStringTxId(), $0.outcome) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let outcomes = txIds.map { outcomesByTxId[$0] ?? TransactionSubmissionOutcome.notAttempted }
+        if outcomesByTxId.count != transactions.count {
+            LoggerProxy.error(
+                "\(logPrefix) Expected reports for \(transactions.count) transaction(s), got \(reports.count); missing ones treated as not attempted."
+            )
+        }
+
         let result = mapSubmissionOutcomes(
             txIds: txIds,
-            outcomes: reports.map { $0.outcome },
+            outcomes: outcomes,
             endpoints: endpoints
         )
 
@@ -315,7 +362,7 @@ extension SDKSynchronizerClient {
             LoggerProxy.event("\(logPrefix) All \(transactions.count) transaction(s) accepted.")
         case let .failure(_, code, _):
             LoggerProxy.error("\(logPrefix) Submission rejected with code \(code).")
-        case let .grpcFailure(_, _, reason):
+        case let .grpcFailure(_, reason):
             if reason == .timeout {
                 LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
             } else {
@@ -346,9 +393,14 @@ extension SDKSynchronizerClient {
     /// `outcomes[i]` belongs to `txIds[i]`; `endpoints` is the ordered list the transactions were
     /// submitted to and is only used to derive redacted "endpoint N" labels (never hostnames).
     ///
+    /// `.partial` requires at least one acceptance; with zero acceptances the result is decided
+    /// by the first not-accepted outcome (`.rejected` -> definitive failure, transport-level
+    /// failures -> `.grpcFailure`, which routes to "pending" because the transactions are in the
+    /// wallet and keep being rebroadcast by the SDK's background resubmission).
+    ///
     /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
-    /// resumed a nil winner on cancellation and routed it through the "rejected by all servers"
-    /// branch, and the caller was being torn down anyway.
+    /// resumed a nil winner on cancellation and routed it through the same branch as a transport
+    /// failure, and the caller was being torn down anyway.
     static func mapSubmissionOutcomes(
         txIds: [String],
         outcomes: [TransactionSubmissionOutcome],
@@ -375,22 +427,29 @@ extension SDKSynchronizerClient {
         }
 
         let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
-        let acceptedCount = firstNotAcceptedIndex
-        let notAttemptedCount = outcomes.count - firstNotAcceptedIndex - 1
+        let acceptedCount = outcomes.filter { outcome in
+            if case .accepted = outcome { return true }
+            return false
+        }
+        .count
 
         switch outcomes[firstNotAcceptedIndex] {
         case .accepted:
-            return .success(txIds: txIds)
+            // Unreachable: `firstNotAcceptedIndex` never points at an accepted outcome. Keep the
+            // compiler-required branch loud so a refactor of the index derivation cannot silently
+            // turn a failed submission into a reported success.
+            assertionFailure("mapSubmissionOutcomes: first not-accepted outcome resolved to .accepted")
+            return .partial(txIds: txIds, statuses: statuses)
         case let .rejected(code, message):
             return acceptedCount == 0
                 ? .failure(txIds: txIds, code: code, description: message)
                 : .partial(txIds: txIds, statuses: statuses)
         case .timedOut:
-            return acceptedCount == 0 && notAttemptedCount == 0
-                ? .grpcFailure(txIds: txIds, description: MultiServerSubmission.timeoutDescription, reason: .timeout)
+            return acceptedCount == 0
+                ? .grpcFailure(txIds: txIds, reason: .timeout)
                 : .partial(txIds: txIds, statuses: statuses)
         case .unreachable, .cancelled, .notAttempted:
-            return acceptedCount == 0 && notAttemptedCount == 0
+            return acceptedCount == 0
                 ? .grpcFailure(txIds: txIds)
                 : .partial(txIds: txIds, statuses: statuses)
         }
@@ -402,8 +461,10 @@ extension SDKSynchronizerClient {
             return "accepted by \(endpointLabel(for: endpoint, in: endpoints))"
         case let .rejected(code, _):
             return "rejected code: \(code)"
-        case .unreachable, .cancelled:
+        case .unreachable:
             return MultiServerSubmission.unreachableStatus
+        case .cancelled:
+            return MultiServerSubmission.cancelledStatus
         case .timedOut:
             return MultiServerSubmission.timeoutDescription
         case .notAttempted:
