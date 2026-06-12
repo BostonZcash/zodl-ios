@@ -400,19 +400,18 @@ extension TransactionState {
         totalReceived = transaction.totalReceived
 
         let isPending = isSentTransaction ? minedHeight == nil : transaction.state == .pending
-        // The SDK marks `transaction.state == .expired` only when its Rust-side `expired_unmined`
-        // column has been flipped to true. Across a hardfork that column doesn't reliably update
-        // for txs that were pending at the time of the fork: the user sees their stuck send as
-        // "Sending" indefinitely. Cross-check expiry against the current chain tip so we mark
-        // such a tx failed even when the SDK column hasn't caught up.
-        let chainTipPastExpiry: Bool = {
-            guard isSentTransaction,
-                  minedHeight == nil,
-                  let expiry = transaction.expiryHeight, expiry > 0,
-                  let tip = currentChainTip
-            else { return false }
-            return tip >= expiry
-        }()
+        // Fallback for when the SDK's `expired_unmined` column lags (e.g. an unmined sent tx
+        // that was pending across a consensus-rule change keeps reporting `.pending` indefinitely).
+        let chainTipPastExpiry: Bool
+        if isSentTransaction,
+           minedHeight == nil,
+           let expiry = transaction.expiryHeight, expiry > 0,
+           let tip = currentChainTip,
+           tip >= expiry {
+            chainTipPastExpiry = true
+        } else {
+            chainTipPastExpiry = false
+        }
         let isExpired = transaction.state == .expired || chainTipPastExpiry
         
         // failed check
