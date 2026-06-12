@@ -89,17 +89,43 @@ extension TaxExporterClient: DependencyKey {
 
                 let csvData = csvString.data(using: .utf8) ?? Data()
 
-                // Create a temporary file URL
+                // Purge exports left behind by previous runs (e.g. when the app was
+                // killed while the share sheet was open), then write the new CSV into
+                // a unique, file-protected directory.
+                try? FileManager.default.removeItem(at: exportsRootURL())
+
+                let exportDirectory = exportsRootURL().appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: exportDirectory,
+                    withIntermediateDirectories: true,
+                    attributes: [.protectionKey: FileProtectionType.complete]
+                )
+
                 let component = String(localizable: .taxExportFileName($1, String(prevYear)))
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(component)
+                let tempURL = exportDirectory.appendingPathComponent(component)
 
                 do {
-                    try csvData.write(to: tempURL)
+                    try csvData.write(to: tempURL, options: [.completeFileProtection])
                     return tempURL
                 } catch {
+                    try? FileManager.default.removeItem(at: exportDirectory)
                     throw error
                 }
+            },
+            cleanupExports: {
+                let rootURL = exportsRootURL()
+
+                guard FileManager.default.fileExists(atPath: rootURL.path) else {
+                    return
+                }
+
+                try FileManager.default.removeItem(at: rootURL)
             }
         )
+    }
+
+    /// All tax CSV exports live under this directory so they can be removed wholesale.
+    private static func exportsRootURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("tax-exports", isDirectory: true)
     }
 }
