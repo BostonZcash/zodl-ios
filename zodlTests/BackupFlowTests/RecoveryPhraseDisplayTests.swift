@@ -7,6 +7,7 @@
 
 import Testing
 import ComposableArchitecture
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 /// Covers MOB-1363: seed words may be loaded into `RecoveryPhraseDisplay` state only
@@ -55,11 +56,39 @@ import ComposableArchitecture
 
         await store.send(.recoveryPhraseUnhideRequested)
 
-        await store.receive(.recoveryPhraseRevealed) {
+        await store.receive(.recoveryPhraseRevealed(StoredWallet.placeholder)) {
             $0.birthday = StoredWallet.placeholder.birthday
             $0.birthdayValue = "0"
             $0.phrase = RecoveryPhrase.placeholder
             $0.isRecoveryPhraseHidden = false
+        }
+
+        await store.finish()
+    }
+
+    @MainActor @Test func revealFailureMarksSeedUnavailableAndPurgesOnHide() async {
+        let store = TestStore(
+            initialState: .initial
+        ) {
+            RecoveryPhraseDisplay()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.walletStorage.exportWallet = { throw ZcashError.synchronizerNotPrepared }
+        }
+
+        await store.send(.recoveryPhraseUnhideRequested)
+
+        // The keychain read fails *after* a successful authentication: the seed is
+        // never loaded, the screen surfaces a persistent "no words" state, and the
+        // phrase stays hidden.
+        await store.receive(.recoveryPhraseRevealFailed(.synchronizerNotPrepared)) {
+            $0.isSeedUnavailable = true
+            $0.alert = AlertState.storedWalletFailure(.synchronizerNotPrepared)
+        }
+
+        // Leaving / re-appearing clears the failure so the screen can offer Reveal again.
+        await store.send(.hideEverything) {
+            $0.isSeedUnavailable = false
         }
 
         await store.finish()

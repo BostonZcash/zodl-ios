@@ -47,6 +47,8 @@
 		348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */; };
 		349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */; };
 		349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */; };
+		349CE5F82FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5F72FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift */; };
+		349CE65A2FDC358500E2B9CF /* AdvancedSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */; };
 		34AA6DD82F85774F00D244E2 /* SwapAndPayStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CF82F85774F00D244E2 /* SwapAndPayStore.swift */; };
 		34AA6DD92F85774F00D244E2 /* RemoteStorageInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C102F85774F00D244E2 /* RemoteStorageInterface.swift */; };
 		34AA6DDA2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
@@ -1430,7 +1432,6 @@
 		37D0F0000000000000000024 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		38923B93B161EE61D86F3070 /* AccessibilityID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F94E337360CE50FACFB04CE /* AccessibilityID.swift */; };
 		54B3A48C4A5790F1E38FEB6C /* RecoveryPhraseBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82E83225E24EEF486F002B79 /* RecoveryPhraseBackupTests.swift */; };
-		349CE5F82FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5F72FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift */; };
 		63B448CA6B0B3D800DE8CB2B /* SecItemClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D430BF2CF73CFB82A13F1CB /* SecItemClientTests.swift */; };
 		7F2ADC6502AEA05DC52D423E /* CurrencyConversionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 315332C8DF63DFCDB9187BF2 /* CurrencyConversionTests.swift */; };
 		8A7BC563281CD8FAF2463BBC /* QRCodeGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1983F0BB6D025B08BBD186B /* QRCodeGeneratorTests.swift */; };
@@ -1623,6 +1624,7 @@
 		349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiServerSubmissionTests.swift; sourceTree = "<group>"; };
 		349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiServerSubmitRoutingTests.swift; sourceTree = "<group>"; };
 		349CE5F72FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryPhraseDisplayTests.swift; sourceTree = "<group>"; };
+		349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsTests.swift; sourceTree = "<group>"; };
 		34AA6BA42F85774F00D244E2 /* ABv1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABv1.swift; sourceTree = "<group>"; };
 		34AA6BA62F85774F00D244E2 /* AddressBookContacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookContacts.swift; sourceTree = "<group>"; };
 		34AA6BA72F85774F00D244E2 /* AddressBookEncryption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryption.swift; sourceTree = "<group>"; };
@@ -2335,6 +2337,7 @@
 				9EF8135927ECC25E0075AF48 /* UtilTests */,
 				9E139AAD2B07B39700D104B8 /* ZatoshiStringRepresentation */,
 				349CE5D42FDC0EDF00E2B9CF /* SendTests */,
+				349CE6582FDC358500E2B9CF /* SettingsTests */,
 			);
 			path = zodlTests;
 			sourceTree = "<group>";
@@ -2415,6 +2418,14 @@
 				349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */,
 			);
 			path = SendTests;
+			sourceTree = "<group>";
+		};
+		349CE6582FDC358500E2B9CF /* SettingsTests */ = {
+			isa = PBXGroup;
+			children = (
+				349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */,
+			);
+			path = SettingsTests;
 			sourceTree = "<group>";
 		};
 		34AA6BA52F85774F00D244E2 /* Migration */ = {
@@ -5066,6 +5077,7 @@
 				349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */,
 				34D06C912FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift in Sources */,
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
+				349CE65A2FDC358500E2B9CF /* AdvancedSettingsTests.swift in Sources */,
 				AD0D00202D00000100000001 /* VotingAPIResponseParserTests.swift in Sources */,
 				AD0D00232D00000100000001 /* VotingServiceConfigTests.swift in Sources */,
 				349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */,

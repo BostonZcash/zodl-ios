@@ -10352,6 +10352,23 @@
         }
       }
     },
+    "recoveryPhraseDisplay.noWords" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The keys are missing. No backup phrase is stored in the keychain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faltan las claves. No hay ninguna frase de respaldo almacenada en el llavero."
+          }
+        }
+      }
+    },
     "recoveryPhraseDisplay.proceedWarning" : {
       "extractionState" : "manual",
       "localizations" : {

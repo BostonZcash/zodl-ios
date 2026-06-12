@@ -44,15 +44,24 @@ struct RecoveryPhraseDisplayView: View {
                 Spacer()
 
                 if store.isRecoveryPhraseHidden {
-                    ZashiButton(
-                        String(localizable: .recoveryPhraseDisplayReveal),
-                        prefixView:
-                            Asset.Assets.eyeOn.image
-                            .zImage(size: 20, style: Design.Btns.Primary.fg)
-                    ) {
-                        store.send(.recoveryPhraseUnhideRequested, animation: .easeInOut)
+                    if store.isSeedUnavailable {
+                        Text(localizable: .recoveryPhraseDisplayNoWords)
+                            .zFont(.medium, size: 14, style: Design.Text.primary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 24)
+                    } else {
+                        ZashiButton(
+                            String(localizable: .recoveryPhraseDisplayReveal),
+                            prefixView:
+                                Asset.Assets.eyeOn.image
+                                .zImage(size: 20, style: Design.Btns.Primary.fg)
+                        ) {
+                            store.send(.recoveryPhraseUnhideRequested, animation: .easeInOut)
+                        }
+                        .padding(.bottom, 24)
                     }
-                    .padding(.bottom, 24)
                 } else {
                     if store.isWalletBackup {
                         ZashiButton(
@@ -174,28 +183,30 @@ struct RecoveryPhraseDisplayView: View {
     }
 
     @ViewBuilder func birthday() -> some View {
-        if store.isRecoveryPhraseHidden || store.birthdayValue != nil {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(localizable: .recoveryPhraseDisplayBirthdayTitle)
-                    .zFont(.medium, size: 14, style: Design.Inputs.Filled.text)
+        // The birthday row is always part of the layout and mirrors the seed grid:
+        // masked dots while hidden, the real height after a successful reveal. Gating
+        // visibility on `birthdayValue` would make the row vanish on reveal for a
+        // wallet whose stored birthday height is nil.
+        VStack(alignment: .leading, spacing: 0) {
+            Text(localizable: .recoveryPhraseDisplayBirthdayTitle)
+                .zFont(.medium, size: 14, style: Design.Inputs.Filled.text)
 
-                HStack {
-                    Text(store.birthdayValue ?? Constants.hiddenWordPlaceholder)
-                        .zFont(.medium, size: 16, style: Design.Inputs.Filled.text)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .blur(radius: store.isRecoveryPhraseHidden ? Constants.blurBDValue : 0)
+            HStack {
+                Text(store.birthdayValue ?? Constants.hiddenWordPlaceholder)
+                    .zFont(.medium, size: 16, style: Design.Inputs.Filled.text)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .blur(radius: store.isRecoveryPhraseHidden ? Constants.blurBDValue : 0)
 
-                    Spacer()
-                }
-                .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._lg)
-                        .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                }
-                .padding(.top, 6)
+                Spacer()
             }
-            .padding(.top, 24)
+            .background {
+                RoundedRectangle(cornerRadius: Design.Radius._lg)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+            }
+            .padding(.top, 6)
         }
+        .padding(.top, 24)
     }
     
     @ViewBuilder private func helpSheetContent() -> some View {
