@@ -5,6 +5,7 @@
 //  Created by Michal Fousek on 2026-06-12.
 //
 
+@preconcurrency import Combine
 import Foundation
 import Testing
 import ComposableArchitecture
@@ -233,5 +234,400 @@ import ComposableArchitecture
         #expect(store.state.failedCode == -999)
         #expect(store.state.pcztWithProofs == nil)
         #expect(store.state.pcztWithSigs == nil)
+    }
+}
+// MARK: - Swap & Pay routing
+
+// Serialized: drives stores sharing the process-global `selectedWalletAccount` @Shared state.
+// `SwapAndPayCoordFlow.State` is not Equatable, so these tests drive a plain `Store` and poll
+// for the expected navigation state (same approach as VotingCoordFlowCoordinatorTests).
+@Suite(.serialized) @MainActor struct MultiServerSubmitSwapRoutingTests {
+    private var testWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 0, count: 16)),
+                name: "Test",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    private func makeStore(
+        result: SDKSynchronizerClient.CreateProposedTransactionsResult,
+        txIdExists: Bool = false
+    ) -> StoreOf<SwapAndPayCoordFlow> {
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        return Store(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        } withDependencies: {
+            $0.derivationTool = .liveValue
+            $0.mainQueue = .immediate
+            $0.mnemonic = .liveValue
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in result }
+            $0.sdkSynchronizer.txIdExists = { _ in txIdExists }
+        }
+    }
+
+    @Test func partialSubmissionRoutesToFailureSupportState() async throws {
+        let firstTxId = Data([0xAA]).toHexStringTxId()
+        let secondTxId = Data([0xBB]).toHexStringTxId()
+        let statuses = ["accepted by endpoint 1", "rejected by all servers"]
+        let store = makeStore(result: .partial(txIds: [firstTxId, secondTxId], statuses: statuses))
+
+        store.send(.swapRequested)
+        await waitForStore {
+            if case .sendResultFailure = store.state.path.last { return true }
+            return false
+        }
+
+        guard case let .sendResultFailure(resultState) = store.state.path.last else {
+            Issue.record("Expected Swap/Pay partial submission to route to failure")
+            return
+        }
+
+        #expect(store.state.txIdToExpand == firstTxId)
+        #expect(store.state.partialFailureTxIds == [firstTxId, secondTxId])
+        #expect(store.state.partialFailureStatuses == statuses)
+        #expect(store.state.failedCode == -999)
+        #expect(store.state.failedDescription == statuses.joined(separator: ", "))
+        #expect(resultState.txIdToExpand == firstTxId)
+        #expect(resultState.partialFailureTxIds == [firstTxId, secondTxId])
+        #expect(resultState.partialFailureStatuses == statuses)
+        #expect(resultState.failedDescription == statuses.joined(separator: ", "))
+    }
+
+    @Test func timeoutSubmissionRoutesToPendingWithTimeoutCopy() async throws {
+        let txId = Data([0xAA]).toHexStringTxId()
+        let store = makeStore(
+            result: .grpcFailure(
+                txIds: [txId],
+                description: "Timed out waiting for endpoint response",
+                reason: .timeout
+            ),
+            txIdExists: true
+        )
+
+        store.send(.swapRequested)
+        await waitForStore {
+            if case .sendResultPending = store.state.path.last { return true }
+            return false
+        }
+
+        guard case let .sendResultPending(resultState) = store.state.path.last else {
+            Issue.record("Expected Swap/Pay timeout submission to route to pending")
+            return
+        }
+
+        #expect(store.state.txIdToExpand == txId)
+        #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
+        #expect(resultState.txIdToExpand == txId)
+        #expect(resultState.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
+    }
+
+    @Test func keystonePendingKeepsPendingDescription() async throws {
+        let txId = Data([0xAA]).toHexStringTxId()
+        let timeoutDescription = String(localizable: .sendPendingTimeoutInfo)
+
+        var sendConfirmationState = SendConfirmation.State.initial
+        sendConfirmationState.address = "ztestaddr"
+        sendConfirmationState.pendingDescription = timeoutDescription
+        sendConfirmationState.result = .pending
+        sendConfirmationState.txIdToExpand = txId
+
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.path.append(.confirmWithKeystone(sendConfirmationState))
+        let keystonePathId = try #require(initialState.path.ids.last)
+
+        let store = Store(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        } withDependencies: {
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+            $0.mainQueue = .immediate
+        }
+
+        store.send(.path(.element(
+            id: keystonePathId,
+            action: .confirmWithKeystone(.updateResult(.pending))
+        )))
+        await waitForStore {
+            if case .sendResultPending = store.state.path.last { return true }
+            return false
+        }
+
+        guard case let .sendResultPending(resultState) = store.state.path.last else {
+            Issue.record("Expected Swap/Pay Keystone pending result")
+            return
+        }
+
+        #expect(store.state.txIdToExpand == txId)
+        #expect(store.state.pendingDescription == timeoutDescription)
+        #expect(resultState.txIdToExpand == txId)
+        #expect(resultState.pendingDescription == timeoutDescription)
+    }
+
+    @Test func keystonePartialFailurePropagatesSupportData() async throws {
+        let firstTxId = Data([0xAA]).toHexStringTxId()
+        let secondTxId = Data([0xBB]).toHexStringTxId()
+        let statuses = ["accepted by endpoint 1", "rejected code: -25"]
+
+        var sendConfirmationState = SendConfirmation.State.initial
+        sendConfirmationState.address = "ztestaddr"
+        sendConfirmationState.failedCode = -999
+        sendConfirmationState.failedDescription = statuses.joined(separator: ", ")
+        sendConfirmationState.partialFailureTxIds = [firstTxId, secondTxId]
+        sendConfirmationState.partialFailureStatuses = statuses
+        sendConfirmationState.result = .failure
+        sendConfirmationState.txIdToExpand = firstTxId
+
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.path.append(.confirmWithKeystone(sendConfirmationState))
+        let keystonePathId = try #require(initialState.path.ids.last)
+
+        let store = Store(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        } withDependencies: {
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+            $0.mainQueue = .immediate
+        }
+
+        store.send(.path(.element(
+            id: keystonePathId,
+            action: .confirmWithKeystone(.updateResult(.failure))
+        )))
+        await waitForStore {
+            if case .sendResultFailure = store.state.path.last { return true }
+            return false
+        }
+
+        guard case let .sendResultFailure(resultState) = store.state.path.last else {
+            Issue.record("Expected Swap/Pay Keystone partial failure to route to failure")
+            return
+        }
+
+        #expect(store.state.partialFailureTxIds == [firstTxId, secondTxId])
+        #expect(store.state.partialFailureStatuses == statuses)
+        #expect(resultState.partialFailureTxIds == [firstTxId, secondTxId])
+        #expect(resultState.partialFailureStatuses == statuses)
+        #expect(resultState.failedCode == -999)
+        #expect(resultState.txIdToExpand == firstTxId)
+    }
+}
+
+// MARK: - Flexa routing
+
+// Serialized: drives Root stores sharing the process-global `selectedWalletAccount` @Shared state.
+// `Root.State` is not Equatable, so these tests drive a plain `Store` and poll the recorded
+// Flexa handler calls.
+@Suite(.serialized) @MainActor struct MultiServerSubmitFlexaRoutingTests {
+    private enum FlexaTestConstants {
+        static let commerceSessionId = "commerce-session-id"
+        static let txId = "flexa-tx-id"
+        static let recipientAddress = "tmP3uLtGx5GPddkq8a6ddmXhqJJ3vy6tpTE"
+    }
+
+    private var testWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 0, count: 16)),
+                name: "Test",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    private func makeFlexaTransaction() -> FlexaTransaction {
+        FlexaTransaction(
+            amount: Zatoshi(100_000),
+            address: FlexaTestConstants.recipientAddress,
+            commerceSessionId: FlexaTestConstants.commerceSessionId
+        )
+    }
+
+    /// Sends a Flexa transaction request through Root with the given submission result and
+    /// waits until either `transactionSent` or a failure alert is recorded.
+    private func runFlexa(
+        result: SDKSynchronizerClient.CreateProposedTransactionsResult,
+        txIdExists: Bool
+    ) async -> (sent: [(String, String)], alerts: [(String, String)]) {
+        let transactionSentCalls = LockIsolated<[(String, String)]>([])
+        let alertCalls = LockIsolated<[(String, String)]>([])
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            $0.derivationTool = .liveValue
+            $0.flexaHandler = .noOp
+            $0.flexaHandler.transactionSent = { commerceSessionId, txId in
+                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            }
+            $0.flexaHandler.flexaAlert = { title, message in
+                alertCalls.withValue { $0.append((title, message)) }
+            }
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.mainQueue = .immediate
+            $0.mnemonic = .mock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in result }
+            $0.sdkSynchronizer.proposeTransfer = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) }
+            $0.sdkSynchronizer.txIdExists = { _ in txIdExists }
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+        }
+
+        store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+        await waitForStore {
+            transactionSentCalls.withValue { !$0.isEmpty } || alertCalls.withValue { !$0.isEmpty }
+        }
+
+        return (transactionSentCalls.withValue { $0 }, alertCalls.withValue { $0 })
+    }
+
+    @Test func grpcFailureFailsEvenWhenTxExistsLocally() async {
+        let outcome = await runFlexa(result: .grpcFailure(txIds: [FlexaTestConstants.txId]), txIdExists: true)
+
+        #expect(outcome.sent.isEmpty)
+        #expect(outcome.alerts.count == 1)
+    }
+
+    @Test func grpcFailureTimeoutFailsEvenWhenTxExistsLocally() async {
+        let outcome = await runFlexa(
+            result: .grpcFailure(
+                txIds: [FlexaTestConstants.txId],
+                description: "Timed out waiting for endpoint response",
+                reason: .timeout
+            ),
+            txIdExists: true
+        )
+
+        #expect(outcome.sent.isEmpty)
+        #expect(outcome.alerts.count == 1)
+    }
+
+    @Test func partialSubmissionFails() async {
+        let outcome = await runFlexa(
+            result: .partial(
+                txIds: [FlexaTestConstants.txId],
+                statuses: ["accepted by endpoint 1", "rejected by all servers"]
+            ),
+            txIdExists: true
+        )
+
+        #expect(outcome.sent.isEmpty)
+        #expect(outcome.alerts.count == 1)
+    }
+
+    @Test func successReportsTransactionSent() async {
+        let outcome = await runFlexa(result: .success(txIds: [FlexaTestConstants.txId]), txIdExists: true)
+
+        #expect(outcome.sent.count == 1)
+        #expect(outcome.sent.first?.0 == FlexaTestConstants.commerceSessionId)
+        #expect(outcome.sent.first?.1 == FlexaTestConstants.txId)
+        #expect(outcome.alerts.isEmpty)
+    }
+
+    @Test func successFailsWhenTxIsMissingLocally() async {
+        let outcome = await runFlexa(result: .success(txIds: [FlexaTestConstants.txId]), txIdExists: false)
+
+        #expect(outcome.sent.isEmpty)
+        #expect(outcome.alerts.count == 1)
+    }
+}
+
+@MainActor
+private func waitForStore(
+    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    sourceLocation: SourceLocation = #_sourceLocation,
+    condition: @escaping @MainActor () -> Bool
+) async {
+    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
+}
+
+// MARK: - Shielding routing
+
+// Serialized: mutates the process-global `selectedWalletAccount` @Shared state.
+@Suite(.serialized) struct MultiServerSubmitShieldingTests {
+    @Test func partialSubmissionReportsFailure() async throws {
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 0, count: 16)),
+                name: "Test",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
+        $selectedWalletAccount.withLock { $0 = account }
+
+        let states = LockIsolated<[ShieldingProcessorClient.State]>([])
+        let cancellable = withDependencies {
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .liveValue
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeShielding = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 10_000) }
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+                .partial(
+                    txIds: [Data([0xAA]).toHexStringTxId(), Data([0xBB]).toHexStringTxId()],
+                    statuses: ["accepted by endpoint 1", "rejected by all servers"]
+                )
+            }
+        } operation: {
+            let client = ShieldingProcessorClient.live()
+            let cancellable = client.observe().sink { state in
+                states.withValue { $0.append(state) }
+            }
+            client.shieldFunds()
+            return cancellable
+        }
+
+        var failedState: ShieldingProcessorClient.State?
+        for _ in 0..<200 {
+            let snapshot = states.withValue { $0 }
+            if let terminal = snapshot.first(where: { state in
+                if case .failed = state { return true }
+                if case .succeeded = state { return true }
+                if case .grpc = state { return true }
+                return false
+            }) {
+                failedState = terminal
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        cancellable.cancel()
+
+        guard case let .failed(error) = failedState else {
+            Issue.record("Expected shielding partial submission to report failure, got \(String(describing: failedState))")
+            return
+        }
+        #expect(String(describing: error).contains("partially failed"))
     }
 }

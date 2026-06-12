@@ -120,15 +120,19 @@ extension Root {
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
                         let result = try await transactionGuard.withSubmission {
-                            try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                            try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                         }
 
                         switch result {
-                        case .partial:
+                        case .failure, .partial:
                             await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
-                        case .success(let txIds), .grpcFailure(let txIds, _, _), .failure(let txIds, _, _):
+                        case .grpcFailure:
+                            await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+                        case .success(let txIds):
                             if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
                                 flexaHandler.transactionSent(transaction.commerceSessionId, txId)
+                            } else {
+                                await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
                             }
                         }
                     } catch {

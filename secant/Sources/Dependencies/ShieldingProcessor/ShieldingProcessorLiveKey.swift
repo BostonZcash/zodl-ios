@@ -73,7 +73,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                     guard let proposal else { throw "shieldFunds nil proposal" }
 
                     let result = try await transactionGuard.withSubmission {
-                        try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                        try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                     }
 
                     switch result {
@@ -81,8 +81,8 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                         subject.send(.grpc)
                     case let .failure(_, code, description):
                         subject.send(.failed("shieldFunds failed \(code) \(description)".toZcashError()))
-                    case .partial:
-                        break
+                    case let .partial(_, statuses):
+                        subject.send(.failed("shieldFunds partially failed \(statuses.joined(separator: ", "))".toZcashError()))
                     case .success:
                         walletStorage.resetShieldingReminder(WalletAccount.Vendor.zcash.name())
                         subject.send(.succeeded)
