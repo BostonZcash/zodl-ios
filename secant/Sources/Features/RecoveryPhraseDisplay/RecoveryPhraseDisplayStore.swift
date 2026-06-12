@@ -74,7 +74,7 @@ struct RecoveryPhraseDisplay {
         case helpSheetRequested
         case hideEverything
         case onAppear
-        case recoveryPhraseTapped
+        case recoveryPhraseRevealed
         case recoveryPhraseUnhideRequested
         case remindMeLaterTapped
         case securityWarningNextTapped
@@ -93,27 +93,13 @@ struct RecoveryPhraseDisplay {
         
         Reduce { state, action in
             switch action {
-            case .onAppear:
-                // __LD TESTED
+            case .onAppear, .hideEverything:
+                // Seed material is kept out of the state until the user passes
+                // local authentication in the reveal path below.
                 state.isRecoveryPhraseHidden = true
-                do {
-                    let storedWallet = try walletStorage.exportWallet()
-                    state.birthday = storedWallet.birthday
-                    
-                    if let value = state.birthday?.value() {
-                        state.birthdayValue = String(value)
-                    }
-                    
-                    let seedWords = storedWallet.seedPhrase.value().split(separator: " ").map { RedactableString(String($0)) }
-                    state.phrase = RecoveryPhrase(words: seedWords)
-                } catch {
-                    state.alert = AlertState.storedWalletFailure(error.toZcashError())
-                }
-                
-                return .none
-                
-            case .hideEverything:
-                state.isRecoveryPhraseHidden = true
+                state.phrase = nil
+                state.birthday = nil
+                state.birthdayValue = nil
                 return .none
 
             case .alert(.presented(let action)):
@@ -138,12 +124,26 @@ struct RecoveryPhraseDisplay {
                     guard await localAuthentication.authenticate() else {
                         return
                     }
-                    
-                    await send(.recoveryPhraseTapped)
+
+                    await send(.recoveryPhraseRevealed)
                 }
 
-            case .recoveryPhraseTapped:
-                state.isRecoveryPhraseHidden.toggle()
+            case .recoveryPhraseRevealed:
+                do {
+                    let storedWallet = try walletStorage.exportWallet()
+                    state.birthday = storedWallet.birthday
+
+                    if let value = state.birthday?.value() {
+                        state.birthdayValue = String(value)
+                    }
+
+                    let seedWords = storedWallet.seedPhrase.value().split(separator: " ").map { RedactableString(String($0)) }
+                    state.phrase = RecoveryPhrase(words: seedWords)
+                    state.isRecoveryPhraseHidden = false
+                } catch {
+                    state.alert = AlertState.storedWalletFailure(error.toZcashError())
+                }
+
                 return .none
                 
             case .securityWarningNextTapped:
