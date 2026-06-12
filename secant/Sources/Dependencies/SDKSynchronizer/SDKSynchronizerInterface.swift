@@ -66,7 +66,6 @@ struct SDKSynchronizerClient: Sendable {
     
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
-    var createProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
     /// Creates the proposal's transactions via the SDK `Broadcaster` and submits them to the
     /// endpoints chosen by the user's connection mode (Automatic -> all known servers,
     /// Manual -> the selected server). See `selectedSubmissionEndpoints`.
@@ -87,7 +86,6 @@ struct SDKSynchronizerClient: Sendable {
     // PCZT
     var createPCZTFromProposal: @Sendable (AccountUUID, Proposal) async throws -> Pczt
     var addProofsToPCZT: @Sendable (Pczt) async throws -> Pczt
-    var createTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
     /// PCZT variant of `createAndSubmitProposedTransactions`.
     var createAndSubmitTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
     var urEncoderForPCZT: @Sendable (Pczt) -> UREncoder?

@@ -132,57 +132,6 @@ extension SDKSynchronizerClient: DependencyKey {
                     memo: memo
                 )
             },
-            createProposedTransactions: { proposal, spendingKey in
-                let stream = try await synchronizer.createProposedTransactions(
-                    proposal: proposal,
-                    spendingKey: spendingKey
-                )
-
-                let transactionCount = proposal.transactionCount()
-                var successCount = 0
-                var iterator = stream.makeAsyncIterator()
-                
-                var txIds: [String] = []
-                var statuses: [String] = []
-                var errCode = 0
-                var errDesc = ""
-                var resubmitableFailure = false
-                
-                for _ in 1...transactionCount {
-                    if let transactionSubmitResult = try await iterator.next() {
-                        switch transactionSubmitResult {
-                        case .success(txId: let id):
-                            successCount += 1
-                            txIds.append(id.toHexStringTxId())
-                            statuses.append("success")
-                        case let .grpcFailure(txId: id, error: error):
-                            txIds.append(id.toHexStringTxId())
-                            statuses.append(error.localizedDescription)
-                            resubmitableFailure = true
-                        case let .submitFailure(txId: id, code: code, description: description):
-                            txIds.append(id.toHexStringTxId())
-                            statuses.append("code: \(code) desc: \(description)")
-                            errCode = code
-                            errDesc = description
-                        case .notAttempted(txId: let id):
-                            txIds.append(id.toHexStringTxId())
-                            statuses.append("notAttempted")
-                        }
-                    }
-                }
-                
-                if successCount == 0 {
-                    if resubmitableFailure {
-                        return .grpcFailure(txIds: txIds)
-                    } else {
-                        return .failure(txIds: txIds, code: errCode, description: errDesc)
-                    }
-                } else if successCount == transactionCount {
-                    return .success(txIds: txIds)
-                } else {
-                    return .partial(txIds: txIds, statuses: statuses)
-                }
-            },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
                 let transactions = try await synchronizer.broadcaster.createProposedTransactions(
                     proposal: proposal,
@@ -253,54 +202,6 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             addProofsToPCZT: { pczt in
                 try await synchronizer.addProofsToPCZT(pczt: pczt)
-            },
-            createTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
-                let stream = try await synchronizer.createTransactionFromPCZT(
-                    pcztWithProofs: pcztWithProofs,
-                    pcztWithSigs: pcztWithSigs
-                )
-
-                var successCount = 0
-                var iterator = stream.makeAsyncIterator()
-                
-                var txIds: [String] = []
-                var statuses: [String] = []
-                var errCode = 0
-                var errDesc = ""
-                var resubmitableFailure = false
-                
-                if let transactionSubmitResult = try await iterator.next() {
-                    switch transactionSubmitResult {
-                    case .success(txId: let id):
-                        successCount += 1
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("success")
-                    case let .grpcFailure(txId: id, error: error):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append(error.localizedDescription)
-                        resubmitableFailure = true
-                    case let .submitFailure(txId: id, code: code, description: description):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("code: \(code) desc: \(description)")
-                        errCode = code
-                        errDesc = description
-                    case .notAttempted(txId: let id):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("notAttempted")
-                    }
-                }
-                
-                if successCount == 0 {
-                    if resubmitableFailure {
-                        return .grpcFailure(txIds: txIds)
-                    } else {
-                        return .failure(txIds: txIds, code: errCode, description: errDesc)
-                    }
-                } else if successCount == 1 {
-                    return .success(txIds: txIds)
-                } else {
-                    return .partial(txIds: txIds, statuses: statuses)
-                }
             },
             createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
                 let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(

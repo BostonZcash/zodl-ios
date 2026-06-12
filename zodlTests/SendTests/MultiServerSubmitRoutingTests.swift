@@ -33,7 +33,7 @@ import ComposableArchitecture
         result: SDKSynchronizerClient.CreateProposedTransactionsResult,
         txIdExists: Bool = false
     ) -> TestStore<SendConfirmation.State, SendConfirmation.Action> {
-        var initialState = SendConfirmation.State(
+        let initialState = SendConfirmation.State(
             address: "ztestaddr",
             amount: Zatoshi(100_000),
             feeRequired: Zatoshi(10_000),
@@ -469,7 +469,7 @@ import ComposableArchitecture
         let transactionSentCalls = LockIsolated<[(String, String)]>([])
         let alertCalls = LockIsolated<[(String, String)]>([])
 
-        var initialState = Root.State.initial
+        let initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
 
         let store = Store(initialState: initialState) {
