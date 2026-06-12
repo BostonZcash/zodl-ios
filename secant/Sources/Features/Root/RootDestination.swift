@@ -20,7 +20,6 @@ extension Root {
             case notEnoughFreeSpace
             case onboarding
             case osStatusError
-            case startup
             case home
             case welcome
         }
