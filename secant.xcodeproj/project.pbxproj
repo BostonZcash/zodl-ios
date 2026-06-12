@@ -7237,8 +7237,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/zcash/zcash-swift-wallet-sdk.git";
 			requirement = {
-				kind = revision;
-				revision = 381f2dee38d2db28d7c642dc11ec7e1e83399b55;
+				branch = "michal/mob-1039-multiserver-submission";
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
