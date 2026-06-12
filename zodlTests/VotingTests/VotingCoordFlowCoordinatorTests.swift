@@ -1,11 +1,14 @@
 import ComposableArchitecture
 import Foundation
-import XCTest
+import Testing
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
-final class VotingCoordFlowCoordinatorTests: XCTestCase {
-    func testBatchVoteSubmittedMovesDraftIntoSubmittedVotes() {
+// Drives a TCA coordinator that touches process-global `@Shared` state (e.g. `selectedWalletAccount`)
+// and uses plain `Store`s for the async cases, so the suite is serialized to match XCTest's previous
+// serial execution and avoid cross-test races on that shared state.
+@Suite(.serialized) struct VotingCoordFlowCoordinatorTests {
+    @Test func batchVoteSubmittedMovesDraftIntoSubmittedVotes() {
         let metadata = VotingMetadataBox()
         var state = VotingCoordFlow.State()
         state.roundCache[roundId] = roundSession(
@@ -27,13 +30,13 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         }
 
         let session = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(session.draftVotes, [2: .option(1)])
-        XCTAssertEqual(session.votes, [1: .option(0)])
-        XCTAssertEqual(metadata.drafts[roundId], ["2": 1])
-        XCTAssertEqual(metadata.submittedVotes[roundId], ["1": 0])
+        #expect(session.draftVotes == [2: .option(1)])
+        #expect(session.votes == [1: .option(0)])
+        #expect(metadata.drafts[roundId] == ["2": 1])
+        #expect(metadata.submittedVotes[roundId] == ["1": 0])
     }
 
-    func testBatchSubmissionCompletedAcceptsPartialBallotWhenDraftsAreDrained() {
+    @Test func batchSubmissionCompletedAcceptsPartialBallotWhenDraftsAreDrained() {
         let metadata = VotingMetadataBox()
         var state = VotingCoordFlow.State()
         state.roundCache[roundId] = roundSession(
@@ -56,14 +59,14 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         }
 
         let session = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(session.batchSubmissionStatus, .completed(successCount: 2))
-        XCTAssertEqual(session.voteRecord?.votingWeight, 50_000_000)
-        XCTAssertEqual(session.voteRecord?.proposalCount, 2)
-        XCTAssertEqual(state.voteRecords[roundId]?.proposalCount, 2)
-        XCTAssertEqual(metadata.records[roundId]?.proposalCount, 2)
+        #expect(session.batchSubmissionStatus == .completed(successCount: 2))
+        #expect(session.voteRecord?.votingWeight == 50_000_000)
+        #expect(session.voteRecord?.proposalCount == 2)
+        #expect(state.voteRecords[roundId]?.proposalCount == 2)
+        #expect(metadata.records[roundId]?.proposalCount == 2)
     }
 
-    func testBatchSubmissionCompletedFailsWhenDraftsRemain() {
+    @Test func batchSubmissionCompletedFailsWhenDraftsRemain() {
         var state = VotingCoordFlow.State()
         state.roundCache[roundId] = roundSession(
             drafts: [2: .option(1)],
@@ -78,18 +81,17 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let session = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(
-            session.batchSubmissionStatus,
-            .submissionFailed(
+        #expect(
+            session.batchSubmissionStatus == .submissionFailed(
                 error: String(localizable: .coinVoteSubmissionGenericBatchFailure),
                 submittedCount: 1,
                 totalCount: 2
             )
         )
-        XCTAssertNil(session.voteRecord)
+        #expect(session.voteRecord == nil)
     }
 
-    func testBatchSubmissionCompletedFailsWhenVoteErrorsExist() {
+    @Test func batchSubmissionCompletedFailsWhenVoteErrorsExist() {
         var session = roundSession(votes: [1: .option(0)])
         session.batchVoteErrors = [2: "server unavailable"]
         var state = VotingCoordFlow.State()
@@ -103,18 +105,17 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(
-            updated.batchSubmissionStatus,
-            .submissionFailed(
+        #expect(
+            updated.batchSubmissionStatus == .submissionFailed(
                 error: "server unavailable",
                 submittedCount: 1,
                 totalCount: 1
             )
         )
-        XCTAssertNil(updated.voteRecord)
+        #expect(updated.voteRecord == nil)
     }
 
-    func testBatchSubmissionProgressClearsPreviousSubmissionStep() {
+    @Test func batchSubmissionProgressClearsPreviousSubmissionStep() {
         var session = roundSession()
         session.voteSubmissionStep = .sendingShares
         session.currentVoteBundleIndex = 0
@@ -130,14 +131,14 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.batchSubmissionStatus, .submitting(currentIndex: 0, totalCount: 1, currentProposalId: 1))
-        XCTAssertEqual(updated.submittingProposalId, 1)
-        XCTAssertTrue(updated.isSubmittingVote)
-        XCTAssertNil(updated.voteSubmissionStep)
-        XCTAssertNil(updated.currentVoteBundleIndex)
+        #expect(updated.batchSubmissionStatus == .submitting(currentIndex: 0, totalCount: 1, currentProposalId: 1))
+        #expect(updated.submittingProposalId == 1)
+        #expect(updated.isSubmittingVote)
+        #expect(updated.voteSubmissionStep == nil)
+        #expect(updated.currentVoteBundleIndex == nil)
     }
 
-    func testAuthenticationSucceededStartsSoftwareDelegationAtSubmitTime() {
+    @Test func authenticationSucceededStartsSoftwareDelegationAtSubmitTime() {
         var session = RoundSession(roundId: activeRoundId)
         session.bundleCount = 1
         session.draftVotes = [1: .option(0)]
@@ -148,13 +149,13 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
 
         let updated = tryUnwrap(state.roundCache[activeRoundId])
-        XCTAssertFalse(state.pendingBatchSubmission)
-        XCTAssertEqual(updated.batchSubmissionStatus, .authorizing)
-        XCTAssertEqual(updated.voteSubmissionStep, .authorizingVote)
-        XCTAssertEqual(updated.delegationProofStatus, .generating(progress: 0))
+        #expect(!state.pendingBatchSubmission)
+        #expect(updated.batchSubmissionStatus == .authorizing)
+        #expect(updated.voteSubmissionStep == .authorizingVote)
+        #expect(updated.delegationProofStatus == .generating(progress: 0))
     }
 
-    func testDelegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() {
+    @Test func delegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() {
         var session = roundSession()
         session.bundleCount = 2
         session.currentKeystoneBundleIndex = 1
@@ -178,18 +179,18 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.delegationProofStatus, .failed("nullifier already spent"))
-        XCTAssertFalse(updated.isDelegationProofInFlight)
-        XCTAssertFalse(state.pendingBatchSubmission)
-        XCTAssertEqual(updated.batchSubmissionStatus, .authorizationFailed(error: "nullifier already spent"))
-        XCTAssertNil(updated.voteSubmissionStep)
-        XCTAssertNil(updated.currentVoteBundleIndex)
-        XCTAssertEqual(updated.currentKeystoneBundleIndex, 0)
-        XCTAssertTrue(updated.keystoneBundleSignatures.isEmpty)
-        XCTAssertEqual(updated.keystoneSigningStatus, .failed("nullifier already spent"))
+        #expect(updated.delegationProofStatus == .failed("nullifier already spent"))
+        #expect(!updated.isDelegationProofInFlight)
+        #expect(!state.pendingBatchSubmission)
+        #expect(updated.batchSubmissionStatus == .authorizationFailed(error: "nullifier already spent"))
+        #expect(updated.voteSubmissionStep == nil)
+        #expect(updated.currentVoteBundleIndex == nil)
+        #expect(updated.currentKeystoneBundleIndex == 0)
+        #expect(updated.keystoneBundleSignatures.isEmpty)
+        #expect(updated.keystoneSigningStatus == .failed("nullifier already spent"))
     }
 
-    func testIntermediateKeystoneSignatureAdvancesToNextBundle() {
+    @Test func intermediateKeystoneSignatureAdvancesToNextBundle() {
         var session = roundSession()
         session.bundleCount = 2
         session.currentKeystoneBundleIndex = 0
@@ -206,15 +207,15 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.currentKeystoneBundleIndex, 1)
-        XCTAssertEqual(updated.keystoneBundleSignatures, [signature(byte: 1)])
-        XCTAssertEqual(updated.keystoneSigningStatus, .idle)
-        XCTAssertFalse(updated.isDelegationProofInFlight)
-        XCTAssertNil(updated.pendingVotingPczt)
-        XCTAssertNil(updated.pendingUnsignedDelegationPczt)
+        #expect(updated.currentKeystoneBundleIndex == 1)
+        #expect(updated.keystoneBundleSignatures == [signature(byte: 1)])
+        #expect(updated.keystoneSigningStatus == .idle)
+        #expect(!updated.isDelegationProofInFlight)
+        #expect(updated.pendingVotingPczt == nil)
+        #expect(updated.pendingUnsignedDelegationPczt == nil)
     }
 
-    func testFinalKeystoneSignatureMovesToFinalizingAuthorization() {
+    @Test func finalKeystoneSignatureMovesToFinalizingAuthorization() {
         var session = roundSession()
         session.bundleCount = 2
         session.currentKeystoneBundleIndex = 1
@@ -233,19 +234,19 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.keystoneBundleSignatures, [
+        #expect(updated.keystoneBundleSignatures == [
             signature(byte: 1, bundleIndex: 0),
             signature(byte: 2, bundleIndex: 1)
         ])
-        XCTAssertEqual(updated.keystoneSigningStatus, .finalizingAuthorization)
-        XCTAssertEqual(updated.delegationProofStatus, .generating(progress: 0))
-        XCTAssertTrue(updated.isDelegationProofInFlight)
-        XCTAssertEqual(updated.batchSubmissionStatus, .authorizing)
-        XCTAssertEqual(updated.voteSubmissionStep, .authorizingVote)
-        XCTAssertFalse(isDelegationSigningTop(state))
+        #expect(updated.keystoneSigningStatus == .finalizingAuthorization)
+        #expect(updated.delegationProofStatus == .generating(progress: 0))
+        #expect(updated.isDelegationProofInFlight)
+        #expect(updated.batchSubmissionStatus == .authorizing)
+        #expect(updated.voteSubmissionStep == .authorizingVote)
+        #expect(!isDelegationSigningTop(state))
     }
 
-    func testSkippingRemainingKeystoneBundlesKeepsOnlySignedWeight() {
+    @Test func skippingRemainingKeystoneBundlesKeepsOnlySignedWeight() {
         var session = roundSession(
             votingWeight: 100_000_000,
             notes: [
@@ -270,17 +271,17 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         _ = VotingCoordFlow().reduceSkipRemainingKeystoneBundles(&state, roundId: roundId)
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.bundleCount, 1)
-        XCTAssertEqual(updated.votingWeight, 87_500_000)
-        XCTAssertEqual(updated.eligibleBundleCount, 2)
-        XCTAssertEqual(updated.eligibleVotingWeight, 100_000_000)
-        XCTAssertEqual(updated.keystoneSigningStatus, .finalizingAuthorization)
-        XCTAssertEqual(updated.batchSubmissionStatus, .authorizing)
-        XCTAssertEqual(updated.voteSubmissionStep, .authorizingVote)
-        XCTAssertFalse(isDelegationSigningTop(state))
+        #expect(updated.bundleCount == 1)
+        #expect(updated.votingWeight == 87_500_000)
+        #expect(updated.eligibleBundleCount == 2)
+        #expect(updated.eligibleVotingWeight == 100_000_000)
+        #expect(updated.keystoneSigningStatus == .finalizingAuthorization)
+        #expect(updated.batchSubmissionStatus == .authorizing)
+        #expect(updated.voteSubmissionStep == .authorizingVote)
+        #expect(!isDelegationSigningTop(state))
     }
 
-    func testSkippingRemainingKeystoneBundlesDropsSparseRecoveredState() {
+    @Test func skippingRemainingKeystoneBundlesDropsSparseRecoveredState() {
         var session = roundSession(
             votingWeight: 150_000_000,
             notes: notes(count: 15, value: 10_000_000)
@@ -295,12 +296,12 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         _ = VotingCoordFlow().reduceSkipRemainingKeystoneBundles(&state, roundId: roundId)
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.bundleCount, 1)
-        XCTAssertEqual(updated.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertTrue(updated.keystoneBundleSignatures.isEmpty)
+        #expect(updated.bundleCount == 1)
+        #expect(updated.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(updated.keystoneBundleSignatures.isEmpty)
     }
 
-    func testRecoveredKeystoneBundleResumesAtFirstIncompleteBundle() {
+    @Test func recoveredKeystoneBundleResumesAtFirstIncompleteBundle() {
         var session = roundSession()
         session.bundleCount = 2
         var state = VotingCoordFlow.State()
@@ -312,11 +313,11 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertEqual(updated.currentKeystoneBundleIndex, 1)
+        #expect(updated.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(updated.currentKeystoneBundleIndex == 1)
     }
 
-    func testFinalSignatureAfterRecoveredBundleMovesToFinalizingAuthorization() {
+    @Test func finalSignatureAfterRecoveredBundleMovesToFinalizingAuthorization() {
         var session = roundSession()
         session.bundleCount = 2
         session.currentKeystoneBundleIndex = 1
@@ -335,17 +336,17 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertEqual(updated.keystoneBundleSignatures, [signature(byte: 2, bundleIndex: 1)])
-        XCTAssertEqual(updated.keystoneSigningStatus, .finalizingAuthorization)
-        XCTAssertEqual(updated.delegationProofStatus, .generating(progress: 0))
-        XCTAssertTrue(updated.isDelegationProofInFlight)
-        XCTAssertEqual(updated.batchSubmissionStatus, .authorizing)
-        XCTAssertEqual(updated.voteSubmissionStep, .authorizingVote)
-        XCTAssertFalse(isDelegationSigningTop(state))
+        #expect(updated.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(updated.keystoneBundleSignatures == [signature(byte: 2, bundleIndex: 1)])
+        #expect(updated.keystoneSigningStatus == .finalizingAuthorization)
+        #expect(updated.delegationProofStatus == .generating(progress: 0))
+        #expect(updated.isDelegationProofInFlight)
+        #expect(updated.batchSubmissionStatus == .authorizing)
+        #expect(updated.voteSubmissionStep == .authorizingVote)
+        #expect(!isDelegationSigningTop(state))
     }
 
-    func testDuplicateKeystoneScanIsRejectedBeforeSignatureExtraction() {
+    @Test func duplicateKeystoneScanIsRejectedBeforeSignatureExtraction() {
         let duplicateSighash = Data(repeating: 0x02, count: 32)
         let message = VotingCoordFlow.keystoneScanRejectionMessage(
             scannedSighash: duplicateSighash,
@@ -357,13 +358,10 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             bundleCount: 2
         )
 
-        XCTAssertEqual(
-            message,
-            String(localizable: .coinVoteDelegationSigningDuplicateSignature("1", "2"))
-        )
+        #expect(message == String(localizable: .coinVoteDelegationSigningDuplicateSignature("1", "2")))
     }
 
-    func testWrongKeystoneScanIsRejectedBeforeSignatureExtraction() {
+    @Test func wrongKeystoneScanIsRejectedBeforeSignatureExtraction() {
         let pendingSighash = Data(repeating: 0x05, count: 32)
         let scannedSighash = Data(repeating: 0x06, count: 32)
         let message = VotingCoordFlow.keystoneScanRejectionMessage(
@@ -374,28 +372,25 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             bundleCount: 2
         )
 
-        XCTAssertEqual(
-            message,
-            String(localizable: .coinVoteDelegationSigningWrongSignature("2", "2"))
-        )
+        #expect(message == String(localizable: .coinVoteDelegationSigningWrongSignature("2", "2")))
     }
 
-    func testMatchingKeystoneScanIsAcceptedForCurrentBundle() {
+    @Test func matchingKeystoneScanIsAcceptedForCurrentBundle() {
         let pendingSighash = Data(repeating: 0x05, count: 32)
 
-        XCTAssertNil(
+        #expect(
             VotingCoordFlow.keystoneScanRejectionMessage(
                 scannedSighash: pendingSighash,
                 expectedSighash: pendingSighash,
                 existingSignatures: [signature(byte: 1, bundleIndex: 0)],
                 currentBundleIndex: 1,
                 bundleCount: 2
-            )
+            ) == nil
         )
     }
 
     @MainActor
-    func testDuplicateKeystoneScanReducerRejectsWithoutExtractingSignature() async {
+    @Test func duplicateKeystoneScanReducerRejectsWithoutExtractingSignature() async {
         let duplicateSighash = Data(repeating: 0x02, count: 32)
         let expectedMessage = String(localizable: .coinVoteDelegationSigningDuplicateSignature("1", "2"))
         let recorder = EventRecorder()
@@ -422,18 +417,18 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         }
 
         let session = tryUnwrap(store.state.roundCache[roundId])
-        XCTAssertNil(store.state.keystoneScan)
-        XCTAssertEqual(store.state.keystoneSignatureRejectionSheet?.message, expectedMessage)
-        XCTAssertEqual(session.keystoneSigningStatus, .awaitingSignature)
-        XCTAssertEqual(session.currentKeystoneBundleIndex, 1)
-        XCTAssertNotNil(session.pendingVotingPczt)
-        XCTAssertEqual(session.batchSubmissionStatus, .idle)
+        #expect(store.state.keystoneScan == nil)
+        #expect(store.state.keystoneSignatureRejectionSheet?.message == expectedMessage)
+        #expect(session.keystoneSigningStatus == .awaitingSignature)
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.pendingVotingPczt != nil)
+        #expect(session.batchSubmissionStatus == .idle)
         try? await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertTrue(recorder.events().isEmpty)
+        #expect(recorder.events().isEmpty)
     }
 
     @MainActor
-    func testWrongKeystoneScanReducerRejectsWithoutExtractingSignature() async {
+    @Test func wrongKeystoneScanReducerRejectsWithoutExtractingSignature() async {
         let pendingSighash = Data(repeating: 0x05, count: 32)
         let scannedSighash = Data(repeating: 0x06, count: 32)
         let expectedMessage = String(localizable: .coinVoteDelegationSigningWrongSignature("2", "2"))
@@ -454,18 +449,18 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         }
 
         let session = tryUnwrap(store.state.roundCache[roundId])
-        XCTAssertNil(store.state.keystoneScan)
-        XCTAssertEqual(store.state.keystoneSignatureRejectionSheet?.message, expectedMessage)
-        XCTAssertEqual(session.keystoneSigningStatus, .awaitingSignature)
-        XCTAssertEqual(session.currentKeystoneBundleIndex, 1)
-        XCTAssertNotNil(session.pendingVotingPczt)
-        XCTAssertEqual(session.batchSubmissionStatus, .idle)
+        #expect(store.state.keystoneScan == nil)
+        #expect(store.state.keystoneSignatureRejectionSheet?.message == expectedMessage)
+        #expect(session.keystoneSigningStatus == .awaitingSignature)
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.pendingVotingPczt != nil)
+        #expect(session.batchSubmissionStatus == .idle)
         try? await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertTrue(recorder.events().isEmpty)
+        #expect(recorder.events().isEmpty)
     }
 
     @MainActor
-    func testKeystoneAuthorizationSkipsRecoveredBundleAndSubmitsOnlyMissingBundle() async {
+    @Test func keystoneAuthorizationSkipsRecoveredBundleAndSubmitsOnlyMissingBundle() async {
         let recorder = EventRecorder()
         let sig = signature(byte: 2, bundleIndex: 1)
         let store = Store(initialState: authorizationState(signatures: [sig], completedBundles: [0])) {
@@ -479,7 +474,7 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             store.state.roundCache[self.activeRoundId]?.delegationProofStatus == .complete
         }
 
-        XCTAssertEqual(recorder.events(), [
+        #expect(recorder.events() == [
             "recover:0",
             "recover:1",
             "prove:1",
@@ -490,12 +485,12 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             "van:1:43"
         ])
         let session = tryUnwrap(store.state.roundCache[activeRoundId])
-        XCTAssertEqual(session.delegationProofStatus, .complete)
-        XCTAssertTrue(session.completedKeystoneDelegationBundleIndices.isEmpty)
+        #expect(session.delegationProofStatus == .complete)
+        #expect(session.completedKeystoneDelegationBundleIndices.isEmpty)
     }
 
     @MainActor
-    func testKeystoneAuthorizationRecoversPersistedBundleAndSubmitsOnlyMissingBundle() async {
+    @Test func keystoneAuthorizationRecoversPersistedBundleAndSubmitsOnlyMissingBundle() async {
         let recorder = EventRecorder()
         let sig = signature(byte: 2, bundleIndex: 1)
         let store = Store(initialState: authorizationState(signatures: [sig], completedBundles: [])) {
@@ -513,7 +508,7 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             store.state.roundCache[self.activeRoundId]?.delegationProofStatus == .complete
         }
 
-        XCTAssertEqual(recorder.events(), [
+        #expect(recorder.events() == [
             "recover:0",
             "fetch:cached-bundle-0-tx",
             "van:0:43",
@@ -526,12 +521,12 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             "van:1:43"
         ])
         let session = tryUnwrap(store.state.roundCache[activeRoundId])
-        XCTAssertEqual(session.delegationProofStatus, .complete)
-        XCTAssertTrue(session.completedKeystoneDelegationBundleIndices.isEmpty)
+        #expect(session.delegationProofStatus == .complete)
+        #expect(session.completedKeystoneDelegationBundleIndices.isEmpty)
     }
 
     @MainActor
-    func testRecoveredPersistedKeystoneBundleIsRetainedIfLaterBundleFails() async {
+    @Test func recoveredPersistedKeystoneBundleIsRetainedIfLaterBundleFails() async {
         let recorder = EventRecorder()
         let expectedError = TestError.proofFailed.localizedDescription
         let sig = signature(byte: 2, bundleIndex: 1)
@@ -551,7 +546,7 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .authorizationFailed(error: expectedError)
         }
 
-        XCTAssertEqual(recorder.events(), [
+        #expect(recorder.events() == [
             "recover:0",
             "fetch:cached-bundle-0-tx",
             "van:0:43",
@@ -559,13 +554,13 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             "prove:1"
         ])
         let session = tryUnwrap(store.state.roundCache[activeRoundId])
-        XCTAssertEqual(session.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertEqual(session.currentKeystoneBundleIndex, 1)
-        XCTAssertEqual(session.batchSubmissionStatus, .authorizationFailed(error: expectedError))
+        #expect(session.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.batchSubmissionStatus == .authorizationFailed(error: expectedError))
     }
 
     @MainActor
-    func testSuccessfulKeystoneBundleIsRetainedIfLaterBundleFails() async {
+    @Test func successfulKeystoneBundleIsRetainedIfLaterBundleFails() async {
         let recorder = EventRecorder()
         let expectedError = TestError.proofFailed.localizedDescription
         let store = Store(
@@ -591,7 +586,7 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .authorizationFailed(error: expectedError)
         }
 
-        XCTAssertEqual(recorder.events(), [
+        #expect(recorder.events() == [
             "recover:0",
             "recover:1",
             "prove:0",
@@ -603,14 +598,14 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             "prove:1"
         ])
         let session = tryUnwrap(store.state.roundCache[activeRoundId])
-        XCTAssertEqual(session.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertTrue(session.keystoneBundleSignatures.isEmpty)
-        XCTAssertEqual(session.currentKeystoneBundleIndex, 1)
-        XCTAssertEqual(session.batchSubmissionStatus, .authorizationFailed(error: expectedError))
+        #expect(session.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(session.keystoneBundleSignatures.isEmpty)
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.batchSubmissionStatus == .authorizationFailed(error: expectedError))
     }
 
     @MainActor
-    func testRetryBatchSubmissionResumesKeystoneAtFirstIncompleteBundle() async {
+    @Test func retryBatchSubmissionResumesKeystoneAtFirstIncompleteBundle() async {
         let recorder = EventRecorder()
         var state = authorizationState(signatures: [], completedBundles: [0])
         state.roundCache[activeRoundId]?.draftVotes = [1: .option(0)]
@@ -637,15 +632,15 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
             store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus == .awaitingSignature
         }
 
-        XCTAssertEqual(recorder.events(), ["pczt:1"])
+        #expect(recorder.events() == ["pczt:1"])
         let session = tryUnwrap(store.state.roundCache[activeRoundId])
-        XCTAssertEqual(session.completedKeystoneDelegationBundleIndices, Set([0]))
-        XCTAssertEqual(session.currentKeystoneBundleIndex, 1)
-        XCTAssertNotNil(session.pendingVotingPczt)
-        XCTAssertEqual(session.batchSubmissionStatus, .authorizing)
+        #expect(session.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.pendingVotingPczt != nil)
+        #expect(session.batchSubmissionStatus == .authorizing)
     }
 
-    func testDelegationRejectedResetsKeystoneLoopButPreservesVotes() {
+    @Test func delegationRejectedResetsKeystoneLoopButPreservesVotes() {
         var session = roundSession(
             drafts: [2: .option(1)],
             votes: [1: .option(0)]
@@ -666,17 +661,17 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let updated = tryUnwrap(state.roundCache[roundId])
-        XCTAssertEqual(updated.currentKeystoneBundleIndex, 0)
-        XCTAssertTrue(updated.keystoneBundleSignatures.isEmpty)
-        XCTAssertEqual(updated.keystoneSigningStatus, .idle)
-        XCTAssertEqual(updated.batchSubmissionStatus, .idle)
-        XCTAssertEqual(updated.draftVotes, [2: .option(1)])
-        XCTAssertEqual(updated.votes, [1: .option(0)])
-        XCTAssertFalse(state.pendingBatchSubmission)
-        XCTAssertFalse(isDelegationSigningTop(state))
+        #expect(updated.currentKeystoneBundleIndex == 0)
+        #expect(updated.keystoneBundleSignatures.isEmpty)
+        #expect(updated.keystoneSigningStatus == .idle)
+        #expect(updated.batchSubmissionStatus == .idle)
+        #expect(updated.draftVotes == [2: .option(1)])
+        #expect(updated.votes == [1: .option(0)])
+        #expect(!state.pendingBatchSubmission)
+        #expect(!isDelegationSigningTop(state))
     }
 
-    func testDelegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
+    @Test func delegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
@@ -712,10 +707,10 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let events = await recorder.events()
-        XCTAssertEqual(events, ["fetch:cached-tx", "van:0:42"])
+        #expect(events == ["fetch:cached-tx", "van:0:42"])
     }
 
-    func testDelegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition() async throws {
+    @Test func delegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
@@ -764,7 +759,7 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
         )
 
         let events = await recorder.events()
-        XCTAssertEqual(events, [
+        #expect(events == [
             "fetch:cached-tx",
             "registration",
             "submit",
@@ -970,27 +965,21 @@ final class VotingCoordFlowCoordinatorTests: XCTestCase {
     @MainActor
     private func waitForStore(
         timeoutNanoseconds: UInt64 = 2_000_000_000,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         condition: @escaping @MainActor () -> Bool
     ) async {
         let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
         while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTAssertTrue(condition(), "Timed out waiting for store state", file: file, line: line)
+        #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
     }
 
-    private func tryUnwrap<T>(
-        _ value: T?,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) -> T {
-        do {
-            return try XCTUnwrap(value, file: file, line: line)
-        } catch {
-            fatalError("XCTUnwrap failed")
+    private func tryUnwrap<T>(_ value: T?) -> T {
+        guard let value else {
+            fatalError("tryUnwrap: required value was unexpectedly nil")
         }
+        return value
     }
 
     private func keystoneWalletAccount() -> WalletAccount {

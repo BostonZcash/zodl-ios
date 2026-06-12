@@ -5,21 +5,22 @@
 //  Created by Lukáš Korba on 22.03.2022.
 //
 
-import XCTest
+import Testing
+import Foundation
 @testable import zodl_internal
 
-class UserPreferencesStorageTests: XCTestCase {
+// Uses a real, named UserDefaults suite ("test") shared across its test methods,
+// so the suite is serialized to keep each test's setup/teardown isolated.
+@Suite(.serialized)
+final class UserPreferencesStorageTests {
     // swiftlint:disable:next implicitly_unwrapped_optional
     var storage: UserPreferencesStorage!
 
-    override func setUp() {
-        super.setUp()
-        
-        guard let userDefaults = UserDefaults.init(suiteName: "test") else {
-            XCTFail("UserPreferencesStorageTests: UserDefaults.init(suiteName: \"test\") failed to initialize")
-            return
-        }
-        
+    init() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "test"),
+            "UserPreferencesStorageTests: UserDefaults(suiteName: \"test\") failed to initialize"
+        )
         storage = UserPreferencesStorage(
             defaultExchangeRate: Data(),
             defaultServer: Data(),
@@ -27,53 +28,51 @@ class UserPreferencesStorageTests: XCTestCase {
         )
         storage.removeAll()
     }
-    
-    override func tearDown() {
-        super.tearDown()
+
+    deinit {
         storage.removeAll()
-        storage = nil
     }
-    
+
     // MARK: - Default values in the live UserDefaults environment
-    
-    func testDefaultServer_defaultValue() throws {
-        XCTAssertEqual(nil, storage.server, "User Preferences: `defaultServer` default doesn't match.")
+
+    @Test func defaultServer_defaultValue() throws {
+        #expect(storage.server == nil, "User Preferences: `defaultServer` default doesn't match.")
     }
 
     // MARK: - Set new values in the live UserDefaults environment
 
-    func testDefaultServer_setNewValue() throws {
+    @Test func defaultServer_setNewValue() throws {
         let serverConfig = UserPreferencesStorage.ServerConfig(host: "host", port: 13, isCustom: true)
         try storage.setServer(serverConfig)
 
-        XCTAssertEqual(serverConfig, storage.server, "User Preferences: `server` default doesn't match.")
+        #expect(storage.server == serverConfig, "User Preferences: `server` default doesn't match.")
     }
 
     // MARK: - Mocked user defaults vs. default values
 
-    func testDefaultServer_mocked() throws {
+    @Test func defaultServer_mocked() throws {
         let mockedUD = UserDefaultsClient(
             objectForKey: { _ in Data() },
             remove: { _ in },
             setValue: { _, _ in }
         )
-        
+
         let mockedStorage = UserPreferencesStorage(
             defaultExchangeRate: Data(),
             defaultServer: Data(),
             userDefaults: mockedUD
         )
 
-        XCTAssertEqual(nil, mockedStorage.server, "User Preferences: `server` default doesn't match.")
+        #expect(mockedStorage.server == nil, "User Preferences: `server` default doesn't match.")
     }
 
     // MARK: - Remove all keys from the live UD environment
-    
-    func testRemoveAll() throws {
-        guard let userDefaults = UserDefaults.init(suiteName: "test") else {
-            XCTFail("User Preferences: UserDefaults.init(suiteName: \"test\") failed to initialize")
-            return
-        }
+
+    @Test func removeAll() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "test"),
+            "User Preferences: UserDefaults(suiteName: \"test\") failed to initialize"
+        )
 
         // fill in the data
         UserPreferencesStorage.Constants.allCases.forEach {
@@ -85,8 +84,8 @@ class UserPreferencesStorageTests: XCTestCase {
 
         // check the presence
         UserPreferencesStorage.Constants.allCases.forEach {
-            XCTAssertNil(
-                userDefaults.object(forKey: $0.rawValue),
+            #expect(
+                userDefaults.object(forKey: $0.rawValue) == nil,
                 "User Preferences: key \($0.rawValue) should be removed but it's still present in User Defaults"
             )
         }

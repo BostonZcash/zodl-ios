@@ -1,30 +1,30 @@
-import XCTest
+import Testing
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-final class ServerEndpointsTests: XCTestCase {
-    func testTestnetReturnsOnlyDefault() {
+@Suite struct ServerEndpointsTests {
+    @Test func testnetReturnsOnlyDefault() {
         let endpoints = ZcashSDKEnvironment.endpoints(for: .testnet)
-        XCTAssertEqual(endpoints.count, 1)
-        XCTAssertEqual(endpoints.first?.host, ZcashSDKEnvironment.defaultEndpoint(for: .testnet).host)
+        #expect(endpoints.count == 1)
+        #expect(endpoints.first?.host == ZcashSDKEnvironment.defaultEndpoint(for: .testnet).host)
     }
 
-    func testTestnetSkipDefaultIsEmpty() {
-        XCTAssertTrue(ZcashSDKEnvironment.endpoints(for: .testnet, skipDefault: true).isEmpty)
+    @Test func testnetSkipDefaultIsEmpty() {
+        #expect(ZcashSDKEnvironment.endpoints(for: .testnet, skipDefault: true).isEmpty)
     }
 
-    func testMainnetContainsKnownServersWithSecureAndTimeout() {
+    @Test func mainnetContainsKnownServersWithSecureAndTimeout() {
         let endpoints = ZcashSDKEnvironment.endpoints(for: .mainnet)
-        XCTAssertTrue(endpoints.contains { $0.host == "zec.rocks" && $0.port == 443 })
-        XCTAssertTrue(endpoints.contains { $0.host == "eu.zec.stardust.rest" })
-        XCTAssertTrue(endpoints.allSatisfy { $0.secure })
-        XCTAssertTrue(endpoints.allSatisfy {
+        #expect(endpoints.contains { $0.host == "zec.rocks" && $0.port == 443 })
+        #expect(endpoints.contains { $0.host == "eu.zec.stardust.rest" })
+        #expect(endpoints.allSatisfy { $0.secure })
+        #expect(endpoints.allSatisfy {
             $0.streamingCallTimeoutInMillis == ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis
         })
     }
 
-    func testMainnetSkipDefaultExcludesDefaultHost() {
+    @Test func mainnetSkipDefaultExcludesDefaultHost() {
         let endpoints = ZcashSDKEnvironment.endpoints(for: .mainnet, skipDefault: true)
-        XCTAssertFalse(endpoints.contains { $0.host == "zec.rocks" })
+        #expect(!(endpoints.contains { $0.host == "zec.rocks" }))
     }
 }

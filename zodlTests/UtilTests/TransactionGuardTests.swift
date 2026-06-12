@@ -1,18 +1,21 @@
-import XCTest
+import Testing
 @testable import zodl_internal
 
-final class TransactionGuardTests: XCTestCase {
-    func testTryAcquireFailsWhileHeld() async {
+// Several tests drive the shared `TransactionGuardClient.liveValue`, which is backed by a single
+// process-global mutex actor. They must not run concurrently or they would contend on that guard,
+// so the suite is serialized (matching XCTest's previous serial execution).
+@Suite(.serialized) struct TransactionGuardTests {
+    @Test func tryAcquireFailsWhileHeld() async {
         let guardActor = TransactionGuard()
         try? await guardActor.acquire()
         let acquired = await guardActor.tryAcquire()
-        XCTAssertFalse(acquired, "tryAcquire must fail while the guard is held")
+        #expect(!acquired, "tryAcquire must fail while the guard is held")
         await guardActor.release()
         let acquiredAfter = await guardActor.tryAcquire()
-        XCTAssertTrue(acquiredAfter, "tryAcquire must succeed after release")
+        #expect(acquiredAfter, "tryAcquire must succeed after release")
     }
 
-    func testSwitchIsSkippedWhileSubmissionActive() async {
+    @Test func switchIsSkippedWhileSubmissionActive() async {
         let client = TransactionGuardClient.liveValue
         let submissionStarted = AsyncBox()
         let releaseSubmission = AsyncBox()
@@ -26,16 +29,16 @@ final class TransactionGuardTests: XCTestCase {
 
         await submissionStarted.wait()
         let didSwitch = try? await client.switchIfIdle { /* would switch here */ }
-        XCTAssertEqual(didSwitch, false, "Auto switch must skip while a submission is active")
+        #expect(didSwitch == false, "Auto switch must skip while a submission is active")
 
         await releaseSubmission.signal()
         _ = try? await submission.value
 
         let didSwitchAfter = try? await client.switchIfIdle { }
-        XCTAssertEqual(didSwitchAfter, true, "Auto switch must run once the submission finished")
+        #expect(didSwitchAfter == true, "Auto switch must run once the submission finished")
     }
 
-    func testManualSwitchWaitsForSubmission() async {
+    @Test func manualSwitchWaitsForSubmission() async {
         let client = TransactionGuardClient.liveValue
         let order = OrderRecorder()
         let submissionStarted = AsyncBox()
@@ -63,10 +66,10 @@ final class TransactionGuardTests: XCTestCase {
         _ = try? await manual.value
 
         let recorded = await order.values
-        XCTAssertEqual(recorded, ["submission-end", "switch"], "Manual switch must wait for the submission")
+        #expect(recorded == ["submission-end", "switch"], "Manual switch must wait for the submission")
     }
 
-    func testParkedSubmissionCancelledDoesNotRunBody() async {
+    @Test func parkedSubmissionCancelledDoesNotRunBody() async {
         let client = TransactionGuardClient.liveValue
         let holderAcquired = AsyncBox()
         let releaseHolder = AsyncBox()
@@ -97,10 +100,10 @@ final class TransactionGuardTests: XCTestCase {
         _ = try? await holder.value
         _ = try? await parked.value
 
-        XCTAssertFalse(bodyRan.value, "A cancelled, parked submission must not run its body")
+        #expect(!bodyRan.value, "A cancelled, parked submission must not run its body")
     }
 
-    func testParkedAcquireUnblocksOnCancellationEvenIfHolderNeverReleases() async {
+    @Test func parkedAcquireUnblocksOnCancellationEvenIfHolderNeverReleases() async {
         let guardActor = TransactionGuard()
         // Holder takes the guard and never releases — simulates a hung switch.
         try? await guardActor.acquire()
@@ -123,36 +126,36 @@ final class TransactionGuardTests: XCTestCase {
         parked.cancel()
 
         let unblockedByCancellation = await parked.value
-        XCTAssertTrue(
+        #expect(
             unblockedByCancellation,
             "A parked acquire() must throw CancellationError when cancelled, even if the holder never releases"
         )
         // Cancelling the waiter must not have released the holder's guard.
         let stillHeld = await guardActor.tryAcquire()
-        XCTAssertFalse(stillHeld, "Cancelling a waiter must not release the guard held by another task")
+        #expect(!stillHeld, "Cancelling a waiter must not release the guard held by another task")
     }
 
-    func testWithTimeoutThrowsWhenOperationExceedsDeadline() async {
+    @Test func withTimeoutThrowsWhenOperationExceedsDeadline() async {
         // Cooperative case only: Task.sleep honors cancellation, so withTimeout can return and throw.
         // A non-cancellable operation would not surface the timeout (see withTimeout / serverSwitchTimeout).
         do {
             try await withTimeout(.milliseconds(50)) {
                 try await Task.sleep(for: .seconds(10))
             }
-            XCTFail("withTimeout should have thrown TransactionTimeoutError")
+            Issue.record("withTimeout should have thrown TransactionTimeoutError")
         } catch is TransactionTimeoutError {
             // expected
         } catch {
-            XCTFail("Unexpected error: \(error)")
+            Issue.record("Unexpected error: \(error)")
         }
     }
 
-    func testWithTimeoutReturnsValueWhenOperationFinishesInTime() async throws {
+    @Test func withTimeoutReturnsValueWhenOperationFinishesInTime() async throws {
         let value = try await withTimeout(.seconds(5)) { 42 }
-        XCTAssertEqual(value, 42)
+        #expect(value == 42)
     }
 
-    func testSwitchWaitingReleasesGuardWhenSwitchTimesOut() async {
+    @Test func switchWaitingReleasesGuardWhenSwitchTimesOut() async {
         let client = TransactionGuardClient.liveValue
         // A *cancellation-aware* switch body (Task.sleep) that overruns its timeout must release the
         // guard, not wedge it. This holds only because Task.sleep honors cancellation; a body that
@@ -163,10 +166,10 @@ final class TransactionGuardTests: XCTestCase {
                 try await Task.sleep(for: .seconds(10))
             }
         }
-        XCTAssertNil(timedOut, "switchWaiting must rethrow the timeout")
+        #expect(timedOut == nil, "switchWaiting must rethrow the timeout")
 
         let didSwitch = try? await client.switchIfIdle { }
-        XCTAssertEqual(didSwitch, true, "Guard must be free after a timed-out switch")
+        #expect(didSwitch == true, "Guard must be free after a timed-out switch")
     }
 }
 

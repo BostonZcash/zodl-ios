@@ -6,18 +6,18 @@
 //
 
 @preconcurrency import Combine
-import XCTest
+import Testing
 import ComposableArchitecture
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
-class HomeTests: XCTestCase {
-    @MainActor func testSynchronizerErrorBringsUpAlert() async {
+@Suite struct HomeTests {
+    @MainActor @Test func synchronizerErrorBringsUpAlert() async {
         let testError = ZcashError.synchronizerNotPrepared
 
         var state = SynchronizerState.zero
         state.syncStatus = .error(testError)
-        
+
         let store = TestStore(
             initialState: .initial
         ) {
@@ -27,7 +27,7 @@ class HomeTests: XCTestCase {
         await store.send(.synchronizerStateChanged(state.redacted))
 
         await store.receive(.showSynchronizerErrorAlert(testError))
-        
+
         await store.finish()
     }
 }

@@ -1,11 +1,11 @@
 import CryptoKit
 import Foundation
+import Testing
 @preconcurrency import ZcashLightClientKit
-import XCTest
 @testable import zodl_internal
 
-final class VotingServiceConfigTests: XCTestCase {
-    func testDecodeFromFullZIP1244CompliantJSON() throws {
+@Suite struct VotingServiceConfigTests {
+    @Test func decodeFromFullZIP1244CompliantJSON() throws {
         let json = """
         {
           "config_version": 1,
@@ -26,14 +26,14 @@ final class VotingServiceConfigTests: XCTestCase {
         """
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
 
-        XCTAssertEqual(config.configVersion, 1)
-        XCTAssertEqual(config.voteServers.count, 1)
-        XCTAssertEqual(config.pirEndpoints.first?.label, "pir-1")
-        XCTAssertEqual(config.supportedVersions.voteServer, "v1")
-        XCTAssertEqual(config.supportedVersions.pir, ["v0", "v1"])
+        #expect(config.configVersion == 1)
+        #expect(config.voteServers.count == 1)
+        #expect(config.pirEndpoints.first?.label == "pir-1")
+        #expect(config.supportedVersions.voteServer == "v1")
+        #expect(config.supportedVersions.pir == ["v0", "v1"])
     }
 
-    func testDecodeAcceptsConfigWithoutProposalsSnapshotOrDeadline() {
+    @Test func decodeAcceptsConfigWithoutProposalsSnapshotOrDeadline() {
         let json = """
         {
           "config_version": 1,
@@ -44,10 +44,12 @@ final class VotingServiceConfigTests: XCTestCase {
         }
         """
 
-        XCTAssertNoThrow(try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8)))
+        #expect(throws: Never.self) {
+            try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
+        }
     }
 
-    func testDecodeAcceptsEmptyRoundsRegistry() throws {
+    @Test func decodeAcceptsEmptyRoundsRegistry() throws {
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data("""
         {
           "config_version": 1,
@@ -58,11 +60,13 @@ final class VotingServiceConfigTests: XCTestCase {
         }
         """.utf8))
 
-        XCTAssertTrue(config.rounds.isEmpty)
-        XCTAssertNoThrow(try config.validate())
+        #expect(config.rounds.isEmpty)
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
     }
 
-    func testValidateRejectsNonHexRoundId() {
+    @Test func validateRejectsNonHexRoundId() {
         let config = VotingServiceConfig(
             configVersion: 1,
             voteServers: [.init(url: "https://x", label: "a")],
@@ -77,34 +81,38 @@ final class VotingServiceConfigTests: XCTestCase {
             ]
         )
 
-        XCTAssertThrowsError(try config.validate())
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
     }
 
-    func testStaticConfigValidationRejectsShortTrustedKey() {
+    @Test func staticConfigValidationRejectsShortTrustedKey() {
         let config = makeStaticConfig(trustedKeyBytes: Data(repeating: 0x01, count: 31))
 
-        XCTAssertThrowsError(try config.validate())
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
     }
 
-    func testPinnedConfigSourceParseAcceptsCosmovisorChecksumAndStripsIt() throws {
+    @Test func pinnedConfigSourceParseAcceptsCosmovisorChecksumAndStripsIt() throws {
         let hex = String(repeating: "0a", count: 32)
         let source = try PinnedConfigSource.parse(
             "https://example.com/static-voting-config.json?foo=bar&checksum=sha256:\(hex)&baz=qux"
         )
 
-        XCTAssertEqual(source.url.absoluteString, "https://example.com/static-voting-config.json?foo=bar&baz=qux")
-        XCTAssertEqual(source.sha256?.count, 32)
-        XCTAssertEqual(source.sha256?.first, 0x0a)
+        #expect(source.url.absoluteString == "https://example.com/static-voting-config.json?foo=bar&baz=qux")
+        #expect(source.sha256?.count == 32)
+        #expect(source.sha256?.first == 0x0a)
     }
 
-    func testPinnedConfigSourceParseAcceptsMissingChecksum() throws {
+    @Test func pinnedConfigSourceParseAcceptsMissingChecksum() throws {
         let source = try PinnedConfigSource.parse("https://example.com/static-voting-config.json")
 
-        XCTAssertEqual(source.url.absoluteString, "https://example.com/static-voting-config.json")
-        XCTAssertNil(source.sha256)
+        #expect(source.url.absoluteString == "https://example.com/static-voting-config.json")
+        #expect(source.sha256 == nil)
     }
 
-    func testPinnedConfigSourceParseRejectsMalformedSources() {
+    @Test func pinnedConfigSourceParseRejectsMalformedSources() {
         let validHex = String(repeating: "0a", count: 32)
         let cases = [
             "https://example.com/static-voting-config.json?checksum=sha512:\(validHex)",
@@ -115,111 +123,127 @@ final class VotingServiceConfigTests: XCTestCase {
         ]
 
         for raw in cases {
-            XCTAssertThrowsError(try PinnedConfigSource.parse(raw), raw) { error in
-                guard case VotingConfigError.staticConfigSourceMalformed = error else {
-                    return XCTFail("expected malformed source, got \(error)")
-                }
+            let error = #expect(throws: VotingConfigError.self, "raw=\(raw)") {
+                try PinnedConfigSource.parse(raw)
+            }
+            guard case .staticConfigSourceMalformed? = error else {
+                Issue.record("expected malformed source for \(raw), got \(String(describing: error))")
+                continue
             }
         }
     }
 
-    func testStaticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {
+    @Test func staticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {
         let config = makeStaticConfig()
         let data = try JSONEncoder().encode(config)
         let sha256 = Data(SHA256.hash(data: data))
 
         let decoded = try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: sha256)
 
-        XCTAssertEqual(decoded, config)
+        #expect(decoded == config)
     }
 
-    func testStaticConfigDecodeAndVerifyRejectsHashMismatch() throws {
+    @Test func staticConfigDecodeAndVerifyRejectsHashMismatch() throws {
         let data = try JSONEncoder().encode(makeStaticConfig())
 
-        XCTAssertThrowsError(
+        let error = #expect(throws: VotingConfigError.self) {
             try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: Data(repeating: 0, count: 32))
-        ) { error in
-            guard case VotingConfigError.staticConfigHashMismatch = error else {
-                return XCTFail("expected hash mismatch, got \(error)")
-            }
+        }
+        guard case .staticConfigHashMismatch? = error else {
+            Issue.record("expected hash mismatch, got \(String(describing: error))")
+            return
         }
     }
 
-    func testStaticConfigDecodeAndVerifyStillValidatesDecodedConfig() throws {
+    @Test func staticConfigDecodeAndVerifyStillValidatesDecodedConfig() throws {
         let config = makeStaticConfig(trustedKeyBytes: Data(repeating: 0x01, count: 31))
         let data = try JSONEncoder().encode(config)
         let sha256 = Data(SHA256.hash(data: data))
 
-        XCTAssertThrowsError(try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: sha256))
+        #expect(throws: (any Error).self) {
+            try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: sha256)
+        }
     }
 
-    func testValidateAcceptsCurrentWalletCapabilities() {
+    @Test func validateAcceptsCurrentWalletCapabilities() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1")
         )
 
-        XCTAssertNoThrow(try config.validate())
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
     }
 
-    func testValidateRejectsUnknownVoteServer() {
+    @Test func validateRejectsUnknownVoteServer() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v99")
         )
 
-        XCTAssertThrowsError(try config.validate()) { error in
-            guard case VotingConfigError.unsupportedVersion(let component, let advertised) = error else {
-                return XCTFail("expected unsupportedVersion, got \(error)")
-            }
-            XCTAssertEqual(component, "vote_server")
-            XCTAssertEqual(advertised, "v99")
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
         }
+        guard case .unsupportedVersion(let component, let advertised)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "vote_server")
+        #expect(advertised == "v99")
     }
 
-    func testValidateRejectsWhenPIRIntersectionIsEmpty() {
+    @Test func validateRejectsWhenPIRIntersectionIsEmpty() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v42"], voteProtocol: "v0", tally: "v0", voteServer: "v1")
         )
 
-        XCTAssertThrowsError(try config.validate()) { error in
-            guard case VotingConfigError.unsupportedVersion(let component, _) = error else {
-                return XCTFail("expected unsupportedVersion, got \(error)")
-            }
-            XCTAssertEqual(component, "pir")
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
         }
+        guard case .unsupportedVersion(let component, _)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "pir")
     }
 
-    func testValidateAcceptsWhenPIRIntersectionIsNonEmpty() {
+    @Test func validateAcceptsWhenPIRIntersectionIsNonEmpty() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v42", "v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1")
         )
 
-        XCTAssertNoThrow(try config.validate())
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
     }
 
-    func testValidateRejectsUnknownVoteProtocol() {
+    @Test func validateRejectsUnknownVoteProtocol() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v99", tally: "v0", voteServer: "v1")
         )
 
-        XCTAssertThrowsError(try config.validate()) { error in
-            guard case VotingConfigError.unsupportedVersion(let component, _) = error else {
-                return XCTFail("expected unsupportedVersion, got \(error)")
-            }
-            XCTAssertEqual(component, "vote_protocol")
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
         }
+        guard case .unsupportedVersion(let component, _)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "vote_protocol")
     }
 
-    func testValidateRejectsUnknownTally() {
+    @Test func validateRejectsUnknownTally() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v99", voteServer: "v1")
         )
 
-        XCTAssertThrowsError(try config.validate()) { error in
-            guard case VotingConfigError.unsupportedVersion(let component, _) = error else {
-                return XCTFail("expected unsupportedVersion, got \(error)")
-            }
-            XCTAssertEqual(component, "tally")
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
         }
+        guard case .unsupportedVersion(let component, _)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "tally")
     }
 
     private func makeConfig(supportedVersions: VotingServiceConfig.SupportedVersions) -> VotingServiceConfig {
@@ -245,7 +269,7 @@ final class VotingServiceConfigTests: XCTestCase {
     }
 }
 
-final class RoundAuthenticatorTests: XCTestCase {
+@Suite struct RoundAuthenticatorTests {
     private let roundId = "58d9319ac86933b81769a7c0972444fa39212ad3790646398de6ce6534de2225"
     private let eaPK = Data(base64Encoded: "N72oXeIF96QwWBtChaCwde3tjTt75ZfAs455V4usYwM=")!
     private let adminPubkey = Data(base64Encoded: "rKDbmhkoW9ja7dMiCV+1uTao7wXWV6xN/57erkrOuiQ=")!
@@ -253,97 +277,91 @@ final class RoundAuthenticatorTests: XCTestCase {
         base64Encoded: "rnll+KsHIFt73GpyNoWrX57dlcX8hTi8GU5X/xpwg3vcE+jCARUXpD7LsK+OLw6R5q1kU/zccwNgzsmclt4WAg=="
     )!
 
-    func testAuthenticateAcceptsFixtureFromDynamicConfig() {
-        XCTAssertEqual(
+    @Test func authenticateAcceptsFixtureFromDynamicConfig() {
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: eaPK,
                 roundIdHex: roundId,
                 rounds: [roundId: makeEntry()],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .authenticated
+            ) == .authenticated
         )
     }
 
-    func testAuthenticateReportsMissingRound() {
-        XCTAssertEqual(
+    @Test func authenticateReportsMissingRound() {
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: eaPK,
                 roundIdHex: roundId,
                 rounds: [:],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .missingRound
+            ) == .missingRound
         )
     }
 
-    func testAuthenticateReportsUnknownAuthVersion() {
-        XCTAssertEqual(
+    @Test func authenticateReportsUnknownAuthVersion() {
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: eaPK,
                 roundIdHex: roundId,
                 rounds: [roundId: makeEntry(authVersion: 2)],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .unknownAuthVersion
+            ) == .unknownAuthVersion
         )
     }
 
-    func testAuthenticateReportsInvalidSignatures() {
+    @Test func authenticateReportsInvalidSignatures() {
         var badSig = adminSignature
         badSig[0] ^= 0xFF
 
-        XCTAssertEqual(
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: eaPK,
                 roundIdHex: roundId,
                 rounds: [roundId: makeEntry(signature: badSig)],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .invalidSignatures
+            ) == .invalidSignatures
         )
     }
 
-    func testAuthenticateReportsEaPKMismatch() {
+    @Test func authenticateReportsEaPKMismatch() {
         var chainEaPK = eaPK
         chainEaPK[0] ^= 0xFF
 
-        XCTAssertEqual(
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: chainEaPK,
                 roundIdHex: roundId,
                 rounds: [roundId: makeEntry()],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .eaPKMismatch
+            ) == .eaPKMismatch
         )
     }
 
-    func testAuthenticateReportsInvalidSignaturesWhenEntryEaPKIsShort() {
-        XCTAssertEqual(
+    @Test func authenticateReportsInvalidSignaturesWhenEntryEaPKIsShort() {
+        #expect(
             RoundAuthenticator.authenticate(
                 chainEaPK: eaPK,
                 roundIdHex: roundId,
                 rounds: [roundId: makeEntry(eaPK: Data(repeating: 0x01, count: 31))],
                 trustedKeys: [makeTrustedKey()]
-            ),
-            .invalidSignatures
+            ) == .invalidSignatures
         )
     }
 
-    func testVerifyEntrySignaturesRejectsUnknownKeyId() {
+    @Test func verifyEntrySignaturesRejectsUnknownKeyId() {
         let entry = makeEntry(keyId: "unknown-key")
 
-        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
     }
 
-    func testVerifyEntrySignaturesRejectsSignatureAlgMismatch() {
+    @Test func verifyEntrySignaturesRejectsSignatureAlgMismatch() {
         let entry = makeEntry(signatureAlg: "ed448")
 
-        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
     }
 
-    func testVerifyEntrySignaturesRejectsTrustedKeyAlgMismatch() {
+    @Test func verifyEntrySignaturesRejectsTrustedKeyAlgMismatch() {
         let trustedKey = StaticVotingConfig.TrustedKey(
             keyId: "valar-test",
             alg: "ed448",
@@ -351,16 +369,16 @@ final class RoundAuthenticatorTests: XCTestCase {
             notes: nil
         )
 
-        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: makeEntry(), trustedKeys: [trustedKey]))
+        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: makeEntry(), trustedKeys: [trustedKey]))
     }
 
-    func testVerifyEntrySignaturesRejectsShortSignature() {
+    @Test func verifyEntrySignaturesRejectsShortSignature() {
         let entry = makeEntry(signature: Data(repeating: 0x01, count: 63))
 
-        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
     }
 
-    func testVerifyEntrySignaturesAcceptsWhenAnySignatureIsValid() {
+    @Test func verifyEntrySignaturesAcceptsWhenAnySignatureIsValid() {
         let entry = VotingServiceConfig.RoundEntry(
             authVersion: 1,
             eaPk: eaPK,
@@ -370,10 +388,10 @@ final class RoundAuthenticatorTests: XCTestCase {
             ]
         )
 
-        XCTAssertTrue(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        #expect(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
     }
 
-    func testServiceConfigDropsOnlyRoundsWithoutValidSignatures() {
+    @Test func serviceConfigDropsOnlyRoundsWithoutValidSignatures() {
         var badSignature = adminSignature
         badSignature[0] ^= 0xFF
         let invalidRoundId = String(repeating: "b", count: 64)
@@ -390,7 +408,7 @@ final class RoundAuthenticatorTests: XCTestCase {
 
         let filtered = serviceConfigRetainingRoundsWithValidSignatures(config, trustedKeys: [makeTrustedKey()])
 
-        XCTAssertEqual(Set(filtered.rounds.keys), [roundId])
+        #expect(Set(filtered.rounds.keys) == [roundId])
     }
 
     private func makeEntry(
@@ -414,49 +432,67 @@ final class RoundAuthenticatorTests: XCTestCase {
     }
 }
 
-final class VotingSessionParsingTests: XCTestCase {
-    func testParseVotingSessionAcceptsValidProposalBounds() {
-        XCTAssertNoThrow(try parseVotingSession(from: makeRound()))
+@Suite struct VotingSessionParsingTests {
+    @Test func parseVotingSessionAcceptsValidProposalBounds() {
+        #expect(throws: Never.self) {
+            try parseVotingSession(from: makeRound())
+        }
     }
 
-    func testParseVotingSessionRejectsEmptyProposals() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [])))
+    @Test func parseVotingSessionRejectsEmptyProposals() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: []))
+        }
     }
 
-    func testParseVotingSessionRejectsTooManyProposals() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: (1...16).map { makeProposal(id: $0) })))
+    @Test func parseVotingSessionRejectsTooManyProposals() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: (1...16).map { makeProposal(id: $0) }))
+        }
     }
 
-    func testParseVotingSessionRejectsProposalIdOutsideRange() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 16)])))
+    @Test func parseVotingSessionRejectsProposalIdOutsideRange() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 16)]))
+        }
     }
 
-    func testParseVotingSessionRejectsDuplicateProposalIds() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 1), makeProposal(id: 1)])))
+    @Test func parseVotingSessionRejectsDuplicateProposalIds() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 1), makeProposal(id: 1)]))
+        }
     }
 
-    func testParseVotingSessionRejectsTooFewOptions() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [
-            makeProposal(id: 1, options: [makeOption(index: 0)])
-        ])))
+    @Test func parseVotingSessionRejectsTooFewOptions() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [
+                makeProposal(id: 1, options: [makeOption(index: 0)])
+            ]))
+        }
     }
 
-    func testParseVotingSessionRejectsTooManyOptions() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [
-            makeProposal(id: 1, options: (0...8).map { makeOption(index: $0) })
-        ])))
+    @Test func parseVotingSessionRejectsTooManyOptions() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [
+                makeProposal(id: 1, options: (0...8).map { makeOption(index: $0) })
+            ]))
+        }
     }
 
-    func testParseVotingSessionRejectsDuplicateOptionIndices() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [
-            makeProposal(id: 1, options: [makeOption(index: 0), makeOption(index: 0)])
-        ])))
+    @Test func parseVotingSessionRejectsDuplicateOptionIndices() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [
+                makeProposal(id: 1, options: [makeOption(index: 0), makeOption(index: 0)])
+            ]))
+        }
     }
 
-    func testParseVotingSessionRejectsNonContiguousOptionIndices() {
-        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [
-            makeProposal(id: 1, options: [makeOption(index: 0), makeOption(index: 2)])
-        ])))
+    @Test func parseVotingSessionRejectsNonContiguousOptionIndices() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [
+                makeProposal(id: 1, options: [makeOption(index: 0), makeOption(index: 2)])
+            ]))
+        }
     }
 
     private func makeRound(proposals: [[String: Any]]? = nil) -> [String: Any] {
@@ -496,8 +532,8 @@ final class VotingSessionParsingTests: XCTestCase {
     }
 }
 
-final class ShareRecoveryPollingTests: XCTestCase {
-    func testPollingConfirmsFromRecordedHelperInsteadOfFirstConfiguredHelper() async throws {
+@Suite struct ShareRecoveryPollingTests {
+    @Test func pollingConfirmsFromRecordedHelperInsteadOfFirstConfiguredHelper() async throws {
         let recorder = SharePostRecorder()
         let share = try makeShareDelegation(
             sentToURLs: [
@@ -521,15 +557,15 @@ final class ShareRecoveryPollingTests: XCTestCase {
         )
 
         let queriedServers = await recorder.servers()
-        XCTAssertEqual(queriedServers, ["https://helper-3.example.com"])
-        XCTAssertEqual(result.confirmedShares, [
+        #expect(queriedServers == ["https://helper-3.example.com"])
+        #expect(result.confirmedShares == [
             ShareDelegationKey(bundleIndex: 0, proposalId: 1, shareIndex: 0)
         ])
-        XCTAssertTrue(result.resubmissionShares.isEmpty)
-        XCTAssertEqual(result.queriedCount, 1)
+        #expect(result.resubmissionShares.isEmpty)
+        #expect(result.queriedCount == 1)
     }
 
-    func testPollingContinuesAfterOneRecordedHelperErrors() async throws {
+    @Test func pollingContinuesAfterOneRecordedHelperErrors() async throws {
         let recorder = SharePostRecorder()
         let share = try makeShareDelegation(
             sentToURLs: [
@@ -555,46 +591,46 @@ final class ShareRecoveryPollingTests: XCTestCase {
         )
 
         let queriedServers = await recorder.servers()
-        XCTAssertEqual(queriedServers, [
+        #expect(queriedServers == [
             "https://helper-3.example.com",
             "https://helper-4.example.com"
         ])
-        XCTAssertEqual(result.confirmedShares, [
+        #expect(result.confirmedShares == [
             ShareDelegationKey(bundleIndex: 0, proposalId: 1, shareIndex: 0)
         ])
-        XCTAssertTrue(result.resubmissionShares.isEmpty)
-        XCTAssertEqual(result.queriedCount, 2)
+        #expect(result.resubmissionShares.isEmpty)
+        #expect(result.queriedCount == 2)
     }
 
-    func testImmediateSharesUseCreatedAtForReadinessAndResubmission() throws {
+    @Test func immediateSharesUseCreatedAtForReadinessAndResubmission() throws {
         let share = try makeShareDelegation(
             sentToURLs: ["https://helper.example.com"],
             submitAt: 0,
             createdAt: 100
         )
 
-        XCTAssertFalse(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 109))
-        XCTAssertTrue(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 110))
-        XCTAssertFalse(VotingCoordFlow.shouldResubmitShare(share, now: 129, voteEndTime: 200))
-        XCTAssertTrue(VotingCoordFlow.shouldResubmitShare(share, now: 130, voteEndTime: 200))
+        #expect(!VotingCoordFlow.isShareReadyForStatusCheck(share, now: 109))
+        #expect(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 110))
+        #expect(!VotingCoordFlow.shouldResubmitShare(share, now: 129, voteEndTime: 200))
+        #expect(VotingCoordFlow.shouldResubmitShare(share, now: 130, voteEndTime: 200))
     }
 
-    func testDelayedSharesUseSubmitAtForReadinessAndResubmission() throws {
+    @Test func delayedSharesUseSubmitAtForReadinessAndResubmission() throws {
         let share = try makeShareDelegation(
             sentToURLs: ["https://helper.example.com"],
             submitAt: 200,
             createdAt: 100
         )
 
-        XCTAssertFalse(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 209))
-        XCTAssertTrue(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 210))
-        XCTAssertFalse(VotingCoordFlow.shouldResubmitShare(share, now: 229, voteEndTime: 320))
-        XCTAssertTrue(VotingCoordFlow.shouldResubmitShare(share, now: 230, voteEndTime: 320))
+        #expect(!VotingCoordFlow.isShareReadyForStatusCheck(share, now: 209))
+        #expect(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 210))
+        #expect(!VotingCoordFlow.shouldResubmitShare(share, now: 229, voteEndTime: 320))
+        #expect(VotingCoordFlow.shouldResubmitShare(share, now: 230, voteEndTime: 320))
     }
 }
 
-final class ShareResubmissionFallbackTests: XCTestCase {
-    func testResubmissionTriesUntriedHelpersFirst() async {
+@Suite struct ShareResubmissionFallbackTests {
+    @Test func resubmissionTriesUntriedHelpersFirst() async {
         let recorder = SharePostRecorder()
 
         let acceptedServers = await resubmitSharePayload(
@@ -611,12 +647,12 @@ final class ShareResubmissionFallbackTests: XCTestCase {
             orderServers: { $0 }
         )
 
-        XCTAssertEqual(acceptedServers, ["https://untried.example.com"])
+        #expect(acceptedServers == ["https://untried.example.com"])
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers, ["https://untried.example.com"])
+        #expect(recordedServers == ["https://untried.example.com"])
     }
 
-    func testResubmissionFallsBackToAlreadySentHelperWhenUntriedFails() async {
+    @Test func resubmissionFallsBackToAlreadySentHelperWhenUntriedFails() async {
         let recorder = SharePostRecorder()
 
         let acceptedServers = await resubmitSharePayload(
@@ -636,15 +672,15 @@ final class ShareResubmissionFallbackTests: XCTestCase {
             orderServers: { $0 }
         )
 
-        XCTAssertEqual(acceptedServers, ["https://already-sent.example.com"])
+        #expect(acceptedServers == ["https://already-sent.example.com"])
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers, [
+        #expect(recordedServers == [
             "https://untried.example.com",
             "https://already-sent.example.com"
         ])
     }
 
-    func testResubmissionReturnsEmptyWhenAllHelpersFail() async {
+    @Test func resubmissionReturnsEmptyWhenAllHelpersFail() async {
         let recorder = SharePostRecorder()
 
         let acceptedServers = await resubmitSharePayload(
@@ -662,17 +698,17 @@ final class ShareResubmissionFallbackTests: XCTestCase {
             orderServers: { $0 }
         )
 
-        XCTAssertTrue(acceptedServers.isEmpty)
+        #expect(acceptedServers.isEmpty)
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers, [
+        #expect(recordedServers == [
             "https://untried.example.com",
             "https://already-sent.example.com"
         ])
     }
 }
 
-final class ShareDelegationPostFallbackTests: XCTestCase {
-    func testSelectedHelperFailureBackfillsSameShareAndPrunesFailedHelper() async throws {
+@Suite struct ShareDelegationPostFallbackTests {
+    @Test func selectedHelperFailureBackfillsSameShareAndPrunesFailedHelper() async throws {
         let recorder = SharePostRecorder()
         let payload = makeRecoverySharePayload()
 
@@ -694,23 +730,23 @@ final class ShareDelegationPostFallbackTests: XCTestCase {
         )
 
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers.count, 3)
-        XCTAssertEqual(Set(recordedServers), Set([
+        #expect(recordedServers.count == 3)
+        #expect(Set(recordedServers) == Set([
             "https://online-one.example.com",
             "https://offline.example.com",
             "https://online-two.example.com"
         ]))
-        XCTAssertEqual(result.delegatedShares.first?.acceptedByServers, [
+        #expect(result.delegatedShares.first?.acceptedByServers == [
             "https://online-one.example.com",
             "https://online-two.example.com"
         ])
-        XCTAssertEqual(result.remainingServerURLs, [
+        #expect(result.remainingServerURLs == [
             "https://online-one.example.com",
             "https://online-two.example.com"
         ])
     }
 
-    func testOfflineHelperIsAttemptedAtMostOnceThenLaterSharesUseOnlineHelper() async throws {
+    @Test func offlineHelperIsAttemptedAtMostOnceThenLaterSharesUseOnlineHelper() async throws {
         let recorder = SharePostRecorder()
         let payloads = (0..<2).map { makeRecoverySharePayload(index: UInt32($0)) }
 
@@ -731,19 +767,19 @@ final class ShareDelegationPostFallbackTests: XCTestCase {
         )
 
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers, [
+        #expect(recordedServers == [
             "https://offline.example.com",
             "https://online.example.com",
             "https://online.example.com"
         ])
-        XCTAssertEqual(result.delegatedShares.map(\.acceptedByServers), [
+        #expect(result.delegatedShares.map(\.acceptedByServers) == [
             ["https://online.example.com"],
             ["https://online.example.com"]
         ])
-        XCTAssertEqual(result.remainingServerURLs, ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
     }
 
-    func testAllSelectedHelpersFailButBackfillHelperSucceeds() async throws {
+    @Test func allSelectedHelpersFailButBackfillHelperSucceeds() async throws {
         let recorder = SharePostRecorder()
         let payload = makeRecoverySharePayload()
 
@@ -765,18 +801,18 @@ final class ShareDelegationPostFallbackTests: XCTestCase {
         )
 
         let recordedServers = await recorder.servers()
-        XCTAssertEqual(recordedServers.count, 3)
-        XCTAssertEqual(Set(recordedServers), Set([
+        #expect(recordedServers.count == 3)
+        #expect(Set(recordedServers) == Set([
             "https://offline-one.example.com",
             "https://offline-two.example.com",
             "https://online.example.com"
         ]))
-        XCTAssertEqual(result.delegatedShares.first?.acceptedByServers, ["https://online.example.com"])
-        XCTAssertEqual(result.remainingServerURLs, ["https://online.example.com"])
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
     }
 
-    func testAllConfiguredHelpersFailThrowsNoReachableVoteServers() async throws {
-        do {
+    @Test func allConfiguredHelpersFailThrowsNoReachableVoteServers() async {
+        await #expect(throws: ShareDelegationError.noReachableVoteServers) {
             _ = try await delegateSharePayloads(
                 [makeRecoverySharePayload()],
                 roundIdHex: "aabb",
@@ -787,15 +823,12 @@ final class ShareDelegationPostFallbackTests: XCTestCase {
                 postShare: { _, _ in throw SharePostFailure() },
                 selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
             )
-            XCTFail("Expected share delegation to fail")
-        } catch {
-            XCTAssertEqual(error as? ShareDelegationError, .noReachableVoteServers)
         }
     }
 }
 
-final class DelegateSharesWithFallbackTests: XCTestCase {
-    func testDelegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
+@Suite struct DelegateSharesWithFallbackTests {
+    @Test func delegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
         votingAPI.delegateShares = { _, _, serverURLs in
@@ -815,11 +848,11 @@ final class DelegateSharesWithFallbackTests: XCTestCase {
         )
 
         let attemptCount = await attempts.value()
-        XCTAssertEqual(attemptCount, 3)
-        XCTAssertEqual(result.remainingServerURLs, ["https://vote.example.com"])
+        #expect(attemptCount == 3)
+        #expect(result.remainingServerURLs == ["https://vote.example.com"])
     }
 
-    func testDelegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
+    @Test func delegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
         votingAPI.delegateShares = { _, _, _ in
@@ -827,7 +860,7 @@ final class DelegateSharesWithFallbackTests: XCTestCase {
             throw SharePostFailure()
         }
 
-        do {
+        await #expect(throws: SharePostFailure.self) {
             _ = try await Voting.delegateSharesWithFallback(
                 [],
                 roundId: "aabb",
@@ -835,12 +868,9 @@ final class DelegateSharesWithFallbackTests: XCTestCase {
                 serverURLs: ["https://vote.example.com"],
                 retryDelay: .zero
             )
-            XCTFail("Expected unexpected share delegation error")
-        } catch {
-            XCTAssertTrue(error is SharePostFailure)
         }
         let attemptCount = await attempts.value()
-        XCTAssertEqual(attemptCount, 1)
+        #expect(attemptCount == 1)
     }
 }
 

@@ -18,7 +18,7 @@ Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composab
 
 **Build:** Open `secant.xcworkspace` in Xcode and build the desired target.
 
-**Tests:** Run `secantTests` target in Xcode. Tests use TCA's test store with dependency injection (`.noOp`, `.mockEmptyDisk`, etc.). Snapshot tests are in `secantTests/SnapshotTests/`.
+**Tests:** Run the `zodlTests` target in Xcode (scheme `zodl-internal`). All tests use **Swift Testing** (`@Suite` / `@Test` / `#expect` / `#require`) — **write every new test in Swift Testing, never XCTest.** Tests use TCA's `TestStore` with dependency injection (`.noOp`, `withDependencies`, etc.). Swift Testing runs suites in parallel by default, so mark any suite that mutates process-global state (named `UserDefaults` suites, the OSLog store, shared singletons / TCA `@Shared` state) with `@Suite(.serialized)`.
 
 **Linting:** SwiftLint runs as a build phase. Config: `.swiftlint.yml` (app code) and `.swiftlint_tests.yml` (tests, more relaxed). Key enforced rules: no string concatenation (use interpolation), no `NSLog`, no `print`/`debugPrint` in app code, TODOs must reference issue numbers (`TODO: [#123]`).
 
