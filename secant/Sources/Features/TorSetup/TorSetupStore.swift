@@ -71,6 +71,7 @@ struct TorSetup {
         var activeSettingsOption: SettingsOptions?
         var currentSettingsOption = SettingsOptions.optOut
         var isSettingsView: Bool = false
+        @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
         var isSaveButtonDisabled: Bool {
             currentSettingsOption == activeSettingsOption
@@ -130,6 +131,9 @@ struct TorSetup {
                 
             case .enableTapped:
                 try? walletStorage.importTorSetupFlag(true)
+                // Route exchange-rate, swap and voting requests through the
+                // protected path immediately, not only after the next app start.
+                state.$swapAPIAccess.withLock { $0 = .protected }
                 return .run { send in
                     do {
                         try await sdkSynchronizer.torEnabled(true)
@@ -148,6 +152,7 @@ struct TorSetup {
             case .saveChangesTapped:
                 let newFlag = state.currentSettingsOption == .optIn
                 try? walletStorage.importTorSetupFlag(newFlag)
+                state.$swapAPIAccess.withLock { $0 = newFlag ? .protected : .direct }
                 state.activeSettingsOption = state.currentSettingsOption
                 let currentSettingsOption = state.currentSettingsOption
                 if state.currentSettingsOption == .optOut {
@@ -171,6 +176,7 @@ struct TorSetup {
 
             case .disableTapped:
                 try? walletStorage.importTorSetupFlag(false)
+                state.$swapAPIAccess.withLock { $0 = .direct }
                 return .run { _ in
                     try? await sdkSynchronizer.torEnabled(false)
                 }

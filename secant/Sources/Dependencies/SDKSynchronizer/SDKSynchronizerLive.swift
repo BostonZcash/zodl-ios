@@ -239,7 +239,13 @@ extension SDKSynchronizerClient: DependencyKey {
             getCustomUnifiedAddress: { accountUUID, receivers in
                 try await synchronizer.getCustomUnifiedAddress(accountUUID: accountUUID, receivers: receivers)
             },
-            torEnabled: { enabled in
+            torEnabled: { [sharedSwapAPIAccess = $swapAPIAccess] enabled in
+                // Keep the app-level HTTP routing flag in sync with every runtime Tor
+                // toggle, not only with the stored value read at synchronizer
+                // construction. Updated before the SDK call so a failed Tor init
+                // fails closed (requests keep using the protected path) instead of
+                // silently egressing directly.
+                sharedSwapAPIAccess.withLock { $0 = enabled ? .protected : .direct }
                 try await synchronizer.tor(enabled: enabled)
             },
             exchangeRateEnabled: { enabled in
