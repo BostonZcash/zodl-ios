@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		051F035A06D6092E00704BAB /* HomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A5D635BF4FBF530D1B6880 /* HomeTests.swift */; };
-		349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */; };
 		05F96BC8C109B80ED685D9CD /* PrivateDataConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE450F4E98D0B7054611598 /* PrivateDataConsentTests.swift */; };
 		161B27ACDB3C31A163EC8AFF /* SensitiveDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53B4B2244B2E608A11AC552 /* SensitiveDataTests.swift */; };
 		2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD04B216486D7A0AAB329F2 /* UserPreferencesStorageTests.swift */; };
@@ -46,6 +45,8 @@
 		348EC51C2FD7FF45008495FB /* AutoServerSelectionInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 348EC5112FD7FF45008495FB /* AutoServerSelectionInterface.swift */; };
 		348EC51D2FD7FF45008495FB /* AutoServerSelectionLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 348EC5122FD7FF45008495FB /* AutoServerSelectionLiveKey.swift */; };
 		348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */; };
+		349CE5D62FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */; };
+		349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */; };
 		34AA6DD82F85774F00D244E2 /* SwapAndPayStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CF82F85774F00D244E2 /* SwapAndPayStore.swift */; };
 		34AA6DD92F85774F00D244E2 /* RemoteStorageInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C102F85774F00D244E2 /* RemoteStorageInterface.swift */; };
 		34AA6DDA2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
@@ -1625,6 +1626,7 @@
 		348EC5122FD7FF45008495FB /* AutoServerSelectionLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoServerSelectionLiveKey.swift; sourceTree = "<group>"; };
 		348EC5132FD7FF45008495FB /* AutoServerSelectionTestKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoServerSelectionTestKey.swift; sourceTree = "<group>"; };
 		349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiServerSubmissionTests.swift; sourceTree = "<group>"; };
+		349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiServerSubmitRoutingTests.swift; sourceTree = "<group>"; };
 		34AA6BA42F85774F00D244E2 /* ABv1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABv1.swift; sourceTree = "<group>"; };
 		34AA6BA62F85774F00D244E2 /* AddressBookContacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookContacts.swift; sourceTree = "<group>"; };
 		34AA6BA72F85774F00D244E2 /* AddressBookEncryption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryption.swift; sourceTree = "<group>"; };
@@ -2415,6 +2417,7 @@
 			isa = PBXGroup;
 			children = (
 				349CE5D52FDC0EDF00E2B9CF /* MultiServerSubmissionTests.swift */,
+				349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */,
 			);
 			path = SendTests;
 			sourceTree = "<group>";
@@ -5072,6 +5075,7 @@
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
 				AD0D00202D00000100000001 /* VotingAPIResponseParserTests.swift in Sources */,
 				AD0D00232D00000100000001 /* VotingServiceConfigTests.swift in Sources */,
+				349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */,
 				AD0D00222D00000100000001 /* VotingCoordFlowCoordinatorTests.swift in Sources */,
 				AD0D00212D00000100000001 /* VotingHelpersTests.swift in Sources */,
 				54B3A48C4A5790F1E38FEB6C /* RecoveryPhraseBackupTests.swift in Sources */,
