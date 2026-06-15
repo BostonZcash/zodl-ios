@@ -143,12 +143,11 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
     }
 
     func coinMarketCapRateFailed(currency: CurrencyISO4217 = .usd) {
-        if currency == .usd {
-            isAwaitingSDKFallback = true
-            refreshExchangeRateUSD(.sdk)
-        } else {
-            eventStream.send(.stale(latestRate))
-        }
+        // SDK USD fallback is temporarily disabled: TorClient.getExchangeRateUSD() traps on
+        // first use after isolatedClient() bootstrap (filed against zcash-swift-wallet-sdk).
+        // Until the SDK is fixed, surface every CMC failure as the unavailable state and let
+        // the user retry, instead of crashing the app via the Tor path.
+        eventStream.send(.stale(latestRate))
     }
 
     func resolveResult(_ result: FiatCurrencyResult?) {
