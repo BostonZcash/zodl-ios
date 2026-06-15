@@ -289,8 +289,8 @@ class CurrencyConversionTests: XCTestCase {
     func testCurrencyISO4217AllCases() {
         XCTAssertEqual(
             CurrencyISO4217.allCases.count,
-            1,
-            "CurrencyConversion tests: `testCurrencyISO4217AllCases` count is expected to be 1 but it is \(CurrencyISO4217.allCases.count)"
+            23,
+            "CurrencyConversion tests: `testCurrencyISO4217AllCases` count is expected to be 23 but it is \(CurrencyISO4217.allCases.count)"
         )
         XCTAssertTrue(
             CurrencyISO4217.allCases.contains(.usd),
