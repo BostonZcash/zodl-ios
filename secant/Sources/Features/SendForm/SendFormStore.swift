@@ -29,8 +29,10 @@ struct SendForm {
         var balancesState = Balances.State.initial
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var currencyText: RedactableString = .empty
+        var currencyUnavailableSheetCurrency: CurrencyISO4217 = .usd
         var isAddressBookHintVisible = false
         var isCurrencyConversionEnabled = false
+        var isCurrencyUnavailableSheetPresented = false
         var isInsufficientBalance = false
         var isLatestInputFiat = false
         var isNotAddressInAddressBook = false
@@ -203,6 +205,8 @@ struct SendForm {
         case balancesBindingUpdated(Bool)
         case binding(BindingAction<SendForm.State>)
         case confirmationRequired(Confirmation)
+        case currencyUnavailableContinueInZECTapped
+        case currencyUnavailableSwitchToUSDTapped
         case dismissRequired
         case getProposal(Confirmation)
         case gotTexSupportTapped
@@ -295,6 +299,25 @@ struct SendForm {
                 } else {
                     state.isCurrencyConversionEnabled = false
                 }
+                let selectedCurrency = exchangeRate.selectedCurrency()
+                if state.isCurrencyConversionEnabled && selectedCurrency != .usd && state.currencyConversion == nil {
+                    state.currencyUnavailableSheetCurrency = selectedCurrency
+                    state.isCurrencyUnavailableSheetPresented = true
+                }
+                return .none
+
+            case .currencyUnavailableSwitchToUSDTapped:
+                let existing = userStoredPreferences.exchangeRate()
+                let automatic = existing?.automatic ?? true
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: automatic, currency: .usd)
+                )
+                state.isCurrencyUnavailableSheetPresented = false
+                exchangeRate.refreshExchangeRateUSD()
+                return .none
+
+            case .currencyUnavailableContinueInZECTapped:
+                state.isCurrencyUnavailableSheetPresented = false
                 return .none
 
             case let .proposal(proposal):

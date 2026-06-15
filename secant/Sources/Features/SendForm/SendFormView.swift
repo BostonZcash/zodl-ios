@@ -217,6 +217,9 @@ struct SendFormView: View {
             .zashiSheet(isPresented: $store.isSheetTexAddressVisible) {
                 helpSheetContent()
             }
+            .zashiSheet(isPresented: $store.isCurrencyUnavailableSheetPresented) {
+                currencyUnavailableSheetContent()
+            }
             .insufficientFundsSheet(isPresented: $store.isInsufficientBalance)
             .alert(store: store.scope(
                 state: \.$alert,
@@ -304,6 +307,47 @@ struct SendFormView: View {
                     RoundedRectangle(cornerRadius: Design.Radius._md)
                         .stroke(Design.Btns.Secondary.border.color(colorScheme))
                 }
+        }
+    }
+
+    @ViewBuilder private func currencyUnavailableSheetContent() -> some View {
+        VStack(alignment: .center, spacing: 0) {
+            Asset.Assets.Icons.alertOutline.image
+                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
+                .padding(12)
+                .background {
+                    Circle()
+                        .fill(Design.Utility.ErrorRed._100.color(colorScheme))
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.top, 48)
+
+            Text(String(localizable: .sendCurrencyUnavailableTitle(store.currencyUnavailableSheetCurrency.code)))
+                .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 24)
+                .padding(.bottom, 8)
+
+            Text(String(localizable: .sendCurrencyUnavailableDesc(store.currencyUnavailableSheetCurrency.displayName)))
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 24)
+
+            ZashiButton(String(localizable: .sendCurrencyUnavailableSwitchToUSD)) {
+                store.send(.currencyUnavailableSwitchToUSDTapped)
+            }
+            .padding(.bottom, 8)
+
+            ZashiButton(
+                String(localizable: .sendCurrencyUnavailableContinueInZEC),
+                type: .ghost
+            ) {
+                store.send(.currencyUnavailableContinueInZECTapped)
+            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 

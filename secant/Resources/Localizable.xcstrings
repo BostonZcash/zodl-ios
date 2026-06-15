@@ -12143,6 +12143,74 @@
         }
       }
     },
+    "send.currencyUnavailable.continueInZEC" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue in ZEC"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar en ZEC"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live rates for %@ can't be fetched right now. You can use USD as a fallback, or keep entering amounts in ZEC only."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se puede obtener la tasa en tiempo real para %@ ahora mismo. Puedes usar USD como alternativa, o seguir introduciendo cantidades solo en ZEC."
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.switchToUSD" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch to USD"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiar a USD"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ conversion unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversión a %@ no disponible"
+          }
+        }
+      }
+    },
     "send.error.insufficientFunds" : {
       "extractionState" : "manual",
       "localizations" : {
