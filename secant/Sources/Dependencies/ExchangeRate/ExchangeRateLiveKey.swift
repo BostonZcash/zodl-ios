@@ -29,7 +29,7 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
     private var refreshTimer: Timer? = nil
     private var staleTimer: Timer? = nil
     private var isStale = false
-    private var nilValuesCounter = 0
+    private var isAwaitingSDKFallback = false
     private var isSetUp = false
     private var cachedCurrency: CurrencyISO4217 = .usd
 
@@ -123,6 +123,8 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
                             state: .success
                         )
 
+                        self.latestRate = fiat
+                        self.isAwaitingSDKFallback = false
                         eventStream.send(.value(fiat))
                     } catch {
                         coinMarketCapRateFailed(currency: currency)
@@ -142,6 +144,7 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
 
     func coinMarketCapRateFailed(currency: CurrencyISO4217 = .usd) {
         if currency == .usd {
+            isAwaitingSDKFallback = true
             refreshExchangeRateUSD(.sdk)
         } else {
             eventStream.send(.stale(latestRate))
@@ -154,32 +157,42 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
             return
         }
 
-        // retry logic for nil value
         guard let result else {
-            nilValuesCounter += 1
-
-            if nilValuesCounter == 2 {
-                refreshExchangeRateUSD(.coinMarketCap)
-            } else if nilValuesCounter > 2 {
+            // The SDK pushes nil here only when a fetch we triggered failed without a cached value.
+            // Initial CurrentValueSubject nils and unrelated transients are ignored.
+            if isAwaitingSDKFallback {
+                isAwaitingSDKFallback = false
                 eventStream.send(.stale(latestRate))
             }
-
             return
         }
 
-        latestRate = result
-
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
-        if isStale
-            && result.state != .fetching
-            && Date().timeIntervalSince1970 - result.date.timeIntervalSince1970 > zcashSDKEnvironment.exchangeRateStaleLimit() {
-            eventStream.send(.stale(latestRate))
-        } else {
-            eventStream.send(.value(latestRate))
-        }
+        switch result.state {
+        case .success:
+            isAwaitingSDKFallback = false
+            latestRate = result
 
-        rescheduleTimer()
+            if isStale
+                && Date().timeIntervalSince1970 - result.date.timeIntervalSince1970 > zcashSDKEnvironment.exchangeRateStaleLimit() {
+                eventStream.send(.stale(latestRate))
+            } else {
+                eventStream.send(.value(latestRate))
+            }
+
+            rescheduleTimer()
+
+        case .fetching:
+            // In-flight — propagate so the UI can show a progress indicator. Keep the fallback flag set
+            // until SDK delivers a terminal result.
+            latestRate = result
+            eventStream.send(.value(latestRate))
+
+        case .error:
+            isAwaitingSDKFallback = false
+            eventStream.send(.stale(latestRate))
+        }
     }
 
     func rescheduleTimer() {

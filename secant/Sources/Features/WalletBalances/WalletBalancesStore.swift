@@ -132,9 +132,7 @@ struct WalletBalances {
                 return .none
 
             case .exchangeRateRefreshTapped:
-                if !state.isExchangeRateStale {
-                    exchangeRate.refreshExchangeRateUSD()
-                }
+                exchangeRate.refreshExchangeRateUSD()
                 return .none
                 
             case .exchangeRateEvent(let result):
@@ -163,12 +161,19 @@ struct WalletBalances {
                     }
                     state.isExchangeRateRefreshEnabled = true
                     state.isExchangeRateStale = false
-                case .stale:
-                    state.$currencyConversion.withLock {
-                        $0 = nil
+                case .stale(let rate):
+                    if let rate {
+                        let currency = exchangeRate.selectedCurrency()
+                        state.fiatCurrencyResult = rate
+                        state.$currencyConversion.withLock {
+                            $0 = CurrencyConversion(currency, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970)
+                        }
+                    } else {
+                        state.fiatCurrencyResult = nil
+                        state.$currencyConversion.withLock { $0 = nil }
                     }
                     state.isExchangeRateStale = true
-                    break
+                    state.isExchangeRateRefreshEnabled = true
                 }
                 
                 return .none
