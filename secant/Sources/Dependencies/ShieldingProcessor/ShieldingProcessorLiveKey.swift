@@ -76,6 +76,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                         try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                     }
 
+                    // Shielding surfaces outcomes through a simpler state machine (.grpc / .failed /
+                    // .succeeded) with no pending screen, so `.grpcFailure`'s `reason` (e.g. timeout) is
+                    // intentionally not differentiated here — the generic `.grpc` state already means
+                    // "transport failure, may still settle". Send/Swap distinguish the timeout copy only
+                    // because they have a pending screen to show it on; this path does not.
                     switch result {
                     case .grpcFailure:
                         subject.send(.grpc)

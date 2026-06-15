@@ -493,7 +493,7 @@
       "location" : "https://github.com/zcash/zcash-swift-wallet-sdk.git",
       "state" : {
         "branch" : "michal/mob-1039-multiserver-submission",
-        "revision" : "2423a8db665cc5322f4fb64e2c840b51d9f87978"
+        "revision" : "634539f55e7663224719fe747ee13155d39a012a"
       }
     }
   ],
