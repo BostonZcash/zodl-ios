@@ -22,7 +22,18 @@ struct ZecKeyboardView: View {
     
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
+            keyboardBody
+        }
+        .applyScreenBackground()
+        .zashiBack()
+        .screenTitle(String(localizable: .generalRequest))
+        .zashiSheet(isPresented: $store.isCurrencyUnavailableSheetPresented) {
+            currencyUnavailableSheetContent()
+        }
+    }
+
+    @ViewBuilder private var keyboardBody: some View {
+        VStack(spacing: 0) {
                 VStack(spacing: 0) {
                     if !store.isValidInput {
                         HStack(spacing: 0) {
@@ -156,12 +167,49 @@ struct ZecKeyboardView: View {
                 .disabled(store.isNextButtonDisabled)
                 .padding(.bottom, 24)
                 .screenHorizontalPadding()
-            }
-            .onAppear { store.send(.onAppear) }
         }
-        .applyScreenBackground()
-        .zashiBack()
-        .screenTitle(String(localizable: .generalRequest))
+        .onAppear { store.send(.onAppear) }
+    }
+
+    @ViewBuilder private func currencyUnavailableSheetContent() -> some View {
+        VStack(alignment: .center, spacing: 0) {
+            Asset.Assets.Icons.alertOutline.image
+                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
+                .padding(12)
+                .background {
+                    Circle()
+                        .fill(Design.Utility.ErrorRed._100.color(colorScheme))
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.top, 48)
+
+            Text(String(localizable: .sendCurrencyUnavailableTitle(store.selectedCurrency.code)))
+                .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 24)
+                .padding(.bottom, 8)
+
+            Text(String(localizable: .sendCurrencyUnavailableDesc(store.selectedCurrency.displayName)))
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 24)
+
+            ZashiButton(String(localizable: .sendCurrencyUnavailableSwitchToUSD)) {
+                store.send(.currencyUnavailableSwitchToUSDTapped)
+            }
+            .padding(.bottom, 8)
+
+            ZashiButton(
+                String(localizable: .sendCurrencyUnavailableContinueInZEC),
+                type: .ghost
+            ) {
+                store.send(.currencyUnavailableContinueInZECTapped)
+            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
     }
 }
 
