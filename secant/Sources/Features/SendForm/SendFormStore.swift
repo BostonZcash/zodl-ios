@@ -326,9 +326,8 @@ struct SendForm {
 
             case .walletBalances(.exchangeRateEvent(let result)):
                 switch result {
-                case .value(let rate), .refreshEnable(let rate):
+                case .value(let rate, let currency), .refreshEnable(let rate, let currency):
                     if let rate {
-                        let currency = exchangeRate.selectedCurrency()
                         state.$currencyConversion.withLock { $0 = CurrencyConversion(currency, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
                         return .send(.syncAmounts(true))
                     }
