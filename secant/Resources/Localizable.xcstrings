@@ -6268,6 +6268,23 @@
         }
       }
     },
+    "currencyConversion.currencyLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moneda"
+          }
+        }
+      }
+    },
     "currencyConversion.enable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6451,6 +6468,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guardar cambios"
+          }
+        }
+      }
+    },
+    "currencyConversion.selectCurrencyTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar Moneda"
           }
         }
       }
@@ -12109,6 +12143,74 @@
         }
       }
     },
+    "send.currencyUnavailable.continueInZEC" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue in ZEC"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar en ZEC"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live rates for %@ can't be fetched right now. You can use USD as a fallback, or keep entering amounts in ZEC only."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se puede obtener la tasa en tiempo real para %@ ahora mismo. Puedes usar USD como alternativa, o seguir introduciendo cantidades solo en ZEC."
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.switchToUSD" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch to USD"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiar a USD"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ conversion unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversión a %@ no disponible"
+          }
+        }
+      }
+    },
     "send.error.insufficientFunds" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12962,6 +13064,23 @@
         }
       }
     },
+    "serverSetup.allServers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse all servers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explorar todos los servidores"
+          }
+        }
+      }
+    },
     "serverSetup.automatic" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12992,57 +13111,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modo de conexión"
-          }
-        }
-      }
-    },
-    "serverSetup.manual" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        }
-      }
-    },
-    "serverSetup.testing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Testing"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Probando"
-          }
-        }
-      }
-    },
-    "serverSetup.allServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browse all servers"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Explorar todos los servidores"
           }
         }
       }
@@ -13111,6 +13179,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Servidores más rápidos"
+          }
+        }
+      }
+    },
+    "serverSetup.manual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
           }
         }
       }
@@ -13196,6 +13281,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guardar selección"
+          }
+        }
+      }
+    },
+    "serverSetup.testing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testing"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Probando"
           }
         }
       }

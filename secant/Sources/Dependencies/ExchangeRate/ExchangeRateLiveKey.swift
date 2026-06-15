@@ -19,18 +19,20 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
 
 @MainActor final class ExchangeRateProvider {
     enum Constants {
-        static let cmcRateURL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=ZEC&convert=USD"
+        static let cmcRateBaseURL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=ZEC&convert="
         static let zecKey = "ZEC"
     }
 
     private var cancellable: AnyCancellable? = nil
-    nonisolated let eventStream = CurrentValueSubject<ExchangeRateClient.EchangeRateEvent, Never>(.value(nil))
+    nonisolated let eventStream = CurrentValueSubject<ExchangeRateClient.EchangeRateEvent, Never>(.value(nil, .usd))
     private var latestRate: FiatCurrencyResult? = nil
+    private var latestRateCurrency: CurrencyISO4217 = .usd
     private var refreshTimer: Timer? = nil
     private var staleTimer: Timer? = nil
     private var isStale = false
-    private var nilValuesCounter = 0
+    private var isAwaitingSDKFallback = false
     private var isSetUp = false
+    private var cachedCurrency: CurrencyISO4217 = .usd
 
     // nonisolated init() — empty, so live() can create it without main actor context
     nonisolated init() {}
@@ -49,7 +51,14 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
         }
     }
 
-    nonisolated func getCMCRate() async throws -> Double {
+    func selectedCurrency() -> CurrencyISO4217 {
+        @Dependency(\.userStoredPreferences) var userStoredPreferences
+        let currency = userStoredPreferences.exchangeRate()?.currency ?? .usd
+        cachedCurrency = currency
+        return currency
+    }
+
+    nonisolated func getCMCRate(for currency: CurrencyISO4217 = .usd) async throws -> Double {
         guard let cmcKey = PartnerKeys.cmcKey else {
             throw "CMC API Key missing"
         }
@@ -57,7 +66,7 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
         @Dependency(\.sdkSynchronizer) var sdkSynchronizer
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
-        guard let url = URL(string: Constants.cmcRateURL) else {
+        guard let url = URL(string: Constants.cmcRateBaseURL + currency.code) else {
             throw URLError(.badURL)
         }
 
@@ -77,8 +86,9 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
         }
 
         if let result = try? JSONDecoder().decode(CMCPrice.self, from: data) {
-            if let zec = result.data[Constants.zecKey] {
-                return zec.quote.USD.price
+            if let zec = result.data[Constants.zecKey],
+               let quote = zec.quote[currency.code] {
+                return quote.price
             }
         }
 
@@ -99,11 +109,14 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
                 return
             }
 
+            let currency = exchangeRate.currency
+            cachedCurrency = currency
+
             if rateSource == .coinMarketCap {
                 Task(priority: .low) { [weak self] in
                     guard let self else { return }
                     do {
-                        let price = try await getCMCRate()
+                        let price = try await getCMCRate(for: currency)
 
                         let fiat = FiatCurrencyResult(
                             date: Date(),
@@ -111,50 +124,80 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
                             state: .success
                         )
 
-                        eventStream.send(.value(fiat))
+                        self.latestRate = fiat
+                        self.latestRateCurrency = currency
+                        self.isAwaitingSDKFallback = false
+                        eventStream.send(.value(fiat, currency))
                     } catch {
-                        coinMarketCapRateFailed()
+                        coinMarketCapRateFailed(currency: currency)
                     }
                 }
             } else if rateSource == .sdk {
-                @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-
-                sdkSynchronizer.refreshExchangeRateUSD()
+                // SDK fallback only provides USD rates
+                if currency == .usd {
+                    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+                    sdkSynchronizer.refreshExchangeRateUSD()
+                } else {
+                    eventStream.send(.stale(latestRate, currency))
+                }
             }
         }
     }
 
-    func coinMarketCapRateFailed() {
-        refreshExchangeRateUSD(.sdk)
+    func coinMarketCapRateFailed(currency: CurrencyISO4217 = .usd) {
+        // SDK USD fallback is temporarily disabled: TorClient.getExchangeRateUSD() traps on
+        // first use after isolatedClient() bootstrap (filed against zcash-swift-wallet-sdk).
+        // Until the SDK is fixed, surface every CMC failure as the unavailable state and let
+        // the user retry, instead of crashing the app via the Tor path.
+        //
+        // Only offer the cached rate as a stale fallback when it was fetched for `currency`;
+        // a rate priced in a different currency must never be surfaced under this one.
+        let staleRate = latestRateCurrency == currency ? latestRate : nil
+        eventStream.send(.stale(staleRate, currency))
     }
 
     func resolveResult(_ result: FiatCurrencyResult?) {
-        // retry logic for nil value
+        // SDK stream only provides USD — ignore when a different currency is selected
+        guard cachedCurrency == .usd else { return }
+
         guard let result else {
-            nilValuesCounter += 1
-
-            if nilValuesCounter == 2 {
-                refreshExchangeRateUSD(.coinMarketCap)
-            } else if nilValuesCounter > 2 {
-                eventStream.send(.stale(latestRate))
+            // The SDK pushes nil here only when a fetch we triggered failed without a cached value.
+            // Initial CurrentValueSubject nils and unrelated transients are ignored.
+            if isAwaitingSDKFallback {
+                isAwaitingSDKFallback = false
+                eventStream.send(.stale(latestRate, .usd))
             }
-
             return
         }
 
-        latestRate = result
-
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
-        if isStale
-            && result.state != .fetching
-            && Date().timeIntervalSince1970 - result.date.timeIntervalSince1970 > zcashSDKEnvironment.exchangeRateStaleLimit() {
-            eventStream.send(.stale(latestRate))
-        } else {
-            eventStream.send(.value(latestRate))
-        }
+        switch result.state {
+        case .success:
+            isAwaitingSDKFallback = false
+            latestRate = result
+            latestRateCurrency = .usd
 
-        rescheduleTimer()
+            if isStale
+                && Date().timeIntervalSince1970 - result.date.timeIntervalSince1970 > zcashSDKEnvironment.exchangeRateStaleLimit() {
+                eventStream.send(.stale(latestRate, .usd))
+            } else {
+                eventStream.send(.value(latestRate, .usd))
+            }
+
+            rescheduleTimer()
+
+        case .fetching:
+            // In-flight — propagate so the UI can show a progress indicator. Keep the fallback flag set
+            // until SDK delivers a terminal result.
+            latestRate = result
+            latestRateCurrency = .usd
+            eventStream.send(.value(latestRate, .usd))
+
+        case .error:
+            isAwaitingSDKFallback = false
+            eventStream.send(.stale(latestRate, .usd))
+        }
     }
 
     func rescheduleTimer() {
@@ -171,7 +214,7 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
             let timeToSchedule = zcashSDKEnvironment.exchangeRateIPRateLimit() - diff
 
             if timeToSchedule < 0 {
-                eventStream.send(.refreshEnable(latestRate))
+                eventStream.send(.refreshEnable(latestRate, .usd))
             } else {
                 refreshTimer?.invalidate()
                 refreshTimer = Timer.scheduledTimer(withTimeInterval: timeToSchedule, repeats: false) { [weak self] _ in
@@ -179,7 +222,7 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
                         self?.refreshTimer?.invalidate()
                         self?.refreshTimer = nil
 
-                        self?.eventStream.send(.refreshEnable(self?.latestRate))
+                        self?.eventStream.send(.refreshEnable(self?.latestRate, .usd))
                     }
                 }
 
@@ -214,6 +257,10 @@ extension ExchangeRateClient: DependencyKey {
                 Task { @MainActor in
                     exchangeRateProvider.refreshExchangeRateUSD()
                 }
+            },
+            selectedCurrency: {
+                @Dependency(\.userStoredPreferences) var userStoredPreferences
+                return userStoredPreferences.exchangeRate()?.currency ?? .usd
             }
         )
     }

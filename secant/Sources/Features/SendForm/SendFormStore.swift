@@ -31,6 +31,8 @@ struct SendForm {
         var currencyText: RedactableString = .empty
         var isAddressBookHintVisible = false
         var isCurrencyConversionEnabled = false
+        var isCurrencyUnavailableSheetPresented = false
+        var selectedCurrency: CurrencyISO4217 = .usd
         var isInsufficientBalance = false
         var isLatestInputFiat = false
         var isNotAddressInAddressBook = false
@@ -75,7 +77,16 @@ struct SendForm {
         }
 
         var currencySymbol: String {
-            currencyConversion?.iso4217.symbol ?? ""
+            (currencyConversion?.iso4217 ?? selectedCurrency).symbol
+        }
+
+        var currencyCode: String {
+            (currencyConversion?.iso4217 ?? selectedCurrency).code
+        }
+
+        var hasCurrencySymbol: Bool {
+            let iso = currencyConversion?.iso4217 ?? selectedCurrency
+            return iso.symbol != iso.code
         }
 
         var feeFormat: String {
@@ -194,6 +205,8 @@ struct SendForm {
         case balancesBindingUpdated(Bool)
         case binding(BindingAction<SendForm.State>)
         case confirmationRequired(Confirmation)
+        case currencyUnavailableContinueInZECTapped
+        case currencyUnavailableSwitchToUSDTapped
         case dismissRequired
         case getProposal(Confirmation)
         case gotTexSupportTapped
@@ -219,6 +232,7 @@ struct SendForm {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.derivationTool) var derivationTool
+    @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -285,6 +299,25 @@ struct SendForm {
                 } else {
                     state.isCurrencyConversionEnabled = false
                 }
+                state.selectedCurrency = exchangeRate.selectedCurrency()
+                if state.isCurrencyConversionEnabled && state.selectedCurrency != .usd && state.currencyConversion == nil {
+                    state.isCurrencyUnavailableSheetPresented = true
+                }
+                return .none
+
+            case .currencyUnavailableSwitchToUSDTapped:
+                let existing = userStoredPreferences.exchangeRate()
+                let automatic = existing?.automatic ?? true
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: automatic, currency: .usd)
+                )
+                state.selectedCurrency = .usd
+                state.isCurrencyUnavailableSheetPresented = false
+                exchangeRate.refreshExchangeRateUSD()
+                return .none
+
+            case .currencyUnavailableContinueInZECTapped:
+                state.isCurrencyUnavailableSheetPresented = false
                 return .none
 
             case let .proposal(proposal):
@@ -293,9 +326,9 @@ struct SendForm {
 
             case .walletBalances(.exchangeRateEvent(let result)):
                 switch result {
-                case .value(let rate), .refreshEnable(let rate):
+                case .value(let rate, let currency), .refreshEnable(let rate, let currency):
                     if let rate {
-                        state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
+                        state.$currencyConversion.withLock { $0 = CurrencyConversion(currency, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
                         return .send(.syncAmounts(true))
                     }
                 case .stale:
