@@ -29,10 +29,10 @@ struct SendForm {
         var balancesState = Balances.State.initial
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var currencyText: RedactableString = .empty
-        var currencyUnavailableSheetCurrency: CurrencyISO4217 = .usd
         var isAddressBookHintVisible = false
         var isCurrencyConversionEnabled = false
         var isCurrencyUnavailableSheetPresented = false
+        var selectedCurrency: CurrencyISO4217 = .usd
         var isInsufficientBalance = false
         var isLatestInputFiat = false
         var isNotAddressInAddressBook = false
@@ -77,15 +77,15 @@ struct SendForm {
         }
 
         var currencySymbol: String {
-            currencyConversion?.iso4217.symbol ?? ""
+            (currencyConversion?.iso4217 ?? selectedCurrency).symbol
         }
 
         var currencyCode: String {
-            currencyConversion?.iso4217.code ?? CurrencyISO4217.usd.code
+            (currencyConversion?.iso4217 ?? selectedCurrency).code
         }
 
         var hasCurrencySymbol: Bool {
-            guard let iso = currencyConversion?.iso4217 else { return false }
+            let iso = currencyConversion?.iso4217 ?? selectedCurrency
             return iso.symbol != iso.code
         }
 
@@ -299,9 +299,8 @@ struct SendForm {
                 } else {
                     state.isCurrencyConversionEnabled = false
                 }
-                let selectedCurrency = exchangeRate.selectedCurrency()
-                if state.isCurrencyConversionEnabled && selectedCurrency != .usd && state.currencyConversion == nil {
-                    state.currencyUnavailableSheetCurrency = selectedCurrency
+                state.selectedCurrency = exchangeRate.selectedCurrency()
+                if state.isCurrencyConversionEnabled && state.selectedCurrency != .usd && state.currencyConversion == nil {
                     state.isCurrencyUnavailableSheetPresented = true
                 }
                 return .none
@@ -312,6 +311,7 @@ struct SendForm {
                 try? userStoredPreferences.setExchangeRate(
                     UserPreferencesStorage.ExchangeRate(manual: true, automatic: automatic, currency: .usd)
                 )
+                state.selectedCurrency = .usd
                 state.isCurrencyUnavailableSheetPresented = false
                 exchangeRate.refreshExchangeRateUSD()
                 return .none

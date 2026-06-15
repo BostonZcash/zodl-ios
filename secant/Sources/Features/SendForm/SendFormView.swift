@@ -322,13 +322,13 @@ struct SendFormView: View {
                 }
                 .padding(.top, 48)
 
-            Text(String(localizable: .sendCurrencyUnavailableTitle(store.currencyUnavailableSheetCurrency.code)))
+            Text(String(localizable: .sendCurrencyUnavailableTitle(store.selectedCurrency.code)))
                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 24)
                 .padding(.bottom, 8)
 
-            Text(String(localizable: .sendCurrencyUnavailableDesc(store.currencyUnavailableSheetCurrency.displayName)))
+            Text(String(localizable: .sendCurrencyUnavailableDesc(store.selectedCurrency.displayName)))
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
