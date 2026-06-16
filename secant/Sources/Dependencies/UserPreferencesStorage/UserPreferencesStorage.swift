@@ -187,8 +187,8 @@ extension UserPreferencesStorage {
                     host = String(first)
                 } else if split.count == 3, let first = split.first {
                     let second = split[1]
-                    
-                    host = "\(String(first))\(String(second))"
+
+                    host = "\(String(first)):\(String(second))"
                 }
                 
                 return LightWalletEndpoint(
