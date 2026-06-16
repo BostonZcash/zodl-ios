@@ -15,9 +15,25 @@ extension LogsHandlerClient: DependencyKey {
     static func live() -> Self {
         Self(
             exportAndStoreLogs: { sdkLogs, tcaLogs, walletLogs in
-                // create a directory
-                let logsURL = FileManager.default.temporaryDirectory.appendingPathComponent("zashiPrivateData")
-                try FileManager.default.createDirectory(atPath: logsURL.path, withIntermediateDirectories: true)
+                // Purge artifacts left behind by previous exports (e.g. when the app
+                // was killed while the share sheet was open), then stage this export
+                // in a unique, file-protected directory.
+                try? FileManager.default.removeItem(at: exportsRootURL())
+                try? FileManager.default.removeItem(at: legacyStagingURL())
+
+                let exportDirectory = exportsRootURL().appendingPathComponent(UUID().uuidString, isDirectory: true)
+                // The staging directory name defines the folder name inside the produced ZIP.
+                let logsURL = exportDirectory.appendingPathComponent("zashiPrivateData", isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: logsURL,
+                    withIntermediateDirectories: true,
+                    attributes: [.protectionKey: FileProtectionType.complete]
+                )
+
+                // The plaintext staging files are only needed to build the ZIP.
+                defer {
+                    try? FileManager.default.removeItem(at: logsURL)
+                }
 
                 // export the logs
                 async let sdkLogsVerbose = LogsHandlerClient.exportAndStoreLogsFor(
@@ -42,7 +58,7 @@ extension LogsHandlerClient: DependencyKey {
 
                 // store the log files into the logs folder
                 try logs.forEach { logsHandler in
-                    try logsHandler.result.write(to: logsHandler.dir, atomically: true, encoding: String.Encoding.utf8)
+                    try Data(logsHandler.result.utf8).write(to: logsHandler.dir, options: [.completeFileProtection])
                 }
 
                 // zip the logs folder
@@ -53,14 +69,12 @@ extension LogsHandlerClient: DependencyKey {
                 archiveURL = await withCheckedContinuation { continuation in
                     coordinator.coordinate(readingItemAt: logsURL, options: [.forUploading], error: &zipError) { zipURL in
                         do {
-                            let tmpURL = try FileManager.default.url(
-                                for: .itemReplacementDirectory,
-                                in: .userDomainMask,
-                                appropriateFor: zipURL,
-                                create: true
-                            )
-                            .appendingPathComponent("zashiPrivateData.zip")
+                            let tmpURL = exportDirectory.appendingPathComponent("zashiPrivateData.zip")
                             try FileManager.default.moveItem(at: zipURL, to: tmpURL)
+                            try FileManager.default.setAttributes(
+                                [.protectionKey: FileProtectionType.complete],
+                                ofItemAtPath: tmpURL.path
+                            )
                             continuation.resume(returning: tmpURL)
                         } catch {
                             continuation.resume(returning: nil)
@@ -69,8 +83,33 @@ extension LogsHandlerClient: DependencyKey {
                 }
 
                 return archiveURL
+            },
+            cleanupExports: {
+                let rootURL = exportsRootURL()
+
+                if FileManager.default.fileExists(atPath: rootURL.path) {
+                    try FileManager.default.removeItem(at: rootURL)
+                }
+
+                // Staging directory used by previous app versions, purged here so an
+                // update cleans leftovers from before this fix.
+                let legacyURL = legacyStagingURL()
+
+                if FileManager.default.fileExists(atPath: legacyURL.path) {
+                    try FileManager.default.removeItem(at: legacyURL)
+                }
             }
         )
+    }
+
+    /// All log exports live under this directory so they can be removed wholesale.
+    private static func exportsRootURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("logs-exports", isDirectory: true)
+    }
+
+    /// Staging directory used before exports moved under `logs-exports`.
+    private static func legacyStagingURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("zashiPrivateData", isDirectory: true)
     }
 }
 
