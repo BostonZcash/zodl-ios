@@ -27,7 +27,7 @@ struct AdvancedSettingsView: View {
                             icon: Asset.Assets.Icons.key.image,
                             title: String(localizable: .settingsRecoveryPhrase)
                         ) {
-                            store.send(.operationAccessGranted(.recoveryPhrase))
+                            store.send(.operationAccessCheck(.recoveryPhrase))
                         }
                         
                         ActionRow(

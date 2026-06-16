@@ -19,6 +19,7 @@ struct RecoveryPhraseDisplay {
         var isBirthdayHintVisible = false
         var isHelpSheetPresented = false
         var isRecoveryPhraseHidden = true
+        var isSeedUnavailable = false
         var isWalletBackup = false
         var phrase: RecoveryPhrase?
 
@@ -74,7 +75,8 @@ struct RecoveryPhraseDisplay {
         case helpSheetRequested
         case hideEverything
         case onAppear
-        case recoveryPhraseTapped
+        case recoveryPhraseRevealFailed(ZcashError)
+        case recoveryPhraseRevealed(StoredWallet)
         case recoveryPhraseUnhideRequested
         case remindMeLaterTapped
         case securityWarningNextTapped
@@ -86,6 +88,8 @@ struct RecoveryPhraseDisplay {
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.walletStorage) var walletStorage
 
+    private enum CancelID { case reveal }
+
     init() {}
     
     var body: some Reducer<State, Action> {
@@ -93,27 +97,14 @@ struct RecoveryPhraseDisplay {
         
         Reduce { state, action in
             switch action {
-            case .onAppear:
-                // __LD TESTED
+            case .onAppear, .hideEverything:
+                // Seed material is kept out of the state until the user passes
+                // local authentication in the reveal path below.
                 state.isRecoveryPhraseHidden = true
-                do {
-                    let storedWallet = try walletStorage.exportWallet()
-                    state.birthday = storedWallet.birthday
-                    
-                    if let value = state.birthday?.value() {
-                        state.birthdayValue = String(value)
-                    }
-                    
-                    let seedWords = storedWallet.seedPhrase.value().split(separator: " ").map { RedactableString(String($0)) }
-                    state.phrase = RecoveryPhrase(words: seedWords)
-                } catch {
-                    state.alert = AlertState.storedWalletFailure(error.toZcashError())
-                }
-                
-                return .none
-                
-            case .hideEverything:
-                state.isRecoveryPhraseHidden = true
+                state.phrase = nil
+                state.birthday = nil
+                state.birthdayValue = nil
+                state.isSeedUnavailable = false
                 return .none
 
             case .alert(.presented(let action)):
@@ -138,12 +129,36 @@ struct RecoveryPhraseDisplay {
                     guard await localAuthentication.authenticate() else {
                         return
                     }
-                    
-                    await send(.recoveryPhraseTapped)
+
+                    // The keychain export runs here, inside the effect (off the
+                    // main actor), so the blocking read + decode never stalls the
+                    // reducer. The seed reaches the state only via the action below,
+                    // and only after authentication has already succeeded.
+                    do {
+                        let storedWallet = try walletStorage.exportWallet()
+                        await send(.recoveryPhraseRevealed(storedWallet))
+                    } catch {
+                        await send(.recoveryPhraseRevealFailed(error.toZcashError()))
+                    }
+                }
+                .cancellable(id: CancelID.reveal, cancelInFlight: true)
+
+            case let .recoveryPhraseRevealed(storedWallet):
+                state.birthday = storedWallet.birthday
+
+                if let value = state.birthday?.value() {
+                    state.birthdayValue = String(value)
                 }
 
-            case .recoveryPhraseTapped:
-                state.isRecoveryPhraseHidden.toggle()
+                let seedWords = storedWallet.seedPhrase.value().split(separator: " ").map { RedactableString(String($0)) }
+                state.phrase = RecoveryPhrase(words: seedWords)
+                state.isRecoveryPhraseHidden = false
+                state.isSeedUnavailable = false
+                return .none
+
+            case let .recoveryPhraseRevealFailed(error):
+                state.isSeedUnavailable = true
+                state.alert = AlertState.storedWalletFailure(error)
                 return .none
                 
             case .securityWarningNextTapped:
