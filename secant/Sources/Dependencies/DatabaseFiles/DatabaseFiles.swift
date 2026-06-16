@@ -8,6 +8,20 @@
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
+/// Resolves the on-disk locations of the SDK wallet database files — `data.db` (with its
+/// SQLite sidecars), `cache.db`, `pending.db`, the sapling params and `to-dir` — all kept
+/// in the app's Documents directory.
+///
+/// These files are intentionally left eligible for system backups: we deliberately do
+/// **not** set `isExcludedFromBackup` on them, even though a security report flagged that
+/// wallet data then flows into iCloud/iTunes backups and device-migration transfers.
+///
+/// This is a conscious trade-off between security and UX. Some of this data lives *only*
+/// in these local files; it is not stored on any server or backend. Excluding the files
+/// from backups would therefore make the user permanently lose that information when
+/// migrating to a new device, so keeping them in backups is exactly what lets that data
+/// survive a device change. Do not add `isExcludedFromBackup` here without revisiting this
+/// decision.
 struct DatabaseFiles {
     enum DatabaseFilesError: Error {
         case getFsBlockDbRoot
