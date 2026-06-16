@@ -17,6 +17,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - Opening the Recovery Phrase from Advanced Settings now always requires Face ID / Touch ID, and the seed words are only loaded and rendered after a successful authentication.
 - The tax CSV export is now written to a protected location and deleted as soon as the share sheet closes, instead of remaining in temporary storage.
 - Exported support logs no longer leave plaintext files behind: staging files are removed right after the ZIP is built and the ZIP is deleted when the share sheet closes.
+- Turning Tor on or off now applies to exchange-rate, swap and voting requests immediately instead of after the next app launch.
 
 ### Removed
 - A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.

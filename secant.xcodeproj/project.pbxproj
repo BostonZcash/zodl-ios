@@ -1434,6 +1434,7 @@
 		54B3A48C4A5790F1E38FEB6C /* RecoveryPhraseBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82E83225E24EEF486F002B79 /* RecoveryPhraseBackupTests.swift */; };
 		349CE60A2FDC18E700E2B9AB /* ExportTransactionHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE60A2FDC18E700E2B9CF /* ExportTransactionHistoryTests.swift */; };
 		349CE6192FDC1B1500E2B9AB /* ExportLogsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6192FDC1B1500E2B9CF /* ExportLogsTests.swift */; };
+		349CE6272FDC1CEA00E2B9AB /* TorSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6272FDC1CEA00E2B9CF /* TorSetupTests.swift */; };
 		63B448CA6B0B3D800DE8CB2B /* SecItemClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D430BF2CF73CFB82A13F1CB /* SecItemClientTests.swift */; };
 		7F2ADC6502AEA05DC52D423E /* CurrencyConversionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 315332C8DF63DFCDB9187BF2 /* CurrencyConversionTests.swift */; };
 		8A7BC563281CD8FAF2463BBC /* QRCodeGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1983F0BB6D025B08BBD186B /* QRCodeGeneratorTests.swift */; };
@@ -1629,6 +1630,7 @@
 		349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsTests.swift; sourceTree = "<group>"; };
 		349CE60A2FDC18E700E2B9CF /* ExportTransactionHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTransactionHistoryTests.swift; sourceTree = "<group>"; };
 		349CE6192FDC1B1500E2B9CF /* ExportLogsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportLogsTests.swift; sourceTree = "<group>"; };
+		349CE6272FDC1CEA00E2B9CF /* TorSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorSetupTests.swift; sourceTree = "<group>"; };
 		34AA6BA42F85774F00D244E2 /* ABv1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABv1.swift; sourceTree = "<group>"; };
 		34AA6BA62F85774F00D244E2 /* AddressBookContacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookContacts.swift; sourceTree = "<group>"; };
 		34AA6BA72F85774F00D244E2 /* AddressBookEncryption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryption.swift; sourceTree = "<group>"; };
@@ -2344,6 +2346,7 @@
 				349CE6582FDC358500E2B9CF /* SettingsTests */,
 				349CE6092FDC18E700E2B9CF /* ExportTransactionHistoryTests */,
 				349CE6182FDC1B1500E2B9CF /* ExportLogsTests */,
+				349CE6262FDC1CEA00E2B9CF /* TorSetupTests */,
 			);
 			path = zodlTests;
 			sourceTree = "<group>";
@@ -2448,6 +2451,14 @@
 				349CE6192FDC1B1500E2B9CF /* ExportLogsTests.swift */,
 			);
 			path = ExportLogsTests;
+			sourceTree = "<group>";
+		};
+		349CE6262FDC1CEA00E2B9CF /* TorSetupTests */ = {
+			isa = PBXGroup;
+			children = (
+				349CE6272FDC1CEA00E2B9CF /* TorSetupTests.swift */,
+			);
+			path = TorSetupTests;
 			sourceTree = "<group>";
 		};
 		34AA6BA52F85774F00D244E2 /* Migration */ = {
@@ -5109,6 +5120,7 @@
 				349CE5F82FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift in Sources */,
 				349CE60A2FDC18E700E2B9AB /* ExportTransactionHistoryTests.swift in Sources */,
 				349CE6192FDC1B1500E2B9AB /* ExportLogsTests.swift in Sources */,
+				349CE6272FDC1CEA00E2B9AB /* TorSetupTests.swift in Sources */,
 				7F2ADC6502AEA05DC52D423E /* CurrencyConversionTests.swift in Sources */,
 				DB87FBCDB6C1FC4EA9311A26 /* DeeplinkURLParsingTests.swift in Sources */,
 				051F035A06D6092E00704BAB /* HomeTests.swift in Sources */,

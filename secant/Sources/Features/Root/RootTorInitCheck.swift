@@ -45,6 +45,7 @@ extension Root {
                 try? walletStorage.importTorSetupFlag(false)
                 try? userStoredPreferences.setExchangeRate(.init(manual: false, automatic: false))
                 state.$currencyConversion.withLock { $0 = nil }
+                state.$swapAPIAccess.withLock { $0 = .direct }
                 state.homeState.walletBalancesState.isExchangeRateFeatureOn = false
                 return .run { [state] send in
                     await send(.home(.smartBanner(.closeAndCleanupBanner)))
