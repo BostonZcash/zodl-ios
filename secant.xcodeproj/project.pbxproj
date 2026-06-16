@@ -11,6 +11,7 @@
 		05F96BC8C109B80ED685D9CD /* PrivateDataConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE450F4E98D0B7054611598 /* PrivateDataConsentTests.swift */; };
 		161B27ACDB3C31A163EC8AFF /* SensitiveDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53B4B2244B2E608A11AC552 /* SensitiveDataTests.swift */; };
 		2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD04B216486D7A0AAB329F2 /* UserPreferencesStorageTests.swift */; };
+		340D00032FE1F5B90061AA14 /* AdvancedSettingsAuthGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D00022FE1F5B90061AA14 /* AdvancedSettingsAuthGateTests.swift */; };
 		340DFF582FE1E42D0061AA14 /* DecimalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF572FE1E42D0061AA14 /* DecimalsTests.swift */; };
 		340DFF5D2FE1E4410061AA14 /* SerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF5C2FE1E4410061AA14 /* SerializerTests.swift */; };
 		340DFF5F2FE1E4450061AA14 /* ArrayChunkedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF5E2FE1E4450061AA14 /* ArrayChunkedTests.swift */; };
@@ -40,6 +41,7 @@
 		340DFFE82FE1F2520061AA14 /* WalletStoragePureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFE72FE1F2520061AA14 /* WalletStoragePureTests.swift */; };
 		340DFFF02FE1F3850061AA14 /* TransactionsManagerLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFEF2FE1F3850061AA14 /* TransactionsManagerLogicTests.swift */; };
 		340DFFF72FE1F49E0061AA14 /* AddressBookLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFF62FE1F49E0061AA14 /* AddressBookLogicTests.swift */; };
+		340DFFFD2FE1F5300061AA14 /* TransactionListTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFFC2FE1F5300061AA14 /* TransactionListTests.swift */; };
 		34755C632F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
 		34755C642F8647B00093FC84 /* DisconnectHWWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */; };
 		34755C652F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
@@ -1638,6 +1640,7 @@
 		0DFE93DE272C6D4B000FCCA5 /* RecoveryPhraseBackupTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecoveryPhraseBackupTests.swift; sourceTree = "<group>"; };
 		0F94E337360CE50FACFB04CE /* AccessibilityID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityID.swift; sourceTree = "<group>"; };
 		315332C8DF63DFCDB9187BF2 /* CurrencyConversionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CurrencyConversionTests.swift; sourceTree = "<group>"; };
+		340D00022FE1F5B90061AA14 /* AdvancedSettingsAuthGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsAuthGateTests.swift; sourceTree = "<group>"; };
 		340DFF572FE1E42D0061AA14 /* DecimalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecimalsTests.swift; sourceTree = "<group>"; };
 		340DFF5C2FE1E4410061AA14 /* SerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializerTests.swift; sourceTree = "<group>"; };
 		340DFF5E2FE1E4450061AA14 /* ArrayChunkedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArrayChunkedTests.swift; sourceTree = "<group>"; };
@@ -1667,6 +1670,7 @@
 		340DFFE72FE1F2520061AA14 /* WalletStoragePureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletStoragePureTests.swift; sourceTree = "<group>"; };
 		340DFFEF2FE1F3850061AA14 /* TransactionsManagerLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionsManagerLogicTests.swift; sourceTree = "<group>"; };
 		340DFFF62FE1F49E0061AA14 /* AddressBookLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookLogicTests.swift; sourceTree = "<group>"; };
+		340DFFFC2FE1F5300061AA14 /* TransactionListTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionListTests.swift; sourceTree = "<group>"; };
 		34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletStore.swift; sourceTree = "<group>"; };
 		34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletView.swift; sourceTree = "<group>"; };
 		348EC4C62FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticServerSelectionMigrationTests.swift; sourceTree = "<group>"; };
@@ -2542,6 +2546,7 @@
 			isa = PBXGroup;
 			children = (
 				340DFFEF2FE1F3850061AA14 /* TransactionsManagerLogicTests.swift */,
+				340DFFFC2FE1F5300061AA14 /* TransactionListTests.swift */,
 			);
 			path = TransactionsManagerTests;
 			sourceTree = "<group>";
@@ -2620,6 +2625,7 @@
 			isa = PBXGroup;
 			children = (
 				349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */,
+				340D00022FE1F5B90061AA14 /* AdvancedSettingsAuthGateTests.swift */,
 			);
 			path = SettingsTests;
 			sourceTree = "<group>";
@@ -5305,6 +5311,8 @@
 				340DFFE82FE1F2520061AA14 /* WalletStoragePureTests.swift in Sources */,
 				340DFF642FE1E44F0061AA14 /* NetworkErrorTests.swift in Sources */,
 				340DFF582FE1E42D0061AA14 /* DecimalsTests.swift in Sources */,
+				340D00032FE1F5B90061AA14 /* AdvancedSettingsAuthGateTests.swift in Sources */,
+				340DFFFD2FE1F5300061AA14 /* TransactionListTests.swift in Sources */,
 				340DFF5D2FE1E4410061AA14 /* SerializerTests.swift in Sources */,
 				349CE60A2FDC18E700E2B9AB /* ExportTransactionHistoryTests.swift in Sources */,
 				349CE6192FDC1B1500E2B9AB /* ExportLogsTests.swift in Sources */,
