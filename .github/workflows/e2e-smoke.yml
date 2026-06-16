@@ -46,6 +46,23 @@ jobs:
       - name: Checkout app
         uses: actions/checkout@v4
 
+      # Synchronized Xcode groups resolve .app bundle membership from the
+      # on-disk file tree *before* build phases run. PartnerKeys.plist is
+      # gitignored, so on a clean checkout it isn't present at planning time
+      # and never gets copied into the bundle (the old "Generate
+      # PartnerKeys.plist" build phase wrote it too late to be picked up).
+      # Drop a valid empty stub here, pre-build, so the resource exists in the
+      # .app; the real NEAR keys are written into it by the inject step below.
+      - name: Stub PartnerKeys.plist (pre-build; sync groups need it on disk)
+        run: |
+          PK="secant/Resources/PartnerKeys.plist"
+          [ -f "$PK" ] || printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict/>' \
+            '</plist>' > "$PK"
+
       - name: Compute Xcode cache key
         id: xcode-cache-key
         run: |
