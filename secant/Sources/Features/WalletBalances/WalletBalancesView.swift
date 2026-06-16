@@ -37,11 +37,6 @@ struct WalletBalancesView: View {
                         key: ExchangeRateFeaturePreferenceKey.self,
                         value: .bounds
                     ) { $0 }
-#if !SECANT_DISTRIB
-                    .accessDebugMenuWithHiddenGesture {
-                        store.send(.debugMenuStartup)
-                    }
-#endif
 
                 if shortened {
                     exchangeRate()

@@ -13,9 +13,7 @@ struct Welcome {
     @ObservableState
     struct State: Equatable { }
     
-    enum Action: Equatable {
-        case debugMenuStartup
-    }
+    enum Action: Equatable { }
     
     init() {}
     

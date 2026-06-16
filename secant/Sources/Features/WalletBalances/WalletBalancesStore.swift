@@ -75,7 +75,6 @@ struct WalletBalances {
     enum Action: Equatable {
         case availableBalanceTapped
         case balanceUpdated(AccountBalance?)
-        case debugMenuStartup
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
         case onAppear
@@ -201,9 +200,6 @@ struct WalletBalances {
                 } else {
                     state.spendability = .something
                 }
-                return .none
-
-            case .debugMenuStartup:
                 return .none
 
             case .synchronizerStateChanged(let latestState):

@@ -52,7 +52,6 @@
 		34AA6DDA2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
 		34AA6DDB2F85774F00D244E2 /* DeleteWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C952F85774F00D244E2 /* DeleteWalletView.swift */; };
 		34AA6DDC2F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C7E2F85774F00D244E2 /* SendCoordFlowCoordinator.swift */; };
-		34AA6DDD2F85774F00D244E2 /* RootDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CBF2F85774F00D244E2 /* RootDebug.swift */; };
 		34AA6DDE2F85774F00D244E2 /* HiddenIfSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D742F85774F00D244E2 /* HiddenIfSet.swift */; };
 		34AA6DDF2F85774F00D244E2 /* AddressBookSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C682F85774F00D244E2 /* AddressBookSheets.swift */; };
 		34AA6DE02F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BD32F85774F00D244E2 /* DiskSpaceChecker.swift */; };
@@ -383,7 +382,6 @@
 		34AA6F2C2F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C242F85774F00D244E2 /* SupportDataGeneratorTestKey.swift */; };
 		34AA6F2D2F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BB42F85774F00D244E2 /* AutolockHandlerInterface.swift */; };
 		34AA6F2E2F85774F00D244E2 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CCF2F85774F00D244E2 /* ScanStore.swift */; };
-		34AA6F2F2F85774F00D244E2 /* DebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6DB82F85774F00D244E2 /* DebugMenu.swift */; };
 		34AA6F302F85774F00D244E2 /* PartnerKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C022F85774F00D244E2 /* PartnerKeys.swift */; };
 		34AA6F312F85774F00D244E2 /* MessageShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D8C2F85774F00D244E2 /* MessageShape.swift */; };
 		34AA6F322F85774F00D244E2 /* AppVersionInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BAC2F85774F00D244E2 /* AppVersionInterface.swift */; };
@@ -475,7 +473,6 @@
 		34AA713E2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
 		34AA713F2F85774F00D244E2 /* DeleteWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C952F85774F00D244E2 /* DeleteWalletView.swift */; };
 		34AA71402F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C7E2F85774F00D244E2 /* SendCoordFlowCoordinator.swift */; };
-		34AA71412F85774F00D244E2 /* RootDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CBF2F85774F00D244E2 /* RootDebug.swift */; };
 		34AA71422F85774F00D244E2 /* HiddenIfSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D742F85774F00D244E2 /* HiddenIfSet.swift */; };
 		34AA71432F85774F00D244E2 /* AddressBookSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C682F85774F00D244E2 /* AddressBookSheets.swift */; };
 		34AA71442F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BD32F85774F00D244E2 /* DiskSpaceChecker.swift */; };
@@ -806,7 +803,6 @@
 		34AA72902F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C242F85774F00D244E2 /* SupportDataGeneratorTestKey.swift */; };
 		34AA72912F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BB42F85774F00D244E2 /* AutolockHandlerInterface.swift */; };
 		34AA72922F85774F00D244E2 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CCF2F85774F00D244E2 /* ScanStore.swift */; };
-		34AA72932F85774F00D244E2 /* DebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6DB82F85774F00D244E2 /* DebugMenu.swift */; };
 		34AA72942F85774F00D244E2 /* PartnerKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C022F85774F00D244E2 /* PartnerKeys.swift */; };
 		34AA72952F85774F00D244E2 /* MessageShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D8C2F85774F00D244E2 /* MessageShape.swift */; };
 		34AA72962F85774F00D244E2 /* AppVersionInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BAC2F85774F00D244E2 /* AppVersionInterface.swift */; };
@@ -898,7 +894,6 @@
 		34AA74A22F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
 		34AA74A32F85774F00D244E2 /* DeleteWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C952F85774F00D244E2 /* DeleteWalletView.swift */; };
 		34AA74A42F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C7E2F85774F00D244E2 /* SendCoordFlowCoordinator.swift */; };
-		34AA74A52F85774F00D244E2 /* RootDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CBF2F85774F00D244E2 /* RootDebug.swift */; };
 		34AA74A62F85774F00D244E2 /* HiddenIfSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D742F85774F00D244E2 /* HiddenIfSet.swift */; };
 		34AA74A72F85774F00D244E2 /* AddressBookSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C682F85774F00D244E2 /* AddressBookSheets.swift */; };
 		34AA74A82F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BD32F85774F00D244E2 /* DiskSpaceChecker.swift */; };
@@ -1229,7 +1224,6 @@
 		34AA75F42F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C242F85774F00D244E2 /* SupportDataGeneratorTestKey.swift */; };
 		34AA75F52F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BB42F85774F00D244E2 /* AutolockHandlerInterface.swift */; };
 		34AA75F62F85774F00D244E2 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CCF2F85774F00D244E2 /* ScanStore.swift */; };
-		34AA75F72F85774F00D244E2 /* DebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6DB82F85774F00D244E2 /* DebugMenu.swift */; };
 		34AA75F82F85774F00D244E2 /* PartnerKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C022F85774F00D244E2 /* PartnerKeys.swift */; };
 		34AA75F92F85774F00D244E2 /* MessageShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6D8C2F85774F00D244E2 /* MessageShape.swift */; };
 		34AA75FA2F85774F00D244E2 /* AppVersionInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6BAC2F85774F00D244E2 /* AppVersionInterface.swift */; };
@@ -1837,7 +1831,6 @@
 		34AA6CBC2F85774F00D244E2 /* RootAddressBook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootAddressBook.swift; sourceTree = "<group>"; };
 		34AA6CBD2F85774F00D244E2 /* RootCheckFunds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootCheckFunds.swift; sourceTree = "<group>"; };
 		34AA6CBE2F85774F00D244E2 /* RootCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootCoordinator.swift; sourceTree = "<group>"; };
-		34AA6CBF2F85774F00D244E2 /* RootDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootDebug.swift; sourceTree = "<group>"; };
 		34AA6CC02F85774F00D244E2 /* RootDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootDestination.swift; sourceTree = "<group>"; };
 		34AA6CC12F85774F00D244E2 /* RootInitialization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootInitialization.swift; sourceTree = "<group>"; };
 		34AA6CC22F85774F00D244E2 /* RootShieldingProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootShieldingProcessor.swift; sourceTree = "<group>"; };
@@ -2024,7 +2017,6 @@
 		34AA6DB22F85774F00D244E2 /* UIShareDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIShareDialog.swift; sourceTree = "<group>"; };
 		34AA6DB42F85774F00D244E2 /* ZashiLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZashiLogo.swift; sourceTree = "<group>"; };
 		34AA6DB62F85774F00D244E2 /* ZcashBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZcashBadge.swift; sourceTree = "<group>"; };
-		34AA6DB82F85774F00D244E2 /* DebugMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugMenu.swift; sourceTree = "<group>"; };
 		34AA6DBA2F85774F00D244E2 /* TCALoggerReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCALoggerReducer.swift; sourceTree = "<group>"; };
 		34AA6DBB2F85774F00D244E2 /* TCALogging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCALogging.swift; sourceTree = "<group>"; };
 		34AA6DBD2F85774F00D244E2 /* AnyDecodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyDecodable.swift; sourceTree = "<group>"; };
@@ -3145,7 +3137,6 @@
 				34AA6CBC2F85774F00D244E2 /* RootAddressBook.swift */,
 				34AA6CBD2F85774F00D244E2 /* RootCheckFunds.swift */,
 				34AA6CBE2F85774F00D244E2 /* RootCoordinator.swift */,
-				34AA6CBF2F85774F00D244E2 /* RootDebug.swift */,
 				34AA6CC02F85774F00D244E2 /* RootDestination.swift */,
 				34AA6CC12F85774F00D244E2 /* RootInitialization.swift */,
 				34AA6CC22F85774F00D244E2 /* RootShieldingProcessor.swift */,
@@ -3786,7 +3777,6 @@
 		34AA6DB92F85774F00D244E2 /* UIComponents */ = {
 			isa = PBXGroup;
 			children = (
-				34AA6DB82F85774F00D244E2 /* DebugMenu.swift */,
 				34AA6D5E2F85774F00D244E2 /* Backgrounds */,
 				34AA6D622F85774F00D244E2 /* Badges */,
 				34AA6D682F85774F00D244E2 /* Balance */,
@@ -5112,7 +5102,6 @@
 				34AA74A22F85774F00D244E2 /* WalletConfigProvider.swift in Sources */,
 				34AA74A32F85774F00D244E2 /* DeleteWalletView.swift in Sources */,
 				34AA74A42F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */,
-				34AA74A52F85774F00D244E2 /* RootDebug.swift in Sources */,
 				34AA74A62F85774F00D244E2 /* HiddenIfSet.swift in Sources */,
 				34AA74A72F85774F00D244E2 /* AddressBookSheets.swift in Sources */,
 				34AA74A82F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */,
@@ -5503,7 +5492,6 @@
 				34AA75F42F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */,
 				34AA75F52F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */,
 				34AA75F62F85774F00D244E2 /* ScanStore.swift in Sources */,
-				34AA75F72F85774F00D244E2 /* DebugMenu.swift in Sources */,
 				34AA75F82F85774F00D244E2 /* PartnerKeys.swift in Sources */,
 				34AA75F92F85774F00D244E2 /* MessageShape.swift in Sources */,
 				34AA75FA2F85774F00D244E2 /* AppVersionInterface.swift in Sources */,
@@ -5584,7 +5572,6 @@
 				34AA713E2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */,
 				34AA713F2F85774F00D244E2 /* DeleteWalletView.swift in Sources */,
 				34AA71402F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */,
-				34AA71412F85774F00D244E2 /* RootDebug.swift in Sources */,
 				34AA71422F85774F00D244E2 /* HiddenIfSet.swift in Sources */,
 				34AA71432F85774F00D244E2 /* AddressBookSheets.swift in Sources */,
 				34AA71442F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */,
@@ -5975,7 +5962,6 @@
 				34AA72902F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */,
 				34AA72912F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */,
 				34AA72922F85774F00D244E2 /* ScanStore.swift in Sources */,
-				34AA72932F85774F00D244E2 /* DebugMenu.swift in Sources */,
 				34AA72942F85774F00D244E2 /* PartnerKeys.swift in Sources */,
 				34AA72952F85774F00D244E2 /* MessageShape.swift in Sources */,
 				34AA72962F85774F00D244E2 /* AppVersionInterface.swift in Sources */,
@@ -6056,7 +6042,6 @@
 				34AA6DDA2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */,
 				34AA6DDB2F85774F00D244E2 /* DeleteWalletView.swift in Sources */,
 				34AA6DDC2F85774F00D244E2 /* SendCoordFlowCoordinator.swift in Sources */,
-				34AA6DDD2F85774F00D244E2 /* RootDebug.swift in Sources */,
 				34AA6DDE2F85774F00D244E2 /* HiddenIfSet.swift in Sources */,
 				34AA6DDF2F85774F00D244E2 /* AddressBookSheets.swift in Sources */,
 				34AA6DE02F85774F00D244E2 /* DiskSpaceChecker.swift in Sources */,
@@ -6447,7 +6432,6 @@
 				34AA6F2C2F85774F00D244E2 /* SupportDataGeneratorTestKey.swift in Sources */,
 				34AA6F2D2F85774F00D244E2 /* AutolockHandlerInterface.swift in Sources */,
 				34AA6F2E2F85774F00D244E2 /* ScanStore.swift in Sources */,
-				34AA6F2F2F85774F00D244E2 /* DebugMenu.swift in Sources */,
 				34AA6F302F85774F00D244E2 /* PartnerKeys.swift in Sources */,
 				34AA6F312F85774F00D244E2 /* MessageShape.swift in Sources */,
 				34AA6F322F85774F00D244E2 /* AppVersionInterface.swift in Sources */,

@@ -695,12 +695,6 @@ extension Root {
             case .phraseDisplay(.finishedTapped), .onboarding(.newWalletSuccessfulyCreated):
                 state.destinationState.destination = .home
                 return .none
-                
-            case .welcome(.debugMenuStartup):
-                return .concatenate(
-                    Effect.cancel(id: state.CancelId),
-                    .send(.destination(.updateDestination(.startup)))
-                )
 
             case .onboarding(.createNewWalletTapped):
                 if state.appInitializationState == .keysMissing {

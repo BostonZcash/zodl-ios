@@ -15,6 +15,9 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Fixed
 - A sent transaction that broadcast on an older app version and never mined now correctly shows as "Failed" in the Activity list once its expiry passes the network chain tip. Previously it could stay stuck on "Sending" indefinitely after updating the app.
 
+### Removed
+- A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.
+
 ## 3.5.2 build 1 (20026-06-08)
 
 ### Changed
