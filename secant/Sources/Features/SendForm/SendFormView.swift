@@ -125,7 +125,7 @@ struct SendFormView: View {
                                                                 Group {
                                                                     if store.hasCurrencySymbol {
                                                                         Text(store.currencySymbol)
-                                                                            .zFont(.semiBold, size: 24, style: Design.Inputs.Default.text)
+                                                                            .zFont(.semiBold, size: 18, style: Design.Inputs.Default.text)
                                                                     }
                                                                 }
                                                         )
