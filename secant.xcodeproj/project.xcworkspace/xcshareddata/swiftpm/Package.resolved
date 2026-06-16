@@ -492,8 +492,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/zcash/zcash-swift-wallet-sdk.git",
       "state" : {
-        "branch" : "michal/mob-1039-multiserver-submission",
-        "revision" : "634539f55e7663224719fe747ee13155d39a012a"
+        "revision" : "04383463f88566119c0299216859b1843f81a812"
       }
     }
   ],
