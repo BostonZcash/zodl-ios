@@ -31,6 +31,8 @@
 		340DFFA92FE1E94B0061AA14 /* UMSerializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFA82FE1E94B0061AA14 /* UMSerializationTests.swift */; };
 		340DFFB02FE1EA4F0061AA14 /* ZecKeyboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFAF2FE1EA4F0061AA14 /* ZecKeyboardTests.swift */; };
 		340DFFB72FE1EB3F0061AA14 /* WalletBalancesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFB62FE1EB3F0061AA14 /* WalletBalancesTests.swift */; };
+		340DFFBF2FE1EC580061AA14 /* BalancesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFBE2FE1EC580061AA14 /* BalancesTests.swift */; };
+		340DFFC52FE1ED9A0061AA14 /* RequestZecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFC42FE1ED9A0061AA14 /* RequestZecTests.swift */; };
 		34755C632F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
 		34755C642F8647B00093FC84 /* DisconnectHWWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */; };
 		34755C652F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
@@ -1649,6 +1651,8 @@
 		340DFFA82FE1E94B0061AA14 /* UMSerializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSerializationTests.swift; sourceTree = "<group>"; };
 		340DFFAF2FE1EA4F0061AA14 /* ZecKeyboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZecKeyboardTests.swift; sourceTree = "<group>"; };
 		340DFFB62FE1EB3F0061AA14 /* WalletBalancesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletBalancesTests.swift; sourceTree = "<group>"; };
+		340DFFBE2FE1EC580061AA14 /* BalancesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BalancesTests.swift; sourceTree = "<group>"; };
+		340DFFC42FE1ED9A0061AA14 /* RequestZecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestZecTests.swift; sourceTree = "<group>"; };
 		34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletStore.swift; sourceTree = "<group>"; };
 		34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletView.swift; sourceTree = "<group>"; };
 		348EC4C62FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticServerSelectionMigrationTests.swift; sourceTree = "<group>"; };
@@ -2395,6 +2399,8 @@
 				340DFFA72FE1E94B0061AA14 /* UserMetadataTests */,
 				340DFFAE2FE1EA4F0061AA14 /* ZecKeyboardTests */,
 				340DFFB52FE1EB3F0061AA14 /* WalletBalancesTests */,
+				340DFFBD2FE1EC580061AA14 /* BalancesTests */,
+				340DFFC32FE1ED9A0061AA14 /* RequestZecTests */,
 			);
 			path = zodlTests;
 			sourceTree = "<group>";
@@ -2497,6 +2503,22 @@
 				340DFFB62FE1EB3F0061AA14 /* WalletBalancesTests.swift */,
 			);
 			path = WalletBalancesTests;
+			sourceTree = "<group>";
+		};
+		340DFFBD2FE1EC580061AA14 /* BalancesTests */ = {
+			isa = PBXGroup;
+			children = (
+				340DFFBE2FE1EC580061AA14 /* BalancesTests.swift */,
+			);
+			path = BalancesTests;
+			sourceTree = "<group>";
+		};
+		340DFFC32FE1ED9A0061AA14 /* RequestZecTests */ = {
+			isa = PBXGroup;
+			children = (
+				340DFFC42FE1ED9A0061AA14 /* RequestZecTests.swift */,
+			);
+			path = RequestZecTests;
 			sourceTree = "<group>";
 		};
 		343CF3F429BB5A14009E44DF /* Frameworks */ = {
@@ -5237,6 +5259,7 @@
 				34D06C912FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift in Sources */,
 				340DFF7E2FE1E5F00061AA14 /* SwapMetadataTests.swift in Sources */,
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
+				340DFFC52FE1ED9A0061AA14 /* RequestZecTests.swift in Sources */,
 				349CE65A2FDC358500E2B9CF /* AdvancedSettingsTests.swift in Sources */,
 				AD0D00202D00000100000001 /* VotingAPIResponseParserTests.swift in Sources */,
 				340DFFB72FE1EB3F0061AA14 /* WalletBalancesTests.swift in Sources */,
@@ -5273,6 +5296,7 @@
 				340DFFA22FE1E8880061AA14 /* AddressBookSerializationTests.swift in Sources */,
 				348EC4CE2FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift in Sources */,
 				340DFF712FE1E5D10061AA14 /* ClampedTests.swift in Sources */,
+				340DFFBF2FE1EC580061AA14 /* BalancesTests.swift in Sources */,
 				348EC4CF2FD7FD96008495FB /* ServerSetupStoreTests.swift in Sources */,
 				348EC4D02FD7FD96008495FB /* TransactionGuardTests.swift in Sources */,
 				340DFF8B2FE1E7390061AA14 /* CMCRateTests.swift in Sources */,
