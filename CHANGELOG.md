@@ -15,6 +15,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Fixed
 - A sent transaction that broadcast on an older app version and never mined now correctly shows as "Failed" in the Activity list once its expiry passes the network chain tip. Previously it could stay stuck on "Sending" indefinitely after updating the app.
 - Opening the Recovery Phrase from Advanced Settings now always requires Face ID / Touch ID, and the seed words are only loaded and rendered after a successful authentication.
+- The tax CSV export is now written to a protected location and deleted as soon as the share sheet closes, instead of remaining in temporary storage.
 
 ### Removed
 - A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.

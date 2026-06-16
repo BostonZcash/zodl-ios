@@ -18,4 +18,7 @@ extension DependencyValues {
 @DependencyClient
 struct TaxExporterClient {
     var cointrackerCSVfor: @Sendable ([TransactionState], String) throws -> URL
+    /// Removes all CSV exports from the temporary directory. Call it once the share
+    /// sheet is closed so transaction history never outlives the share flow on disk.
+    var cleanupExports: @Sendable () throws -> Void
 }
