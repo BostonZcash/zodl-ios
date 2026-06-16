@@ -37,6 +37,7 @@
 		340DFFDA2FE1F0BB0061AA14 /* ServerConfigEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFD92FE1F0BB0061AA14 /* ServerConfigEndpointTests.swift */; };
 		340DFFE02FE1F18F0061AA14 /* Near1ClickTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFDF2FE1F18F0061AA14 /* Near1ClickTests.swift */; };
 		340DFFE22FE1F1960061AA14 /* DerivationToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFE12FE1F1960061AA14 /* DerivationToolTests.swift */; };
+		340DFFE82FE1F2520061AA14 /* WalletStoragePureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFFE72FE1F2520061AA14 /* WalletStoragePureTests.swift */; };
 		34755C632F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
 		34755C642F8647B00093FC84 /* DisconnectHWWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */; };
 		34755C652F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
@@ -1661,6 +1662,7 @@
 		340DFFD92FE1F0BB0061AA14 /* ServerConfigEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfigEndpointTests.swift; sourceTree = "<group>"; };
 		340DFFDF2FE1F18F0061AA14 /* Near1ClickTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Near1ClickTests.swift; sourceTree = "<group>"; };
 		340DFFE12FE1F1960061AA14 /* DerivationToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DerivationToolTests.swift; sourceTree = "<group>"; };
+		340DFFE72FE1F2520061AA14 /* WalletStoragePureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletStoragePureTests.swift; sourceTree = "<group>"; };
 		34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletStore.swift; sourceTree = "<group>"; };
 		34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletView.swift; sourceTree = "<group>"; };
 		348EC4C62FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticServerSelectionMigrationTests.swift; sourceTree = "<group>"; };
@@ -4562,6 +4564,7 @@
 				340DFFD42FE1F0AE0061AA14 /* MnemonicClientTests.swift */,
 				340DFFD92FE1F0BB0061AA14 /* ServerConfigEndpointTests.swift */,
 				340DFFE12FE1F1960061AA14 /* DerivationToolTests.swift */,
+				340DFFE72FE1F2520061AA14 /* WalletStoragePureTests.swift */,
 			);
 			path = UtilTests;
 			sourceTree = "<group>";
@@ -5283,6 +5286,7 @@
 				AD0D00212D00000100000001 /* VotingHelpersTests.swift in Sources */,
 				54B3A48C4A5790F1E38FEB6C /* RecoveryPhraseBackupTests.swift in Sources */,
 				349CE5F82FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift in Sources */,
+				340DFFE82FE1F2520061AA14 /* WalletStoragePureTests.swift in Sources */,
 				340DFF642FE1E44F0061AA14 /* NetworkErrorTests.swift in Sources */,
 				340DFF582FE1E42D0061AA14 /* DecimalsTests.swift in Sources */,
 				340DFF5D2FE1E4410061AA14 /* SerializerTests.swift in Sources */,
