@@ -120,15 +120,34 @@ extension Root {
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
                         let result = try await transactionGuard.withSubmission {
-                            try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                            try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                         }
 
                         switch result {
-                        case .partial:
+                        case .failure, .partial:
+                            // Flexa is binary: a commerce session is either paid (reported via
+                            // `transactionSent`) or it isn't. `.failure` is a definitive rejection and
+                            // `.partial` an incomplete payment, so both map to a failure alert — and
+                            // neither runs the `txIdExists` "may still settle, report as sent" path below,
+                            // on purpose: that recovery only makes sense when a single txId unambiguously
+                            // represents the whole payment (success / grpcFailure).
                             await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
-                        case .success(let txIds), .grpcFailure(let txIds), .failure(let txIds, _, _):
+                        case .grpcFailure(let txIds, _):
+                            // Transport-level failure is not definitive: the SDK recorded a retry
+                            // plan before any network attempt and keeps rebroadcasting until the
+                            // transaction mines or expires, so it may still settle. Report it as
+                            // sent so Flexa tracks the txId instead of prompting the user to pay
+                            // again — a "failed" alert here risks a double payment.
                             if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
                                 flexaHandler.transactionSent(transaction.commerceSessionId, txId)
+                            } else {
+                                await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+                            }
+                        case .success(let txIds):
+                            if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
+                                flexaHandler.transactionSent(transaction.commerceSessionId, txId)
+                            } else {
+                                await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
                             }
                         }
                     } catch {
