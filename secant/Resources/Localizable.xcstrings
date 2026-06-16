@@ -6342,13 +6342,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Display your balance and payment amounts in USD. You can manage this feature in Advanced Settings."
+            "value" : "Display your balance and payment amounts in selected currency. For Swap and Pay, exchange rates will continue to be shown in USD. You can manage this feature in Advanced Settings."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en USD. Puedes gestionar esta función en Configuración Avanzada."
+            "value" : "Muestra tu saldo y los montos de pago en la moneda seleccionada. En Swap and Pay, las tasas de cambio seguirán mostrándose en USD. Puedes gestionar esta función en Configuración Avanzada."
           }
         }
       }
@@ -6495,13 +6495,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Display your balance and payment amounts in USD."
+            "value" : "Display your balance and payment amounts in your selected currency. For Swap and Pay, exchange rates will continue to be shown in USD."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en USD."
+            "value" : "Muestra tu saldo y los montos de pago en tu moneda seleccionada. En Swap and Pay, las tasas de cambio seguirán mostrándose en USD."
           }
         }
       }
