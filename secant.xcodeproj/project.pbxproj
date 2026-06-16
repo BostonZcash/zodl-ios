@@ -19,6 +19,8 @@
 		340D00152FE1F7BB0061AA14 /* ChainTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D00142FE1F7BB0061AA14 /* ChainTokenTests.swift */; };
 		340D00172FE1F7BF0061AA14 /* DateReadableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D00162FE1F7BF0061AA14 /* DateReadableTests.swift */; };
 		340D001F2FE1F9290061AA14 /* TransactionDetailsLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D001E2FE1F9290061AA14 /* TransactionDetailsLogicTests.swift */; };
+		340D00252FE1F9EC0061AA14 /* TransactionsCoordFlowCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D00242FE1F9EC0061AA14 /* TransactionsCoordFlowCoordinatorTests.swift */; };
+		340D002B2FE1FA680061AA14 /* TorSetupGapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D002A2FE1FA680061AA14 /* TorSetupGapsTests.swift */; };
 		340DFF582FE1E42D0061AA14 /* DecimalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF572FE1E42D0061AA14 /* DecimalsTests.swift */; };
 		340DFF5D2FE1E4410061AA14 /* SerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF5C2FE1E4410061AA14 /* SerializerTests.swift */; };
 		340DFF5F2FE1E4450061AA14 /* ArrayChunkedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF5E2FE1E4450061AA14 /* ArrayChunkedTests.swift */; };
@@ -1655,6 +1657,8 @@
 		340D00142FE1F7BB0061AA14 /* ChainTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChainTokenTests.swift; sourceTree = "<group>"; };
 		340D00162FE1F7BF0061AA14 /* DateReadableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateReadableTests.swift; sourceTree = "<group>"; };
 		340D001E2FE1F9290061AA14 /* TransactionDetailsLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionDetailsLogicTests.swift; sourceTree = "<group>"; };
+		340D00242FE1F9EC0061AA14 /* TransactionsCoordFlowCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionsCoordFlowCoordinatorTests.swift; sourceTree = "<group>"; };
+		340D002A2FE1FA680061AA14 /* TorSetupGapsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorSetupGapsTests.swift; sourceTree = "<group>"; };
 		340DFF572FE1E42D0061AA14 /* DecimalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecimalsTests.swift; sourceTree = "<group>"; };
 		340DFF5C2FE1E4410061AA14 /* SerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializerTests.swift; sourceTree = "<group>"; };
 		340DFF5E2FE1E4450061AA14 /* ArrayChunkedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArrayChunkedTests.swift; sourceTree = "<group>"; };
@@ -2575,6 +2579,7 @@
 			children = (
 				340DFFEF2FE1F3850061AA14 /* TransactionsManagerLogicTests.swift */,
 				340DFFFC2FE1F5300061AA14 /* TransactionListTests.swift */,
+				340D00242FE1F9EC0061AA14 /* TransactionsCoordFlowCoordinatorTests.swift */,
 			);
 			path = TransactionsManagerTests;
 			sourceTree = "<group>";
@@ -2645,6 +2650,7 @@
 			isa = PBXGroup;
 			children = (
 				349CE6272FDC1CEA00E2B9CF /* TorSetupTests.swift */,
+				340D002A2FE1FA680061AA14 /* TorSetupGapsTests.swift */,
 			);
 			path = TorSetupTests;
 			sourceTree = "<group>";
@@ -5371,6 +5377,7 @@
 				340DFFA22FE1E8880061AA14 /* AddressBookSerializationTests.swift in Sources */,
 				348EC4CE2FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift in Sources */,
 				340DFFD52FE1F0AE0061AA14 /* MnemonicClientTests.swift in Sources */,
+				340D002B2FE1FA680061AA14 /* TorSetupGapsTests.swift in Sources */,
 				340DFF712FE1E5D10061AA14 /* ClampedTests.swift in Sources */,
 				340DFFBF2FE1EC580061AA14 /* BalancesTests.swift in Sources */,
 				348EC4CF2FD7FD96008495FB /* ServerSetupStoreTests.swift in Sources */,
@@ -5382,6 +5389,7 @@
 				340DFF762FE1E5DC0061AA14 /* BalanceFormatterTests.swift in Sources */,
 				921B3D95249329CD65C36E1B /* LoggerTests.swift in Sources */,
 				340D00112FE1F7B70061AA14 /* WalletStatusTests.swift in Sources */,
+				340D00252FE1F9EC0061AA14 /* TransactionsCoordFlowCoordinatorTests.swift in Sources */,
 				63B448CA6B0B3D800DE8CB2B /* SecItemClientTests.swift in Sources */,
 				340D000A2FE1F7A90061AA14 /* RecoveryPhraseTests.swift in Sources */,
 				2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */,
