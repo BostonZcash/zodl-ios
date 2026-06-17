@@ -13,7 +13,7 @@ import Foundation
     @Test func decodesZecUsdPrice() throws {
         let json = #"{"data":{"ZEC":{"quote":{"USD":{"price":123.45}}}}}"#
         let decoded = try JSONDecoder().decode(CMCPrice.self, from: Data(json.utf8))
-        #expect(decoded.data["ZEC"]?.quote.USD.price == 123.45)
+        #expect(decoded.data["ZEC"]?.quote["USD"]?.price == 123.45)
     }
 
     @Test func decodesWithMissingZecKey() throws {
