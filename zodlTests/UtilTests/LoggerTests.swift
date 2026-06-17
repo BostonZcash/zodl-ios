@@ -173,6 +173,9 @@ import OSLog
     @Test func walletLoggerLogsViaProxy() throws {
         let category = "testWalletLogger"
         walletLogger = OSLogger(logLevel: .info, category: category)
+        // Restore the process-global so other suites' LoggerProxy
+        // calls don't keep landing in this test's category.
+        defer { walletLogger = nil }
         let testMessage = "wallet test message"
 
         LoggerProxy.info(testMessage)
@@ -182,11 +185,18 @@ import OSLog
 
         guard let logs else { return }
 
-        #expect(logs.count == 1)
-
-        let loggedMessage = logs[0].osLoggedMessage()
-
-        #expect(testMessage == loggedMessage)
+        // walletLogger is process-global. While this test holds it set
+        // to "testWalletLogger", any *parallel* suite that calls
+        // LoggerProxy.info (ServerHealthTracker, VotingAPIClient, the
+        // background-task client, etc.) will race-write into the same
+        // OSLog category. @Suite(.serialized) only serializes within
+        // this suite, not across the bundle — observed on CI as
+        // logs.count == 7 instead of 1.
+        //
+        // Assert the proxy delivered OUR message instead of demanding
+        // exclusive bucket ownership we can't enforce.
+        #expect(logs.count >= 1)
+        #expect(logs.contains { $0.osLoggedMessage() == testMessage })
     }
 }
 

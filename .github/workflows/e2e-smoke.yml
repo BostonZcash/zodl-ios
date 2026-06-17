@@ -290,14 +290,22 @@ jobs:
       # Key is per-run-id so each successful run produces a fresh
       # cache entry; restore-keys falls back to the most recent
       # matching prefix.
+      #
+      # Prefix bumped v1 → v2 (2026-06-16) to invalidate existing
+      # caches. A stale v1 cache from a past run had scanned_tip at
+      # chain tip but left an unscanned range covering the wallet's
+      # spend transactions — wallet reported 0.39 ZEC total / 0
+      # spendable while the actual on-chain balance was ~0.1 ZEC.
+      # The zodl-qa verifier now also requires unscanned_ranges == 0
+      # (was OR-gated, masking this exact failure mode).
       - name: Restore Zcash SDK DB cache
         if: ${{ matrix.phase == 2 }}
         uses: actions/cache/restore@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-
 
       - name: Run smoke tests
         env:
@@ -358,7 +366,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
 
       - name: Upload test results
         if: always()
