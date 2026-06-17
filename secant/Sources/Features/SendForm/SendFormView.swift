@@ -57,6 +57,7 @@ struct SendFormView: View {
                                                 placeholder: String(localizable: .sendAddressPlaceholder),
                                                 title: String(localizable: .sendTo),
                                                 error: store.invalidAddressErrorText,
+                                                inputAccessibilityIdentifier: AccessibilityID.SendForm.zcashAddressField,
                                                 accessoryView:
                                                     HStack(spacing: 4) {
                                                         WithPerceptionTracking {
@@ -85,7 +86,6 @@ struct SendFormView: View {
                                                     .offset(x: 8)
                                             )
                                             .id(InputID.addressBookHint)
-                                            .accessibilityIdentifier(AccessibilityID.SendForm.zcashAddressField)
                                             .keyboardType(.alphabet)
                                             .focused($isAddressFocused)
                                             .submitLabel(.next)
