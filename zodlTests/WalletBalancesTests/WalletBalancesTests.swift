@@ -56,7 +56,7 @@ import ComposableArchitecture
     @MainActor @Test func exchangeRateValueSetsConversionAndClearsStale() async {
         let store = makeStore()
         let result = fiatResult(rate: 30)
-        await store.send(.exchangeRateEvent(.value(result)))
+        await store.send(.exchangeRateEvent(.value(result, .usd)))
         #expect(store.state.fiatCurrencyResult == result)
         #expect(store.state.currencyConversion?.iso4217 == .usd)
         #expect(!store.state.isExchangeRateStale)
@@ -65,21 +65,21 @@ import ComposableArchitecture
 
     @MainActor @Test func exchangeRateRefreshEnableSetsRefreshFlag() async {
         let store = makeStore()
-        await store.send(.exchangeRateEvent(.refreshEnable(fiatResult(rate: 30))))
+        await store.send(.exchangeRateEvent(.refreshEnable(fiatResult(rate: 30), .usd)))
         #expect(store.state.isExchangeRateRefreshEnabled)
         #expect(store.state.currencyConversion != nil)
     }
 
     @MainActor @Test func exchangeRateStaleClearsConversion() async {
         let store = makeStore(currencyConversion: CurrencyConversion(.usd, ratio: 30, timestamp: 0))
-        await store.send(.exchangeRateEvent(.stale(nil)))
+        await store.send(.exchangeRateEvent(.stale(nil, .usd)))
         #expect(store.state.currencyConversion == nil)
         #expect(store.state.isExchangeRateStale)
     }
 
     @MainActor @Test func exchangeRateValueNilIsNoOp() async {
         let store = makeStore(currencyConversion: CurrencyConversion(.usd, ratio: 30, timestamp: 0))
-        await store.send(.exchangeRateEvent(.value(nil)))
+        await store.send(.exchangeRateEvent(.value(nil, .usd)))
         #expect(store.state.currencyConversion != nil)
     }
 
