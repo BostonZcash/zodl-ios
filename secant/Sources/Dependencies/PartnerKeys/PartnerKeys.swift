@@ -8,6 +8,8 @@
 import Foundation
 
 struct PartnerKeys {
+    // NOTE: this key list is mirrored by Scripts/validate-partner-keys.sh, which
+    // fails an *archive* build when a required key is missing. Keep both in sync.
     private enum Constants {
         static let cbProjectId = "cbProjectId"
         static let flexaPublishableKey = "flexaPublishableKey"

@@ -6,6 +6,7 @@
 //
 
 @preconcurrency import AVFoundation
+import ComposableArchitecture
 import Foundation
 import LocalAuthentication
 import UIKit
@@ -31,6 +32,7 @@ enum SupportDataGenerator {
             DeviceModelItem(),
             LocaleItem(),
             FreeDiskSpaceItem(),
+            TorItem(),
             PermissionsItems()
         ]
 
@@ -182,6 +184,22 @@ private struct FreeDiskSpaceItem: SupportDataGeneratorItem {
         }
 
         return [(Constants.freeDiskSpaceKey, freeDiskSpace)]
+    }
+}
+
+private struct TorItem: SupportDataGeneratorItem {
+    private enum Constants {
+        static let torKey = "Tor enabled"
+        static let yesText = "Yes"
+        static let noText = "No"
+    }
+
+    func generate() -> [(String, String)] {
+        @Dependency(\.walletStorage) var walletStorage
+
+        let torEnabled = walletStorage.exportTorSetupFlag() ?? false
+
+        return [(Constants.torKey, torEnabled ? Constants.yesText : Constants.noText)]
     }
 }
 

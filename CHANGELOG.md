@@ -9,6 +9,19 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - Server selection now offers an Automatic mode that benchmarks known servers and keeps your wallet on the fastest one; Manual mode still lets you pin a specific server. Automatic switching is paused while sending, swapping, shielding, or voting.
 
+### Changed
+- Sending, swapping, shielding, and Flexa payments now broadcast your transaction to multiple servers at once when you're in Automatic server mode (Manual mode still uses the server you selected), so a single slow or unreachable server is less likely to make a submission fail. If a server times out before confirming, you now see a clear message that your transaction may still have been broadcast, rather than an outright failure.
+
+### Fixed
+- A sent transaction that broadcast on an older app version and never mined now correctly shows as "Failed" in the Activity list once its expiry passes the network chain tip. Previously it could stay stuck on "Sending" indefinitely after updating the app.
+- Opening the Recovery Phrase from Advanced Settings now always requires Face ID / Touch ID, and the seed words are only loaded and rendered after a successful authentication.
+- The tax CSV export is now written to a protected location and deleted as soon as the share sheet closes, instead of remaining in temporary storage.
+- Exported support logs no longer leave plaintext files behind: staging files are removed right after the ZIP is built and the ZIP is deleted when the share sheet closes.
+- Turning Tor on or off now applies to exchange-rate, swap and voting requests immediately instead of after the next app launch.
+
+### Removed
+- A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.
+
 ## 3.5.2 build 1 (20026-06-08)
 
 ### Changed

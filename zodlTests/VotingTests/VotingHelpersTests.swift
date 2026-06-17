@@ -1,26 +1,26 @@
 import ComposableArchitecture
 import Foundation
-import XCTest
+import Testing
 @testable import zodl_internal
 
-final class VotingHelpersTests: XCTestCase {
-    func testVotingErrorMapperMapsPirProofRootMismatchToSnapshotMismatch() {
+@Suite struct VotingHelpersTests {
+    @Test func votingErrorMapperMapsPirProofRootMismatchToSnapshotMismatch() {
         let message = VotingErrorMapper.userFriendlyMessage(
             from: "Internal error: PIR proof root mismatch: expected aa, got bb"
         )
 
-        XCTAssertEqual(message, String(localizable: .coinVoteStoreUserErrorPirSnapshotMismatch))
+        #expect(message == String(localizable: .coinVoteStoreUserErrorPirSnapshotMismatch))
     }
 
-    func testVotingErrorMapperMapsPirProofVerificationFailureBeforeFetchFailure() {
+    @Test func votingErrorMapperMapsPirProofVerificationFailureBeforeFetchFailure() {
         let message = VotingErrorMapper.userFriendlyMessage(
             from: "PIR parallel fetch failed: PIR proof verification failed: bad path"
         )
 
-        XCTAssertEqual(message, String(localizable: .coinVoteStoreUserErrorPirInvalidProofData))
+        #expect(message == String(localizable: .coinVoteStoreUserErrorPirInvalidProofData))
     }
 
-    func testSmartBundlesUsesRustOrderingAndPerBundleQuantization() {
+    @Test func smartBundlesUsesRustOrderingAndPerBundleQuantization() {
         let notes = [
             note(value: 31_568_000, position: 0),
             note(value: 26_000_000, position: 1),
@@ -36,23 +36,25 @@ final class VotingHelpersTests: XCTestCase {
 
         let result = notes.smartBundles()
 
-        XCTAssertEqual(result.bundles.map { $0.map(\.position) }, [
+        let positions = result.bundles.map { $0.map(\.position) }
+        #expect(positions == [
             [0, 1, 2, 3, 4],
             [5, 6, 7, 8, 9]
         ])
-        XCTAssertEqual(result.bundles.map(Self.total), [
+        #expect(result.bundles.map(Self.total) == [
             88_068_000,
             13_000_000
         ])
-        XCTAssertEqual(result.bundles.map { quantizeWeight(Self.total($0)) }, [
+        let quantized = result.bundles.map { quantizeWeight(Self.total($0)) }
+        #expect(quantized == [
             87_500_000,
             12_500_000
         ])
-        XCTAssertEqual(result.eligibleWeight, 100_000_000)
-        XCTAssertEqual(result.droppedCount, 0)
+        #expect(result.eligibleWeight == 100_000_000)
+        #expect(result.droppedCount == 0)
     }
 
-    func testSmartBundlesDropsTrailingDustBundle() {
+    @Test func smartBundlesDropsTrailingDustBundle() {
         let notes = [
             note(value: 30_000_000, position: 0),
             note(value: 20_000_000, position: 1),
@@ -64,20 +66,21 @@ final class VotingHelpersTests: XCTestCase {
 
         let result = notes.smartBundles()
 
-        XCTAssertEqual(result.bundles.map { $0.map(\.position) }, [[0, 1, 2, 3, 4]])
-        XCTAssertEqual(result.eligibleWeight, 75_000_000)
-        XCTAssertEqual(result.droppedCount, 1)
+        let positions = result.bundles.map { $0.map(\.position) }
+        #expect(positions == [[0, 1, 2, 3, 4]])
+        #expect(result.eligibleWeight == 75_000_000)
+        #expect(result.droppedCount == 1)
     }
 
-    func testVotingAuthorizationMemoUsesRawEightDecimalBundleTotal() {
-        XCTAssertEqual(votingRawZecString(31_568_000), "0.31568000")
-        XCTAssertEqual(
-            votingAuthorizationMemo(pollTitle: "Shielded Poll", rawWeight: 31_568_000),
-            "I am authorizing this hotkey managed by my wallet to vote on Shielded Poll with 0.31568000 ZEC."
+    @Test func votingAuthorizationMemoUsesRawEightDecimalBundleTotal() {
+        #expect(votingRawZecString(31_568_000) == "0.31568000")
+        #expect(
+            votingAuthorizationMemo(pollTitle: "Shielded Poll", rawWeight: 31_568_000)
+                == "I am authorizing this hotkey managed by my wallet to vote on Shielded Poll with 0.31568000 ZEC."
         )
     }
 
-    func testSubmittedVotesByProposalRequiresEveryExpectedBundle() {
+    @Test func submittedVotesByProposalRequiresEveryExpectedBundle() {
         let records = [
             VoteRecord(proposalId: 1, bundleIndex: 0, choice: .option(0), submitted: true),
             VoteRecord(proposalId: 1, bundleIndex: 1, choice: .option(0), submitted: true),
@@ -86,25 +89,19 @@ final class VotingHelpersTests: XCTestCase {
             VoteRecord(proposalId: 3, bundleIndex: 1, choice: .option(1), submitted: true)
         ]
 
-        XCTAssertEqual(
-            submittedVotesByProposal(records, bundleCount: 2),
-            [1: .option(0)]
-        )
+        #expect(submittedVotesByProposal(records, bundleCount: 2) == [1: .option(0)])
     }
 
-    func testSubmittedVotesByProposalAllowsLegacyUnknownBundleCount() {
+    @Test func submittedVotesByProposalAllowsLegacyUnknownBundleCount() {
         let records = [
             VoteRecord(proposalId: 1, bundleIndex: 0, choice: .option(0), submitted: true),
             VoteRecord(proposalId: 2, bundleIndex: 0, choice: .option(1), submitted: false)
         ]
 
-        XCTAssertEqual(
-            submittedVotesByProposal(records, bundleCount: 0),
-            [1: .option(0)]
-        )
+        #expect(submittedVotesByProposal(records, bundleCount: 0) == [1: .option(0)])
     }
 
-    func testSyntheticAbstainOnlyMatchesUiGeneratedChoice() {
+    @Test func syntheticAbstainOnlyMatchesUiGeneratedChoice() {
         let proposal = VotingProposal(
             id: 1,
             title: "ZIP Poll",
@@ -125,13 +122,13 @@ final class VotingHelpersTests: XCTestCase {
             ]
         )
 
-        XCTAssertTrue(Voting.isSyntheticAbstain(choice: .option(2), proposal: proposal))
-        XCTAssertFalse(Voting.isSyntheticAbstain(choice: .option(1), proposal: proposal))
-        XCTAssertFalse(Voting.isSyntheticAbstain(choice: .option(3), proposal: proposalWithNativeAbstain))
-        XCTAssertFalse(Voting.isSyntheticAbstain(choice: .option(2), proposal: nil))
+        #expect(Voting.isSyntheticAbstain(choice: .option(2), proposal: proposal))
+        #expect(!Voting.isSyntheticAbstain(choice: .option(1), proposal: proposal))
+        #expect(!Voting.isSyntheticAbstain(choice: .option(3), proposal: proposalWithNativeAbstain))
+        #expect(!Voting.isSyntheticAbstain(choice: .option(2), proposal: nil))
     }
 
-    func testLoadCompletedVoteRecordClearsStaleRecordWhenDraftsRemain() {
+    @Test func loadCompletedVoteRecordClearsStaleRecordWhenDraftsRemain() {
         let roundId = "round-1"
         let metadata = VotingHelpersMetadataBox()
         metadata.records[roundId] = PersistedVotingRecord(
@@ -147,14 +144,14 @@ final class VotingHelpersTests: XCTestCase {
         withDependencies {
             $0.votingMetadata = votingMetadataClient(metadata)
         } operation: {
-            XCTAssertNil(Voting.loadCompletedVoteRecord(roundId: roundId, account: nil))
+            #expect(Voting.loadCompletedVoteRecord(roundId: roundId, account: nil) == nil)
         }
 
-        XCTAssertNil(metadata.records[roundId])
-        XCTAssertEqual(metadata.drafts[roundId], ["1": 0])
+        #expect(metadata.records[roundId] == nil)
+        #expect(metadata.drafts[roundId] == ["1": 0])
     }
 
-    func testVoteRecordReportsSkippedKeystoneBundles() {
+    @Test func voteRecordReportsSkippedKeystoneBundles() {
         let skippedRecord = Voting.VoteRecord(
             votedAt: Date(timeIntervalSince1970: 1_000),
             votingWeight: 25_000_000,
@@ -172,10 +169,10 @@ final class VotingHelpersTests: XCTestCase {
             totalBundleCount: 4
         )
 
-        XCTAssertEqual(skippedRecord.skippedKeystoneBundleCount, 3)
-        XCTAssertTrue(skippedRecord.hasSkippedKeystoneBundles)
-        XCTAssertNil(completeRecord.skippedKeystoneBundleCount)
-        XCTAssertFalse(completeRecord.hasSkippedKeystoneBundles)
+        #expect(skippedRecord.skippedKeystoneBundleCount == 3)
+        #expect(skippedRecord.hasSkippedKeystoneBundles)
+        #expect(completeRecord.skippedKeystoneBundleCount == nil)
+        #expect(!completeRecord.hasSkippedKeystoneBundles)
     }
 
     private static func total(_ notes: [NoteInfo]) -> UInt64 {

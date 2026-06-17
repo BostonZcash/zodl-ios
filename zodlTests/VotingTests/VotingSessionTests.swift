@@ -1,48 +1,50 @@
-import XCTest
+import Testing
 import Foundation
 @testable import zodl_internal
 
-final class VotingSessionTests: XCTestCase {
-    func testLastMomentBufferUsesFortyPercentForShortRounds() throws {
+@Suite struct VotingSessionTests {
+    @Test func lastMomentBufferUsesFortyPercentForShortRounds() throws {
         let ceremonyStart = Date(timeIntervalSince1970: 1_000)
         let voteEndTime = ceremonyStart.addingTimeInterval(10 * 60)
         let session = makeSession(ceremonyStart: ceremonyStart, voteEndTime: voteEndTime)
 
-        XCTAssertEqual(try XCTUnwrap(session.lastMomentBuffer), 4 * 60, accuracy: 0.001)
+        let buffer = try #require(session.lastMomentBuffer)
+        #expect(abs(buffer - 4 * 60) <= 0.001)
     }
 
-    func testLastMomentBufferCapsAtSixHoursForLongRounds() throws {
+    @Test func lastMomentBufferCapsAtSixHoursForLongRounds() throws {
         let ceremonyStart = Date(timeIntervalSince1970: 1_000)
         let voteEndTime = ceremonyStart.addingTimeInterval(24 * 60 * 60)
         let session = makeSession(ceremonyStart: ceremonyStart, voteEndTime: voteEndTime)
 
-        XCTAssertEqual(try XCTUnwrap(session.lastMomentBuffer), 6 * 60 * 60, accuracy: 0.001)
+        let buffer = try #require(session.lastMomentBuffer)
+        #expect(abs(buffer - 6 * 60 * 60) <= 0.001)
     }
 
-    func testLastMomentBufferIsNilForInvalidRoundTimes() {
+    @Test func lastMomentBufferIsNilForInvalidRoundTimes() {
         let ceremonyStart = Date(timeIntervalSince1970: 1_000)
         let voteEndTime = ceremonyStart
         let session = makeSession(ceremonyStart: ceremonyStart, voteEndTime: voteEndTime)
 
-        XCTAssertNil(session.lastMomentBuffer)
+        #expect(session.lastMomentBuffer == nil)
     }
 
-    func testIsLastMomentForShortRoundWithinBuffer() {
+    @Test func isLastMomentForShortRoundWithinBuffer() {
         let now = Date()
         let voteEndTime = now.addingTimeInterval(3 * 60)
         let ceremonyStart = voteEndTime.addingTimeInterval(-10 * 60)
         let session = makeSession(ceremonyStart: ceremonyStart, voteEndTime: voteEndTime)
 
-        XCTAssertTrue(session.isLastMoment)
+        #expect(session.isLastMoment)
     }
 
-    func testIsLastMomentForShortRoundBeforeBuffer() {
+    @Test func isLastMomentForShortRoundBeforeBuffer() {
         let now = Date()
         let voteEndTime = now.addingTimeInterval(5 * 60)
         let ceremonyStart = voteEndTime.addingTimeInterval(-10 * 60)
         let session = makeSession(ceremonyStart: ceremonyStart, voteEndTime: voteEndTime)
 
-        XCTAssertFalse(session.isLastMoment)
+        #expect(!session.isLastMoment)
     }
 
     private func makeSession(ceremonyStart: Date, voteEndTime: Date) -> VotingSession {

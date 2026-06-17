@@ -71,15 +71,20 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
 
                     guard let proposal else { throw "shieldFunds nil proposal" }
 
-                    let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                    let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
+                    // Shielding surfaces outcomes through a simpler state machine (.grpc / .failed /
+                    // .succeeded) with no pending screen, so `.grpcFailure`'s `reason` (e.g. timeout) is
+                    // intentionally not differentiated here — the generic `.grpc` state already means
+                    // "transport failure, may still settle". Send/Swap distinguish the timeout copy only
+                    // because they have a pending screen to show it on; this path does not.
                     switch result {
                     case .grpcFailure:
                         subject.send(.grpc)
                     case let .failure(_, code, description):
                         subject.send(.failed("shieldFunds failed \(code) \(description)".toZcashError()))
-                    case .partial:
-                        break
+                    case let .partial(_, statuses):
+                        subject.send(.failed("shieldFunds partially failed \(statuses.joined(separator: ", "))".toZcashError()))
                     case .success:
                         walletStorage.resetShieldingReminder(WalletAccount.Vendor.zcash.name())
                         subject.send(.succeeded)

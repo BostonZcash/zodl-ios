@@ -139,10 +139,16 @@ class UIShareDialog: UIView {
 }
 
 extension UIShareDialog {
-    func doInitialSetup(activityItems: [Any], completion: @escaping () -> Void) {
+    func doInitialSetup(activityItems: [Any], completion: @escaping () -> Void, onDismiss: (() -> Void)? = nil) {
         DispatchQueue.main.async {
             let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-            
+
+            if let onDismiss {
+                activityVC.completionWithItemsHandler = { _, _, _, _ in
+                    onDismiss()
+                }
+            }
+
             UIApplication.shared.connectedScenes.map({ $0 as? UIWindowScene })
             .compactMap({ $0 })
             .first?.windows.first?.rootViewController?.present(
@@ -156,16 +162,22 @@ extension UIShareDialog {
 
 struct UIShareDialogView: UIViewRepresentable {
     let activityItems: [Any]
+    /// Called when the share sheet finished presenting. Use it to reset the binding
+    /// that triggered the presentation.
     let completion: () -> Void
+    /// Called when the share sheet is closed, both on completed share and on cancel.
+    /// Use it to clean up shared artifacts (e.g. temporary files).
+    let onDismiss: (() -> Void)?
 
-    init(activityItems: [Any], completion: @escaping () -> Void) {
+    init(activityItems: [Any], completion: @escaping () -> Void, onDismiss: (() -> Void)? = nil) {
         self.activityItems = activityItems
         self.completion = completion
+        self.onDismiss = onDismiss
     }
-    
+
     func makeUIView(context: UIViewRepresentableContext<UIShareDialogView>) -> UIShareDialog {
         let view = UIShareDialog()
-        view.doInitialSetup(activityItems: activityItems, completion: completion)
+        view.doInitialSetup(activityItems: activityItems, completion: completion, onDismiss: onDismiss)
         return view
     }
     

@@ -16,7 +16,16 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
     var title: String?
     var error: String?
     let eraseAction: (() -> Void)?
-    
+    // Inner-TextField accessibility id (e2e affordance). Applied to
+    // the inner SwiftUI TextField directly so a maestro tap-by-id
+    // lands on the input's hit-test region, AND so the wrapper's
+    // accessory views (icon buttons) keep their own accessibility
+    // identifiers — without this, an outer `.accessibilityIdentifier(...)`
+    // modifier on ZashiTextField merges all inner elements into one
+    // accessibility node and the icon buttons stop being findable
+    // by their own ids.
+    var inputAccessibilityIdentifier: String?
+
     @ViewBuilder let accessoryView: AccessoryContent?
     @ViewBuilder let inputReplacementView: InputReplacementContent?
     @ViewBuilder let prefixView: PrefixContent?
@@ -28,6 +37,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
         title: String? = nil,
         error: String? = nil,
         eraseAction: (() -> Void)? = nil,
+        inputAccessibilityIdentifier: String? = nil,
         accessoryView: AccessoryContent? = EmptyView(),
         inputReplacementView: InputReplacementContent? = EmptyView(),
         prefixView: PrefixContent? = EmptyView()
@@ -38,6 +48,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
         self.title = title
         self.error = error
         self.eraseAction = eraseAction
+        self.inputAccessibilityIdentifier = inputAccessibilityIdentifier
         self.accessoryView = accessoryView
         self.inputReplacementView = inputReplacementView
         self.prefixView = prefixView
@@ -63,7 +74,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
                 if let inputReplacementView, !(inputReplacementView is EmptyView) {
                     inputReplacementView
                 } else {
-                    TextField(
+                    let field = TextField(
                         "",
                         text: text,
                         prompt:
@@ -82,6 +93,11 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .accentColor(Asset.Colors.primary.color)
+                    if let inputAccessibilityIdentifier {
+                        field.accessibilityIdentifier(inputAccessibilityIdentifier)
+                    } else {
+                        field
+                    }
                 }
                 
                 Spacer()

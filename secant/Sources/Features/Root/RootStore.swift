@@ -56,9 +56,7 @@ struct Root {
         var appStartState: AppStartState = .unknown
         var areMetadataPreserved = true
         var bgTask: BGProcessingTask?
-        @Presents var confirmationDialog: ConfirmationDialogState<Action.ConfirmationDialog>?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
-        var debugState: DebugState
         var deeplinkWarningState: DeeplinkWarning.State = .initial
         var destinationState: DestinationState
         var exportLogsState: ExportLogs.State
@@ -155,7 +153,6 @@ struct Root {
         init(
             appInitializationState: InitializationState = .uninitialized,
             appStartState: AppStartState = .unknown,
-            debugState: DebugState,
             destinationState: DestinationState,
             exportLogsState: ExportLogs.State,
             isLockedInKeychainUnavailableState: Bool = false,
@@ -170,7 +167,6 @@ struct Root {
         ) {
             self.appInitializationState = appInitializationState
             self.appStartState = appStartState
-            self.debugState = debugState
             self.destinationState = destinationState
             self.exportLogsState = exportLogsState
             self.isLockedInKeychainUnavailableState = isLockedInKeychainUnavailableState
@@ -186,17 +182,10 @@ struct Root {
     }
 
     enum Action: BindableAction {
-        enum ConfirmationDialog: Equatable {
-            case fullRescan
-            case quickRescan
-        }
-
         case alert(PresentationAction<Action>)
         case batteryStateChanged
         case binding(BindingAction<Root.State>)
         case cancelAllRunningEffects
-        case confirmationDialog(PresentationAction<ConfirmationDialog>)
-        case debug(DebugAction)
         case deeplinkWarning(DeeplinkWarning.Action)
         case destination(DestinationAction)
         case exportLogs(ExportLogs.Action)
@@ -411,9 +400,7 @@ struct Root {
         initializationReduce()
 
         destinationReduce()
-        
-        debugReduce()
-        
+
         transactionsReduce()
         
         addressBookReduce()
@@ -572,14 +559,6 @@ extension AlertState where Action == Root.Action {
         }
     }
     
-    static func cantStartSync(_ error: ZcashError) -> AlertState {
-        AlertState {
-            TextState(String(localizable: .rootDebugAlertRewindCantStartSyncTitle))
-        } message: {
-            TextState(String(localizable: .rootDebugAlertRewindCantStartSyncMessage(error.detailedMessage)))
-        }
-    }
-    
     static func cantStoreThatUserPassedPhraseBackupTest(_ error: ZcashError) -> AlertState {
         AlertState {
             TextState(String(localizable: .rootInitializationAlertFailedTitle))
@@ -603,14 +582,6 @@ extension AlertState where Action == Root.Action {
             TextState(String(localizable: .rootInitializationAlertSdkInitFailedTitle))
         } message: {
             TextState(String(localizable: .rootInitializationAlertErrorMessage(error.detailedMessage)))
-        }
-    }
-    
-    static func rewindFailed(_ error: ZcashError) -> AlertState {
-        AlertState {
-            TextState(String(localizable: .rootDebugAlertRewindFailedTitle))
-        } message: {
-            TextState(String(localizable: .rootDebugAlertRewindFailedMessage(error.detailedMessage)))
         }
     }
     
@@ -742,25 +713,4 @@ extension AlertState where Action == Root.Action {
             TextState(String(localizable: .torSetupAlertMsg))
         }
     }
-}
-     
-extension ConfirmationDialogState where Action == Root.Action.ConfirmationDialog {
-    static func rescanRequest() -> ConfirmationDialogState {
-        ConfirmationDialogState {
-            TextState(String(localizable: .rootDebugDialogRescanTitle))
-        } actions: {
-            ButtonState(role: .destructive, action: .quickRescan) {
-                TextState(String(localizable: .rootDebugDialogRescanOptionQuick))
-            }
-            ButtonState(role: .destructive, action: .fullRescan) {
-                TextState(String(localizable: .rootDebugDialogRescanOptionFull))
-            }
-            ButtonState(role: .cancel) {
-                TextState(String(localizable: .generalCancel))
-            }
-        } message: {
-            TextState(String(localizable: .rootDebugDialogRescanMessage))
-        }
-    }
-
 }

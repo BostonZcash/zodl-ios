@@ -331,6 +331,12 @@ struct ServerSetup {
     /// Switch to `endpoint` (when it differs from the current one), persist the choice, and report
     /// success. Shared by the automatic and manual Save paths: the switch is bounded by a timeout and
     /// serialized against submissions via the transaction guard.
+    ///
+    /// The preference writes happen inside the guard too — submission endpoints are read at submit
+    /// time, so a connection-mode flip that landed mid-submission would change where in-flight
+    /// transactions fan out (e.g. a send pinned to a private server fanning out to all public
+    /// servers). This matters precisely when the host doesn't change, where no switch would
+    /// otherwise serialize the Save.
     private func applyServerSwitch(
         _ endpoint: LightWalletEndpoint,
         automatic: Bool,
@@ -338,16 +344,16 @@ struct ServerSetup {
         send: Send<Action>
     ) async throws {
         let current = zcashSDKEnvironment.endpoint()
-        if endpoint.host != current.host || endpoint.port != current.port {
-            try await transactionGuard.switchWaiting {
+        try await transactionGuard.switchWaiting {
+            if endpoint.host != current.host || endpoint.port != current.port {
                 try await withTimeout(serverSwitchTimeout) {
                     try await sdkSynchronizer.switchToEndpoint(endpoint)
                 }
             }
-        }
 
-        userStoredPreferences.setAutomaticServerSelection(automatic)
-        try userStoredPreferences.setServer(endpoint.serverConfig(isCustom: isCustom))
+            userStoredPreferences.setAutomaticServerSelection(automatic)
+            try userStoredPreferences.setServer(endpoint.serverConfig(isCustom: isCustom))
+        }
 
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))
         await send(.switchSucceeded(endpoint.server()))

@@ -40,9 +40,6 @@ struct WelcomeView: View {
                         x: proxy.frame(in: .local).midX,
                         y: proxy.frame(in: .local).midY
                     )
-                    .accessDebugMenuWithHiddenGesture {
-                        store.send(.debugMenuStartup)
-                    }
             }
         }
         .background(Asset.Colors.splash.color)

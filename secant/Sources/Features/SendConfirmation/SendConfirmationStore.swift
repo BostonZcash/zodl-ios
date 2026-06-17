@@ -60,6 +60,7 @@ struct SendConfirmation {
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
         var pcztWithSigs: Pczt?
+        var pendingDescription: String?
         var proposal: Proposal?
         var randomSuccessIconIndex = 0
         var randomFailureIconIndex = 0
@@ -157,6 +158,7 @@ struct SendConfirmation {
         case showHideButtonTapped
         case stopSending
         case updateFailedData(Int, String, String)
+        case updatePendingDescription(String?)
         case updateResult(State.Result?)
         case updateTxIdToExpand(String?)
         case viewTransactionTapped
@@ -200,6 +202,9 @@ struct SendConfirmation {
             case .onAppear:
                 // __LD TESTED
                 state.pcztForUI = nil
+                state.partialFailureTxIds = []
+                state.partialFailureStatuses = []
+                state.pendingDescription = nil
                 state.rejectSendRequest = false
                 state.txIdToExpand = nil
                 state.randomSuccessIconIndex = Int.random(in: 1...2)
@@ -289,20 +294,23 @@ struct SendConfirmation {
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
-                        let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                        let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, reason):
+                            await send(.updatePendingDescription(
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
+                            ))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
                         case let .failure(txIds, code, description):
                             await send(.updateFailedData(code, description, ""))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
                         case let .partial(txIds: txIds, statuses: statuses):
-                            await send(.updateTxIdToExpand(txIds.last))
+                            await send(.updateTxIdToExpand(txIds.first))
                             await send(.sendPartial(txIds, statuses))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
@@ -333,10 +341,17 @@ struct SendConfirmation {
                 }
 
             case let .sendPartial(txIds, statuses):
+                state.failedCode = -999
+                state.failedDescription = statuses.joined(separator: ", ")
                 state.isSending = false
                 state.partialFailureTxIds = txIds
                 state.partialFailureStatuses = statuses
-                return .send(.updateResult(.pending))
+                let diffTime = Date().timeIntervalSince1970 - state.sendingScreenOnAppearTimestamp
+                let waitTimeToPresentScreen = diffTime > 2.0 ? 0.01 : 2.0 - diffTime
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
+                    await send(.updateResult(.failure))
+                }
 
             case .updateTxIdToExpand(let txId):
                 state.txIdToExpand = txId
@@ -367,14 +382,26 @@ struct SendConfirmation {
                 #endif
                 return .none
 
+            case let .updatePendingDescription(description):
+                state.pendingDescription = description
+                return .none
+
             case .reportTapped:
                 var supportData = SupportDataGenerator.generate()
+                let partialFailureMessage = state.partialFailureStatuses.isEmpty
+                    ? ""
+                    : """
+
+                    Partial transaction statuses:
+                    \(state.partialFailureStatuses.joined(separator: "\n"))
+                    """
                 supportData.message =
                 """
                 \(state.failedCode ?? -1000) \(state.failedDescription ?? "")
-                
+                \(partialFailureMessage)
+
                 \(supportData.message)
-                
+
                 \(state.failedPcztMsg ?? "")
                 """
                 if state.canSendMail {
@@ -537,29 +564,33 @@ struct SendConfirmation {
                 #endif
                 return .run { send in
                     do {
-                        let result = try await sdkSynchronizer.createTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
+                        let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
 
                         await send(.resetPCZTs)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, reason):
+                            await send(.updatePendingDescription(
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
+                            ))
                             await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
-                            let txId = txIds.last
-                            await send(.updateTxIdToExpand(txId))
-                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txId)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions".toZcashError(), isTxIdPresentInTheDB))
-                        case let .failure(txIds, code, description):
-                            if description.isEmpty {
-                                await send(.updateFailedData(-997, "result.failure \(txIds)", pcztMessage))
-                            } else {
-                                await send(.updateFailedData(code, description, pcztMessage))
-                            }
-                            let txId = txIds.last
-                            await send(.updateTxIdToExpand(txId))
-                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txId)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions".toZcashError(), isTxIdPresentInTheDB))
-                        case let .partial(txIds: txIds, statuses: statuses):
                             await send(.updateTxIdToExpand(txIds.last))
+                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
+                            await send(.sendFailed(
+                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-grpcFailure".toZcashError(),
+                                isTxIdPresentInTheDB
+                            ))
+                        case let .failure(txIds, code, description):
+                            await send(.updateFailedData(code, description, pcztMessage))
+                            await send(.updateTxIdToExpand(txIds.last))
+                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
+                            await send(.sendFailed(
+                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-failure \(code) \(description)".toZcashError(),
+                                isTxIdPresentInTheDB
+                            ))
+                        case let .partial(txIds: txIds, statuses: statuses):
+                            await send(.updateFailedData(-999, statuses.joined(separator: ", "), pcztMessage))
+                            await send(.updateTxIdToExpand(txIds.first))
                             await send(.sendPartial(txIds, statuses))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
@@ -567,7 +598,7 @@ struct SendConfirmation {
                         }
                     } catch {
                         await send(.resetPCZTs)
-                        await send(.updateFailedData(-998, error.toZcashError().detailedMessage, pcztMessage))
+                        await send(.updateFailedData(-996, error.toZcashError().detailedMessage, pcztMessage))
                         await send(.sendFailed(error.toZcashError(), false))
                     }
                 }
@@ -612,13 +643,14 @@ extension SendConfirmation.State {
     }
     
     var pendingInfo: String {
-        isShielding
+        pendingDescription
+        ?? (isShielding
         ? String(localizable: .sendPendingShieldingInfo)
         : type == .regular
         ? String(localizable: .sendPendingInfo)
         : type == .swap
         ? String(localizable: .swapAndPayPendingSwapInfo)
-        : String(localizable: .swapAndPayPendingPayInfo)
+        : String(localizable: .swapAndPayPendingPayInfo))
     }
     
     var pendingTitle: String {
@@ -632,7 +664,11 @@ extension SendConfirmation.State {
     }
     
     var failureInfo: String {
-        isShielding
+        if !partialFailureTxIds.isEmpty {
+            return String(localizable: .sendPartialFailureInfo)
+        }
+
+        return isShielding
         ? String(localizable: .sendFailureShieldingInfo)
         : type == .regular
         ? String(localizable: .sendFailureInfo)

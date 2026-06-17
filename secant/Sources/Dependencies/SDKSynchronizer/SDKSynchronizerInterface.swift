@@ -21,8 +21,14 @@ extension DependencyValues {
 @DependencyClient
 struct SDKSynchronizerClient: Sendable {
     enum CreateProposedTransactionsResult: Equatable, Sendable {
+        enum GrpcFailureReason: Equatable, Sendable {
+            case timeout
+        }
+
         case failure(txIds: [String], code: Int, description: String)
-        case grpcFailure(txIds: [String])
+        // No description payload on purpose: transport-level failures carry no server message,
+        // and the UI derives its copy from `reason` (timeouts get dedicated localized copy).
+        case grpcFailure(txIds: [String], reason: GrpcFailureReason? = nil)
         case partial(txIds: [String], statuses: [String])
         case success(txIds: [String])
     }
@@ -62,7 +68,10 @@ struct SDKSynchronizerClient: Sendable {
     
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
-    var createProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
+    /// Creates the proposal's transactions via the SDK `Broadcaster` and submits them to the
+    /// endpoints chosen by the user's connection mode (Automatic -> all known servers,
+    /// Manual -> the selected server). See `selectedSubmissionEndpoints`.
+    var createAndSubmitProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
     var proposeShielding: @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
     
     var isSeedRelevantToAnyDerivedAccount: @Sendable ([UInt8]) async throws -> Bool
@@ -79,7 +88,8 @@ struct SDKSynchronizerClient: Sendable {
     // PCZT
     var createPCZTFromProposal: @Sendable (AccountUUID, Proposal) async throws -> Pczt
     var addProofsToPCZT: @Sendable (Pczt) async throws -> Pczt
-    var createTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
+    /// PCZT variant of `createAndSubmitProposedTransactions`.
+    var createAndSubmitTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
     var urEncoderForPCZT: @Sendable (Pczt) -> UREncoder?
     var redactPCZTForSigner: @Sendable (Pczt) async throws  -> Pczt
     

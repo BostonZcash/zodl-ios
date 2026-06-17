@@ -32,6 +32,7 @@ enum AccessibilityID {
         static let addToContactsButton = "sendForm.addToContactsButton"
         static let scanButton = "sendForm.scanButton"
         static let reviewButton = "sendForm.reviewButton"
+        static let zcashAddressField = "sendForm.zcashAddressField"
     }
 
     enum SendConfirmation {

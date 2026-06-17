@@ -59,15 +59,21 @@ struct ExportTransactionHistoryView: View {
 private extension ExportTransactionHistoryView {
     @ViewBuilder func shareLogsView() -> some View {
         if store.exportBinding {
-            UIShareDialogView(activityItems:
-                [ShareableURL(
-                    url: store.dataURL,
-                    title: String(localizable: .taxExportTaxFile),
-                    desc: String(localizable: .taxExportShareDesc(store.accountName))
-                )]
-            ) {
-                store.send(.shareFinished)
-            }
+            UIShareDialogView(
+                activityItems: [
+                    ShareableURL(
+                        url: store.dataURL,
+                        title: String(localizable: .taxExportTaxFile),
+                        desc: String(localizable: .taxExportShareDesc(store.accountName))
+                    )
+                ],
+                completion: {
+                    store.send(.shareFinished)
+                },
+                onDismiss: {
+                    store.send(.shareSheetClosed)
+                }
+            )
             // UIShareDialogView only wraps UIActivityViewController presentation
             // so frame is set to 0 to not break SwiftUI's layout
             .frame(width: 0, height: 0)

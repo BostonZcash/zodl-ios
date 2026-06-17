@@ -1,5 +1,4 @@
 import SwiftUI
-import StoreKit
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -278,12 +277,6 @@ private extension RootView {
                         store.send(.splashRemovalRequested)
                     }
 
-                case .startup:
-                    ZStack(alignment: .topTrailing) {
-                        debugView(store)
-                            .transition(.opacity)
-                    }
-                    
                 case .welcome:
                     WelcomeView(
                         store: store.scope(
@@ -348,10 +341,14 @@ private extension RootView {
     @ViewBuilder func shareLogsView(_ store: StoreOf<Root>) -> some View {
         if store.exportLogsState.isSharingLogs {
             UIShareDialogView(
-                activityItems: store.exportLogsState.zippedLogsURLs
-            ) {
-                store.send(.exportLogs(.shareFinished))
-            }
+                activityItems: store.exportLogsState.zippedLogsURLs,
+                completion: {
+                    store.send(.exportLogs(.shareFinished))
+                },
+                onDismiss: {
+                    store.send(.exportLogs(.shareSheetClosed))
+                }
+            )
             // UIShareDialogView only wraps UIActivityViewController presentation
             // so frame is set to 0 to not break SwiftUI's layout
             .frame(width: 0, height: 0)
@@ -379,54 +376,6 @@ private extension RootView {
         }
     }
 
-    @ViewBuilder func debugView(_ store: StoreOf<Root>) -> some View {
-        VStack(alignment: .leading) {
-            if store.destinationState.previousDestination == .home {
-                ZashiButton(String(localizable: .generalBack)) {
-                    store.goToDestination(.home)
-                }
-                .frame(width: 150)
-                .padding()
-            }
-
-            List {
-                Section(header: Text(localizable: .rootDebugTitle)) {
-                    Button(String(localizable: .rootDebugOptionExportLogs)) {
-                        store.send(.exportLogs(.start))
-                    }
-                    .disabled(store.exportLogsState.exportLogsDisabled)
-
-#if DEBUG
-                    Button(String(localizable: .rootDebugOptionAppReview)) {
-                        store.send(.debug(.rateTheApp))
-                        if let currentScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                            SKStoreReviewController.requestReview(in: currentScene)
-                        }
-                    }
-#endif
-                    
-                    Button(String(localizable: .rootDebugOptionCopySeed)) {
-                        store.send(.debug(.copySeedToPasteboard))
-                    }
-
-                    Button(String(localizable: .rootDebugOptionRescanBlockchain)) {
-                        store.send(.debug(.rescanBlockchain))
-                    }
-
-                    Button(String(localizable: .rootDebugOptionNukeWallet)) {
-                        store.send(.initialization(.resetZashiRequest(true)))
-                    }
-                }
-            }
-            .confirmationDialog(
-                store: store.scope(
-                    state: \.$confirmationDialog,
-                    action: \.confirmationDialog
-                )
-            )
-        }
-        .navigationBarTitle(String(localizable: .rootDebugNavigationTitle))
-    }
 }
 
 // MARK: - Previews
@@ -461,7 +410,6 @@ extension StoreOf<Root> {
 extension Root.State {
     static var initial: Self {
         .init(
-            debugState: .initial,
             destinationState: .initial,
             exportLogsState: .initial,
             onboardingState: .initial,

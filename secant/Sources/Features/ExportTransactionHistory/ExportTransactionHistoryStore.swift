@@ -35,6 +35,7 @@ struct ExportTransactionHistory {
         case exportRequested
         case preparationOfUrlsFailed
         case shareFinished
+        case shareSheetClosed
         case urlsPrepared(URL)
     }
 
@@ -70,6 +71,13 @@ struct ExportTransactionHistory {
             case .shareFinished:
                 state.isExportingData = false
                 state.exportBinding = false
+                return .none
+
+            case .shareSheetClosed:
+                // The share sheet is gone (shared or cancelled), the CSV with the
+                // transaction history must not stay behind in the temp directory.
+                state.dataURL = .emptyURL
+                try? taxExporter.cleanupExports()
                 return .none
             }
         }

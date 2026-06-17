@@ -57,6 +57,7 @@ struct SendFormView: View {
                                                 placeholder: String(localizable: .sendAddressPlaceholder),
                                                 title: String(localizable: .sendTo),
                                                 error: store.invalidAddressErrorText,
+                                                inputAccessibilityIdentifier: AccessibilityID.SendForm.zcashAddressField,
                                                 accessoryView:
                                                     HStack(spacing: 4) {
                                                         WithPerceptionTracking {
