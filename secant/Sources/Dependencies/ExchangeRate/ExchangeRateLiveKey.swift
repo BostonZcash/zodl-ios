@@ -253,6 +253,16 @@ extension ExchangeRateClient: DependencyKey {
 
         return ExchangeRateClient(
             exchangeRateEventStream: { exchangeRateProvider.eventStream.eraseToAnyPublisher() },
+            rateAvailability: {
+                switch exchangeRateProvider.eventStream.value {
+                case .value(nil, _):
+                    return .loading
+                case .value, .refreshEnable:
+                    return .available
+                case .stale:
+                    return .unavailable
+                }
+            },
             refreshExchangeRateUSD: {
                 Task { @MainActor in
                     exchangeRateProvider.refreshExchangeRateUSD()
