@@ -516,34 +516,46 @@ import ComposableArchitecture
         let transactionSentCalls = LockIsolated<[(String, String)]>([])
         let alertCalls = LockIsolated<[(String, String)]>([])
 
-        let initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        // Unlike the `TestStore` used by the sibling suites, a live `Store` shares the one
+        // process-global `@Shared(.inMemory(.selectedWalletAccount))` storage. During a full
+        // parallel run, other suites that mutate `selectedWalletAccount` clobber it mid-flight:
+        // the Root reducer's `guard let account = state.selectedWalletAccount ...` then bails,
+        // neither `transactionSent` nor `flexaAlert` fires, and `waitForStore` times out (a flaky
+        // CI failure). Bind this test's `@Shared` state to a fresh, isolated in-memory store —
+        // created inside the scope so `Root.State.initial`'s `@Shared` resolves against it — so
+        // nothing running in parallel can interfere.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            $0.derivationTool = .liveValue
-            $0.flexaHandler = .noOp
-            $0.flexaHandler.transactionSent = { commerceSessionId, txId in
-                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                $0.derivationTool = .liveValue
+                $0.flexaHandler = .noOp
+                $0.flexaHandler.transactionSent = { commerceSessionId, txId in
+                    transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+                }
+                $0.flexaHandler.flexaAlert = { title, message in
+                    alertCalls.withValue { $0.append((title, message)) }
+                }
+                $0.localAuthentication = .mockAuthenticationSucceeded
+                $0.mainQueue = .immediate
+                $0.mnemonic = .mock
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in result }
+                $0.sdkSynchronizer.proposeTransfer = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) }
+                $0.sdkSynchronizer.txIdExists = { _ in txIdExists }
+                $0.walletStorage = .noOp
+                $0.zcashSDKEnvironment = .testnet
             }
-            $0.flexaHandler.flexaAlert = { title, message in
-                alertCalls.withValue { $0.append((title, message)) }
-            }
-            $0.localAuthentication = .mockAuthenticationSucceeded
-            $0.mainQueue = .immediate
-            $0.mnemonic = .mock
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in result }
-            $0.sdkSynchronizer.proposeTransfer = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) }
-            $0.sdkSynchronizer.txIdExists = { _ in txIdExists }
-            $0.walletStorage = .noOp
-            $0.zcashSDKEnvironment = .testnet
-        }
 
-        store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
-        await waitForStore {
-            transactionSentCalls.withValue { !$0.isEmpty } || alertCalls.withValue { !$0.isEmpty }
+            store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+            await waitForStore {
+                transactionSentCalls.withValue { !$0.isEmpty } || alertCalls.withValue { !$0.isEmpty }
+            }
         }
 
         return (transactionSentCalls.withValue { $0 }, alertCalls.withValue { $0 })
