@@ -85,6 +85,7 @@ struct SendFormView: View {
                                                     .offset(x: 8)
                                             )
                                             .id(InputID.addressBookHint)
+                                            .accessibilityIdentifier(AccessibilityID.SendForm.zcashAddressField)
                                             .keyboardType(.alphabet)
                                             .focused($isAddressFocused)
                                             .submitLabel(.next)
