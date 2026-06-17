@@ -30,9 +30,7 @@
 		340DFF6B2FE1E4620061AA14 /* StringsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF6A2FE1E4620061AA14 /* StringsTests.swift */; };
 		340DFF712FE1E5D10061AA14 /* ClampedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF702FE1E5D10061AA14 /* ClampedTests.swift */; };
 		340DFF762FE1E5DC0061AA14 /* BalanceFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF752FE1E5DC0061AA14 /* BalanceFormatterTests.swift */; };
-		340DFF792FE1E5E40061AA14 /* SwapAssetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF782FE1E5E40061AA14 /* SwapAssetTests.swift */; };
 		340DFF7E2FE1E5F00061AA14 /* SwapMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF7D2FE1E5F00061AA14 /* SwapMetadataTests.swift */; };
-		340DFF842FE1E60F0061AA14 /* TransactionStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF832FE1E60F0061AA14 /* TransactionStateTests.swift */; };
 		340DFF8B2FE1E7390061AA14 /* CMCRateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF8A2FE1E7390061AA14 /* CMCRateTests.swift */; };
 		340DFF912FE1E7480061AA14 /* EncryptionKeysTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF902FE1E7480061AA14 /* EncryptionKeysTests.swift */; };
 		340DFF962FE1E7520061AA14 /* StoredWalletTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340DFF952FE1E7520061AA14 /* StoredWalletTests.swift */; };
@@ -1669,9 +1667,7 @@
 		340DFF6A2FE1E4620061AA14 /* StringsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringsTests.swift; sourceTree = "<group>"; };
 		340DFF702FE1E5D10061AA14 /* ClampedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClampedTests.swift; sourceTree = "<group>"; };
 		340DFF752FE1E5DC0061AA14 /* BalanceFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BalanceFormatterTests.swift; sourceTree = "<group>"; };
-		340DFF782FE1E5E40061AA14 /* SwapAssetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwapAssetTests.swift; sourceTree = "<group>"; };
 		340DFF7D2FE1E5F00061AA14 /* SwapMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwapMetadataTests.swift; sourceTree = "<group>"; };
-		340DFF832FE1E60F0061AA14 /* TransactionStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionStateTests.swift; sourceTree = "<group>"; };
 		340DFF8A2FE1E7390061AA14 /* CMCRateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMCRateTests.swift; sourceTree = "<group>"; };
 		340DFF902FE1E7480061AA14 /* EncryptionKeysTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EncryptionKeysTests.swift; sourceTree = "<group>"; };
 		340DFF952FE1E7520061AA14 /* StoredWalletTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredWalletTests.swift; sourceTree = "<group>"; };
@@ -2430,7 +2426,6 @@
 				349CE6182FDC1B1500E2B9CF /* ExportLogsTests */,
 				349CE6262FDC1CEA00E2B9CF /* TorSetupTests */,
 				340DFF772FE1E5E40061AA14 /* SwapTests */,
-				340DFF822FE1E60F0061AA14 /* TransactionStateTests */,
 				340DFF892FE1E7390061AA14 /* ModelsTests */,
 				340DFF8F2FE1E7480061AA14 /* EncryptionTests */,
 				340DFFA02FE1E8880061AA14 /* AddressBookTests */,
@@ -2488,19 +2483,10 @@
 		340DFF772FE1E5E40061AA14 /* SwapTests */ = {
 			isa = PBXGroup;
 			children = (
-				340DFF782FE1E5E40061AA14 /* SwapAssetTests.swift */,
 				340DFF7D2FE1E5F00061AA14 /* SwapMetadataTests.swift */,
 				340DFFDF2FE1F18F0061AA14 /* Near1ClickTests.swift */,
 			);
 			path = SwapTests;
-			sourceTree = "<group>";
-		};
-		340DFF822FE1E60F0061AA14 /* TransactionStateTests */ = {
-			isa = PBXGroup;
-			children = (
-				340DFF832FE1E60F0061AA14 /* TransactionStateTests.swift */,
-			);
-			path = TransactionStateTests;
 			sourceTree = "<group>";
 		};
 		340DFF892FE1E7390061AA14 /* ModelsTests */ = {
@@ -5342,7 +5328,6 @@
 				AD0D00232D00000100000001 /* VotingServiceConfigTests.swift in Sources */,
 				349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */,
 				AD0D00222D00000100000001 /* VotingCoordFlowCoordinatorTests.swift in Sources */,
-				340DFF792FE1E5E40061AA14 /* SwapAssetTests.swift in Sources */,
 				340DFFE22FE1F1960061AA14 /* DerivationToolTests.swift in Sources */,
 				AD0D00212D00000100000001 /* VotingHelpersTests.swift in Sources */,
 				340D00172FE1F7BF0061AA14 /* DateReadableTests.swift in Sources */,
@@ -5389,7 +5374,6 @@
 				340DFF8B2FE1E7390061AA14 /* CMCRateTests.swift in Sources */,
 				340D000F2FE1F7B50061AA14 /* WalletAccountTests.swift in Sources */,
 				348EC4D12FD7FD96008495FB /* AutoServerSelectionClientTests.swift in Sources */,
-				340DFF842FE1E60F0061AA14 /* TransactionStateTests.swift in Sources */,
 				340DFF762FE1E5DC0061AA14 /* BalanceFormatterTests.swift in Sources */,
 				921B3D95249329CD65C36E1B /* LoggerTests.swift in Sources */,
 				340D00112FE1F7B70061AA14 /* WalletStatusTests.swift in Sources */,
