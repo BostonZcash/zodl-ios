@@ -83,7 +83,12 @@ struct ZecKeyboard {
                 }
                 state.isCurrencyConversionEnabled = userStoredPreferences.exchangeRate()?.automatic ?? false
                 state.selectedCurrency = exchangeRate.selectedCurrency()
-                if state.isCurrencyConversionEnabled && state.selectedCurrency != .usd && state.currencyConversion == nil {
+                // Only present the sheet once the provider has surfaced an explicit `.unavailable`
+                // state — otherwise a cold-start fetch in flight is mistaken for failure and the
+                // user gets the Switch-to-USD prompt before there's been a chance to deliver a rate.
+                if state.isCurrencyConversionEnabled
+                    && state.selectedCurrency != .usd
+                    && exchangeRate.rateAvailability() == .unavailable {
                     state.isCurrencyUnavailableSheetPresented = true
                 }
                 return .send(.validateInputs)
