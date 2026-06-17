@@ -27,6 +27,15 @@ struct Root {
             case transactionsCoordFlow
             case walletBackup
         }
+
+        struct PendingServerCandidate {
+            let endpoint: LightWalletEndpoint
+            let benchmarkedAt: Date
+
+            func isExpired(now: Date) -> Bool {
+                now.timeIntervalSince(benchmarkedAt) >= AutoServerSelectionConstants.pendingCandidateTTL
+            }
+        }
         
         var CancelEventId = UUID()
         var CancelId = UUID()
@@ -64,6 +73,7 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
+        var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var serverSetupState: ServerSetup.State
@@ -102,11 +112,42 @@ struct Root {
         var walletBackupCoordFlowState = WalletBackupCoordFlow.State.initial
         var torSetupState = TorSetup.State.initial
 
-        /// True while Server Setup is presented via either entry point — the home-banner full-screen
-        /// cover (`serverSetupViewBinding`) or Settings → Choose Server (`chooseServerSetup`).
+        /// True while Server Setup is presented via any of its three entry points — the
+        /// disconnect-alert full-screen cover (`serverSetupViewBinding`), the smart-banner
+        /// navigation (`path == .serverSwitch`), or Settings → Choose Server (`chooseServerSetup`).
         var isServerSetupVisible: Bool {
             serverSetupViewBinding
+                || path == .serverSwitch
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
+        }
+
+        /// True while the user is inside a UI flow that may contain an in-progress payment
+        /// or voting sequence. Read live at decision time — never stored anywhere. The
+        /// switch is exhaustive on purpose: a new `Path` case must be classified here
+        /// before the project compiles.
+        var isSensitiveFlowActive: Bool {
+            if signWithKeystoneCoordFlowBinding { return true }
+            guard let path else { return false }
+            switch path {
+            // The voting flow has no `Path` case of its own — it is presented from inside Settings
+            // (`SettingsStore`'s `@Presents var votingCoordFlow`), so `path` stays `.settings` for its
+            // whole duration. Its broadcasts (submitVoteCommitment / submitDelegation / delegateShares /
+            // getTreeState) must not be interrupted by an automatic server switch, so `.settings` is
+            // classified sensitive to cover them. Do NOT declassify `.settings` while voting lives under
+            // it; if voting ever gets its own `Path` case, move the sensitivity there.
+            case .settings:
+                return true
+            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
+                return true
+            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+                return false
+            }
+        }
+
+        /// Gate for applying an automatic server switch.
+        var canApplyAutoServerSwitch: Bool {
+            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
         }
 
         init(
@@ -189,6 +230,7 @@ struct Root {
         case torSetup(TorSetup.Action)
         case backToHomeFromServerSwitchTapped
         case refreshAutomaticServer
+        case autoServerCandidateReady(LightWalletEndpoint)
 
         // Transactions
         case observeTransactions
@@ -241,6 +283,7 @@ struct Root {
     @Dependency(\.autolockHandler) var autolockHandler
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
+    @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
     @Dependency(\.exchangeRate) var exchangeRate
@@ -254,7 +297,6 @@ struct Root {
     @Dependency(\.shieldingProcessor) var shieldingProcessor
     @Dependency(\.swapAndPay) var swapAndPay
     @Dependency(\.autoServerSelection) var autoServerSelection
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.uriParser) var uriParser
     @Dependency(\.userDefaults) var userDefaults
     @Dependency(\.userMetadataProvider) var userMetadataProvider
@@ -376,7 +418,25 @@ struct Root {
         checkFundsReduce()
     }
     
+    /// The `onChange` wrapper must observe every reducer that can mutate an input of
+    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path) — keep ALL
+    /// composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
+        combinedCore
+            .onChange(of: \.canApplyAutoServerSwitch) { _, state in
+                guard state.canApplyAutoServerSwitch, let pending = state.pendingServerCandidate else { return .none }
+                state.pendingServerCandidate = nil
+                if pending.isExpired(now: date.now()) {
+                    LoggerProxy.event("[AutoServerSelection] Deferred candidate expired, dropped")
+                    return .none
+                }
+                LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
+                return .send(.autoServerCandidateReady(pending.endpoint))
+            }
+    }
+
+    @ReducerBuilder<State, Action>
+    private var combinedCore: some Reducer<State, Action> {
         self.core
 
         Reduce { state, action in
@@ -415,15 +475,37 @@ struct Root {
                 return .send(.initialization(.initializeSDK(.newWallet)))
 
             case .refreshAutomaticServer:
-                // Skip during a background task, and while the user is on the Server Setup screen
-                // (a manual Save owns that window) to avoid redundant work and stale UI. Correctness
-                // against a concurrent manual switch is guaranteed by TransactionGuard regardless:
-                // the manual Save uses switchWaiting (waits, then wins) while this uses switchIfIdle.
+                // Skip during a background task, and while the user is on the Server Setup
+                // screen (a manual Save owns that window). The benchmark itself still runs
+                // while a sensitive flow is on screen — it is read-only, and a candidate
+                // should be ready to apply the moment the user leaves the flow; the apply
+                // decision is gated in .autoServerCandidateReady. Correctness against a
+                // concurrent manual switch is guaranteed by TransactionGuard regardless:
+                // the manual Save uses switchWaiting (waits, then wins) while applySwitch
+                // uses switchIfIdle (skips if busy).
                 guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
-                return .run { _ in
-                    await autoServerSelection.refreshIfEnabled()
+                return .run { send in
+                    if let best = await autoServerSelection.findBestServer() {
+                        await send(.autoServerCandidateReady(best))
+                    }
                 }
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
+
+            case .autoServerCandidateReady(let candidate):
+                guard state.canApplyAutoServerSwitch else {
+                    state.pendingServerCandidate = State.PendingServerCandidate(
+                        endpoint: candidate,
+                        benchmarkedAt: date.now()
+                    )
+                    let hardGates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible)"
+                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive)"
+                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates))")
+                    return .none
+                }
+                state.pendingServerCandidate = nil
+                return .run { _ in
+                    _ = await autoServerSelection.applySwitch(candidate)
+                }
 
             default: return .none
             }

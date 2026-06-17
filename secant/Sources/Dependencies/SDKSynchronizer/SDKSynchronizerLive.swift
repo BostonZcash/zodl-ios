@@ -133,22 +133,25 @@ extension SDKSynchronizerClient: DependencyKey {
                 )
             },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
-                let transactions = try await synchronizer.broadcaster.createProposedTransactions(
-                    proposal: proposal,
-                    spendingKey: spendingKey
-                )
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let transactions = try await synchronizer.broadcaster.createProposedTransactions(
+                        proposal: proposal,
+                        spendingKey: spendingKey
+                    )
 
-                return await Self.submitCreatedTransactions(
-                    transactions,
-                    logPrefix: "[MultiSubmit]",
-                    userStoredPreferences: userStoredPreferences,
-                    zcashSDKEnvironment: zcashSDKEnvironment,
-                    submit: { createdTransactions, endpoints in
-                        await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                            await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                    return await Self.submitCreatedTransactions(
+                        transactions,
+                        logPrefix: "[MultiSubmit]",
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment,
+                        submit: { createdTransactions, endpoints in
+                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                            }
                         }
-                    }
-                )
+                    )
+                }
             },
             proposeShielding: { accountUUID, shieldingThreshold, memo, transparentReceiver in
                 try await synchronizer.proposeShielding(
@@ -206,22 +209,25 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.addProofsToPCZT(pczt: pczt)
             },
             createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
-                let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
-                    pcztWithProofs: pcztWithProofs,
-                    pcztWithSigs: pcztWithSigs
-                )
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
+                        pcztWithProofs: pcztWithProofs,
+                        pcztWithSigs: pcztWithSigs
+                    )
 
-                return await Self.submitCreatedTransactions(
-                    transactions,
-                    logPrefix: "[MultiSubmit/PCZT]",
-                    userStoredPreferences: userStoredPreferences,
-                    zcashSDKEnvironment: zcashSDKEnvironment,
-                    submit: { createdTransactions, endpoints in
-                        await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                            await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                    return await Self.submitCreatedTransactions(
+                        transactions,
+                        logPrefix: "[MultiSubmit/PCZT]",
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment,
+                        submit: { createdTransactions, endpoints in
+                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                            }
                         }
-                    }
-                )
+                    )
+                }
             },
             urEncoderForPCZT: { pczt in
                 let keystoneSDK = KeystoneZcashSDK()
@@ -275,8 +281,14 @@ extension SDKSynchronizerClient: DependencyKey {
             enhanceTransactionBy: { txId in
                 try await synchronizer.enhanceTransactionBy(txId: TxId(txId))
             },
+            // A read, but guarded on purpose: the voting flow's round-snapshot fetch must not
+            // race a server switch, and any future caller queues FIFO behind in-flight
+            // broadcasts/switches — do not call this from a latency-sensitive path.
             getTreeState: { height in
-                try await synchronizer.getTreeState(height: height)
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.getTreeState(height: height)
+                }
             }
         )
     }

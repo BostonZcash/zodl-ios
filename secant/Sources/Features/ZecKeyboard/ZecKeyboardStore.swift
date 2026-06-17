@@ -28,11 +28,14 @@ struct ZecKeyboard {
         var humanReadableMainInput = ""
         var input = Constants.initialValue
         var isInputInZec = true
+        var isCurrencyConversionEnabled = false
         var isCurrencySymbolPrefix = false
+        var isCurrencyUnavailableSheetPresented = false
         var isValidInput = true
         var isZeroOutputAllowed = false
         var keys: [String] = []
         var localeCurrencySymbol = ""
+        var selectedCurrency: CurrencyISO4217 = .usd
 
         var isNextButtonDisabled: Bool {
             amount.amount == 0 && !isZeroOutputAllowed
@@ -41,7 +44,10 @@ struct ZecKeyboard {
         init() { }
     }
 
-    enum Action: Equatable {
+    enum Action: BindableAction, Equatable {
+        case binding(BindingAction<ZecKeyboard.State>)
+        case currencyUnavailableContinueInZECTapped
+        case currencyUnavailableSwitchToUSDTapped
         case longKeyTapped(Int)
         case keyTapped(Int)
         case nextTapped
@@ -53,11 +59,19 @@ struct ZecKeyboard {
         case validateInputs
     }
 
+    @Dependency(\.exchangeRate) var exchangeRate
+    @Dependency(\.userStoredPreferences) var userStoredPreferences
+
     init() { }
 
     var body: some Reducer<State, Action> {
+        BindingReducer()
+
         Reduce { state, action in
             switch action {
+            case .binding:
+                return .none
+
             case .onAppear:
                 // __LD TESTED
                 if let decimalSeparator = Locale.current.decimalSeparator {
@@ -67,7 +81,32 @@ struct ZecKeyboard {
                 if state.input == Constants.initialValue {
                     state.isInputInZec = true
                 }
+                state.isCurrencyConversionEnabled = userStoredPreferences.exchangeRate()?.automatic ?? false
+                state.selectedCurrency = exchangeRate.selectedCurrency()
+                // Only present the sheet once the provider has surfaced an explicit `.unavailable`
+                // state — otherwise a cold-start fetch in flight is mistaken for failure and the
+                // user gets the Switch-to-USD prompt before there's been a chance to deliver a rate.
+                if state.isCurrencyConversionEnabled
+                    && state.selectedCurrency != .usd
+                    && exchangeRate.rateAvailability() == .unavailable {
+                    state.isCurrencyUnavailableSheetPresented = true
+                }
                 return .send(.validateInputs)
+
+            case .currencyUnavailableSwitchToUSDTapped:
+                let existing = userStoredPreferences.exchangeRate()
+                let automatic = existing?.automatic ?? true
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: automatic, currency: .usd)
+                )
+                state.selectedCurrency = .usd
+                state.isCurrencyUnavailableSheetPresented = false
+                exchangeRate.refreshExchangeRateUSD()
+                return .none
+
+            case .currencyUnavailableContinueInZECTapped:
+                state.isCurrencyUnavailableSheetPresented = false
+                return .none
                 
             case .swapCurrenciesTapped:
                 state.isInputInZec.toggle()

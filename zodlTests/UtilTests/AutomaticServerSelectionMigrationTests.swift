@@ -1,9 +1,9 @@
-import Testing
+import XCTest
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct AutomaticServerSelectionMigrationTests {
+final class AutomaticServerSelectionMigrationTests: XCTestCase {
     /// In-memory stand-in for the parts of `userStoredPreferences` the migration touches.
     private final class Box: @unchecked Sendable {
         var server: UserPreferencesStorage.ServerConfig?
@@ -23,27 +23,37 @@ import ComposableArchitecture
         return box.flag
     }
 
-    @Test func noStoredServerEnablesAutomatic() {
-        #expect(runMigration(network: .mainnet, server: nil) == true)
+    func testNoStoredServerEnablesAutomatic() {
+        XCTAssertEqual(runMigration(network: .mainnet, server: nil), true)
     }
 
-    @Test func defaultServerEnablesAutomatic() {
+    func testDefaultServerEnablesAutomatic() {
         let def = ZcashSDKEnvironment.defaultEndpoint(for: .mainnet)
         let config = UserPreferencesStorage.ServerConfig(host: def.host, port: def.port, isCustom: false)
-        #expect(runMigration(network: .mainnet, server: config) == true)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
     }
 
-    @Test func customServerSelectsManual() {
+    func testCustomServerSelectsManual() {
         let config = UserPreferencesStorage.ServerConfig(host: "my.server.example", port: 9067, isCustom: true)
-        #expect(runMigration(network: .mainnet, server: config) == false)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), false)
     }
 
-    @Test func nonDefaultKnownServerSelectsManual() {
+    func testNonDefaultKnownServerEnablesAutomatic() {
+        // A known server picked from the old server list is stored as non-custom; with no
+        // user-entered custom server, the user migrates to Automatic.
         let config = UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
-        #expect(runMigration(network: .mainnet, server: config) == false)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
     }
 
-    @Test func runsOnlyOnce() {
+    func testLegacyBuiltInServerEnablesAutomatic() {
+        // A legacy built-in host (e.g. *.zcash-infra.com) was never a user-typed custom server: it is
+        // stored non-custom, so it migrates to Automatic even though it no longer appears in the list
+        // and is display-normalized to "custom" elsewhere.
+        let config = UserPreferencesStorage.ServerConfig(host: "lwd1.zcash-infra.com", port: 443, isCustom: false)
+        XCTAssertEqual(runMigration(network: .mainnet, server: config), true)
+    }
+
+    func testRunsOnlyOnce() {
         let box = Box(server: nil)
         box.flag = false // pretend the user already chose Manual
         withDependencies {
@@ -53,6 +63,6 @@ import ComposableArchitecture
         } operation: {
             ZcashSDKEnvironment.initializeAutomaticServerSelectionIfNeeded(for: .mainnet)
         }
-        #expect(box.flag == false, "Migration must not overwrite an already-set flag")
+        XCTAssertEqual(box.flag, false, "Migration must not overwrite an already-set flag")
     }
 }

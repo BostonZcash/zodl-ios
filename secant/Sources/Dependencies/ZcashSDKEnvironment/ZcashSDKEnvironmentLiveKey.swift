@@ -59,21 +59,19 @@ extension ZcashSDKEnvironment {
     }
 
     /// One-time initialization of the Automatic/Manual flag based on the user's existing server:
-    /// - no stored server, or it equals the default endpoint -> Automatic
-    /// - a custom server, or a non-default server -> Manual (preserve the explicit/private choice)
+    /// - no stored server, or any non-custom server (the default, a known list server, or a legacy
+    ///   built-in host) -> Automatic
+    /// - only a user-entered custom server -> Manual (preserve the explicit choice)
     static func initializeAutomaticServerSelectionIfNeeded(for network: NetworkType) {
         @Dependency(\.userStoredPreferences) var userStoredPreferences
 
         guard userStoredPreferences.automaticServerSelection() == nil else { return }
 
-        var enableAutomatic = true
-        if let stored = userStoredPreferences.server() {
-            let normalized = normalizedStoredServerConfig(stored)
-            let defaultEndpoint = defaultEndpoint(for: network)
-            enableAutomatic = !normalized.isCustom
-                && normalized.host == defaultEndpoint.host
-                && normalized.port == defaultEndpoint.port
-        }
+        // Automatic unless the user explicitly entered a custom server. Keyed off the raw stored
+        // `isCustom` flag (not the display-normalized one) so legacy built-in hosts such as
+        // *.zcash-infra.com -- stored non-custom but normalized to "custom" for the Server Setup UI --
+        // still migrate to Automatic. Only a user-typed custom host stays on Manual.
+        let enableAutomatic = userStoredPreferences.server()?.isCustom != true
 
         userStoredPreferences.setAutomaticServerSelection(enableAutomatic)
     }

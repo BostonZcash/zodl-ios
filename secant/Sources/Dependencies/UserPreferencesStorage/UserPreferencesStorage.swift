@@ -122,10 +122,19 @@ extension UserPreferencesStorage {
     struct ExchangeRate: Equatable, Codable {
         let manual: Bool
         let automatic: Bool
+        let currency: CurrencyISO4217
 
-        init(manual: Bool, automatic: Bool) {
+        init(manual: Bool, automatic: Bool, currency: CurrencyISO4217 = .usd) {
             self.manual = manual
             self.automatic = automatic
+            self.currency = currency
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            manual = try container.decode(Bool.self, forKey: .manual)
+            automatic = try container.decode(Bool.self, forKey: .automatic)
+            currency = try container.decodeIfPresent(CurrencyISO4217.self, forKey: .currency) ?? .usd
         }
     }
 }

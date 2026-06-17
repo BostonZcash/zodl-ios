@@ -6268,6 +6268,23 @@
         }
       }
     },
+    "currencyConversion.currencyLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moneda"
+          }
+        }
+      }
+    },
     "currencyConversion.enable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6291,13 +6308,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If Tor Protection is enabled (Advanced Settings), Zodl protects your IP address."
+            "value" : "Zodl's currency conversion feature doesn't compromise your IP address."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si la Protección Tor está activada (Configuración Avanzada), Zodl protege tu dirección IP."
+            "value" : "La función de conversión de moneda de Zodl no compromete tu dirección IP."
           }
         }
       }
@@ -6325,13 +6342,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Display your balance and payment amounts in USD. You can manage this feature in Advanced Settings."
+            "value" : "Display your balance and payment amounts in selected currency. For Swap and Pay, exchange rates will continue to be shown in USD. You can manage this feature in Advanced Settings."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en USD. Puedes gestionar esta función en Configuración Avanzada."
+            "value" : "Muestra tu saldo y montos de pago en tu moneda seleccionada. Para Swap y Pay, los tipos de cambio se seguirán mostrando en USD. Puedes administrar esta función en Configuración avanzada."
           }
         }
       }
@@ -6359,7 +6376,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Don’t show the currency conversion."
+            "value" : "Don't show currency conversion."
           }
         },
         "es" : {
@@ -6376,13 +6393,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show me the currency conversion."
+            "value" : "Show currency conversion."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrarme la conversión de moneda."
+            "value" : "Mostrar la conversión de moneda."
           }
         }
       }
@@ -6455,19 +6472,36 @@
         }
       }
     },
+    "currencyConversion.selectCurrencyTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar moneda"
+          }
+        }
+      }
+    },
     "currencyConversion.settingsDesc" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Display your balance and payment amounts in USD."
+            "value" : "Display your balance and payment amounts in your selected currency. For Swap and Pay, exchange rates will continue to be shown in USD."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en USD."
+            "value" : "Muestra tu saldo y montos de pago en tu moneda seleccionada. Para Swap y Pay, los tipos de cambio se seguirán mostrando en USD."
           }
         }
       }
@@ -6484,7 +6518,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Omitir"
+            "value" : "Omitir por ahora"
           }
         }
       }
@@ -11854,6 +11888,74 @@
         }
       }
     },
+    "send.currencyUnavailable.continueInZEC" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue in ZEC"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar en ZEC"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live rates for %@ can't be fetched right now. You can use USD as a fallback, or keep entering amounts in ZEC only."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pueden obtener las tasas en tiempo real de %@ en este momento. Puedes usar USD como alternativa o seguir ingresando montos solo en ZEC."
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.switchToUSD" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch to USD"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiar a USD"
+          }
+        }
+      }
+    },
+    "send.currencyUnavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ conversion unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversión de %@ no disponible"
+          }
+        }
+      }
+    },
     "send.error.insufficientFunds" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12741,6 +12843,23 @@
         }
       }
     },
+    "serverSetup.allServers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse all servers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explorar todos los servidores"
+          }
+        }
+      }
+    },
     "serverSetup.automatic" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12771,57 +12890,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modo de conexión"
-          }
-        }
-      }
-    },
-    "serverSetup.manual" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manual"
-          }
-        }
-      }
-    },
-    "serverSetup.testing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Testing"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Probando"
-          }
-        }
-      }
-    },
-    "serverSetup.allServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browse all servers"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Explorar todos los servidores"
           }
         }
       }
@@ -12890,6 +12958,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Servidores más rápidos"
+          }
+        }
+      }
+    },
+    "serverSetup.manual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual"
           }
         }
       }
@@ -12975,6 +13060,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guardar selección"
+          }
+        }
+      }
+    },
+    "serverSetup.testing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testing"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Probando"
           }
         }
       }
@@ -13599,13 +13701,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enable to display USD values"
+            "value" : "Enable to display fiat values"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Activa para mostrar valores en USD"
+            "value" : "Activa para mostrar valores fiat"
           }
         }
       }

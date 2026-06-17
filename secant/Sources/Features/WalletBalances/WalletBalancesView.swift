@@ -108,25 +108,34 @@ struct WalletBalancesView: View {
                     .padding(.vertical, 5)
                 }
                 
-                if store.currencyConversion != nil || store.isExchangeRateStale {
+                if store.currencyConversion == nil && store.isExchangeRateStale {
                     Button {
                         store.send(.exchangeRateRefreshTapped)
                     } label: {
-                        if store.isExchangeRateStale {
-                            HStack {
-                                Text(localizable: .tooltipExchangeRateTitle)
-                                    .font(.custom(FontFamily.Inter.semiBold.name, size: 14))
-                                    .foregroundColor(Asset.Colors.primary.color)
+                        HStack {
+                            Text(localizable: .tooltipExchangeRateTitle)
+                                .font(.custom(FontFamily.Inter.semiBold.name, size: 14))
+                                .foregroundColor(Asset.Colors.primary.color)
 
-                                Asset.Assets.infoCircle.image
-                                    .zImage(size: 20, color: Asset.Colors.primary.color)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .anchorPreference(
-                                key: ExchangeRateStaleTooltipPreferenceKey.self,
-                                value: .bounds
-                            ) { $0 }
-                        } else if store.isExchangeRateRefreshEnabled {
+                            Asset.Assets.infoCircle.image
+                                .zImage(size: 20, color: Asset.Colors.primary.color)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .anchorPreference(
+                            key: ExchangeRateStaleTooltipPreferenceKey.self,
+                            value: .bounds
+                        ) { $0 }
+                    }
+                    .frame(height: 36)
+                    .padding(.top, 10)
+                    .padding(.vertical, 5)
+                }
+
+                if store.currencyConversion != nil {
+                    Button {
+                        store.send(.exchangeRateRefreshTapped)
+                    } label: {
+                        if store.isExchangeRateRefreshEnabled {
                             HStack {
                                 Text(store.currencyValue)
                                     .hiddenIfSet()

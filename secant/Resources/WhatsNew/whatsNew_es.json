@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.6.0",
+            "date": "15-06-2026",
+            "timestamp": 1781544911,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Hasta ahora, los saldos y montos en Zodl solo se mostraban en dólares estadounidenses. Añadimos soporte multimoneda: elige tu moneda preferida en los ajustes de Conversión de Moneda y en la activación del widget de Estado de la Billetera."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Rediseñamos la selección de servidor con un toggle Automático/Manual para mejorar la confiabilidad. Automático mantiene la sincronización en el mejor servidor; Manual te deja elegir uno. Todos pasan a Automático por defecto, excepto quienes usan un servidor personalizado, que se quedan en Manual.",
+                        "Las nuevas carteras se sincronizan desde la altura actual de la cadena en lugar del checkpoint integrado, evitando el escaneo inicial."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.5.3",
             "date": "08-06-2026",
             "timestamp": 1780930607,

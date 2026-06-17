@@ -237,11 +237,20 @@ public enum Design: Colorable {
             case active
         }
         
+        public enum Filled: Colorable {
+            case textMain
+        }
+        
         public enum Disabled: Colorable {
             case bg
             case stroke
             case dropdown
         }
+    }
+    
+    public enum Background: Colorable {
+        case dark
+        case input
     }
     
     public enum Utility {
@@ -727,12 +736,29 @@ public extension Design.Dropdowns.Default {
     }
 }
 
+public extension Design.Dropdowns.Filled {
+    func color(_ colorScheme: ColorScheme) -> Color {
+        switch self {
+        case .textMain: return Design.col(Asset.Colors.ZDesign.gray900.color, Asset.Colors.ZDesign.shark100.color, colorScheme)
+        }
+    }
+}
+
 public extension Design.Dropdowns.Disabled {
     func color(_ colorScheme: ColorScheme) -> Color {
         switch self {
         case .bg: return Design.col(Asset.Colors.ZDesign.gray50.color, Asset.Colors.ZDesign.shark900.color, colorScheme)
         case .stroke: return Design.col(Asset.Colors.ZDesign.gray200.color, Asset.Colors.ZDesign.shark800.color, colorScheme)
         case .dropdown: return Design.col(Asset.Colors.ZDesign.gray500.color, Asset.Colors.ZDesign.shark500.color, colorScheme)
+        }
+    }
+}
+
+public extension Design.Background {
+    func color(_ colorScheme: ColorScheme) -> Color {
+        switch self {
+        case .dark: return Design.col(Asset.Colors.ZDesign.Base.obsidian.color, Asset.Colors.ZDesign.Base.bone.color, colorScheme)
+        case .input: return Design.col(Asset.Colors.ZDesign.gray50.color, Asset.Colors.ZDesign.shark800.color, colorScheme)
         }
     }
 }

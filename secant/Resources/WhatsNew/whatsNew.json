@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.6.0",
+            "date": "15-06-2026",
+            "timestamp": 1781544911,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "Until now, balances and amounts in Zodl only displayed in US dollars. We added multi-currency support — pick your preferred fiat currency in Currency Conversion settings and on the Wallet Status Widget opt-in."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We redesigned server selection with a clearer Automatic/Manual toggle to improve reliability. Automatic keeps you on the best available server; Manual lets you pick one explicitly. Everyone moves to Automatic by default, except users on a custom server, who stay on Manual.",
+                        "New wallets now sync from the actual chain tip instead of the built-in checkpoint, so first launch skips the unnecessary scan."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.5.3",
             "date": "08-06-2026",
             "timestamp": 1780930607,
