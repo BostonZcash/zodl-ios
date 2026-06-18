@@ -429,7 +429,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You are about to delete this contact. This cannot be undone."
+            "value" : "Estás prestes a eliminar este contacto. Esta ação não pode ser anulada."
           }
         }
       }
