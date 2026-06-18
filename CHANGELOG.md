@@ -6,8 +6,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
-### Added
-- Server selection now offers an Automatic mode that benchmarks known servers and keeps your wallet on the fastest one; Manual mode still lets you pin a specific server. Automatic switching is paused while sending, swapping, shielding, or voting.
+## 3.7.0 build 1
 
 ### Changed
 - Sending, swapping, shielding, and Flexa payments now broadcast your transaction to multiple servers at once when you're in Automatic server mode (Manual mode still uses the server you selected), so a single slow or unreachable server is less likely to make a submission fail. If a server times out before confirming, you now see a clear message that your transaction may still have been broadcast, rather than an outright failure.
@@ -21,6 +20,11 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Removed
 - A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.
+
+## 3.6.0 build 7 (20026-06-17)
+
+### Added
+- Server selection now offers an Automatic mode that benchmarks known servers and keeps your wallet on the fastest one; Manual mode still lets you pin a specific server. Automatic switching is paused while sending, swapping, shielding, or voting.
 
 ## 3.5.2 build 1 (20026-06-08)
 
