@@ -41,6 +41,23 @@ import Foundation
         #expect(result?.port == 443)
     }
 
+    @Test func fourComponentHostKeepsAllSeparators() {
+        let result = endpoint("a:b:c:443")
+        #expect(result?.host == "a:b:c")
+        #expect(result?.port == 443)
+    }
+
+    @Test func ipv6HostKeepsAllSeparators() {
+        let result = endpoint("2001:db8::1:9067")
+        #expect(result?.host == "2001:db8::1")
+        #expect(result?.port == 9067)
+    }
+
+    @Test func returnsNilWhenHostMissing() {
+        #expect(endpoint(":443") == nil)
+        #expect(endpoint("443") == nil)
+    }
+
     private func endpoint(_ string: String) -> LightWalletEndpoint? {
         UserPreferencesStorage.ServerConfig.endpoint(for: string, streamingCallTimeoutInMillis: 0)
     }
