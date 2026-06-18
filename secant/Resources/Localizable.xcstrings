@@ -8654,7 +8654,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nota para quem valoriza ao máximo a privacidade: como obtemos a taxa de câmbio\n        a partir de casas de câmbio, estas poderão ver que a taxa foi consultada antes de ocorrer uma transação."
+            "value" : "Nota para quem valoriza ao máximo a privacidade: como obtemos a taxa de câmbio a partir de casas de câmbio, estas poderão ver que a taxa foi consultada antes de ocorrer uma transação."
           }
         }
       }
@@ -12334,19 +12334,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Get 5%% off airgapped hardware wallet. Promo code \"Zodl\"."
+            "value" : "Get 5% off airgapped hardware wallet. Promo code \"Zodl\"."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Obtén un 5%% de descuento en una billetera de hardware aislada. Código promocional: 'Zodl'."
+            "value" : "Obtén un 5% de descuento en una billetera de hardware aislada. Código promocional: 'Zodl'."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Obtém 5%% de desconto numa carteira de hardware\n        isolada (air-gapped). Código promocional “Zodl”."
+            "value" : "Obtém 5% de desconto numa carteira de hardware isolada (air-gapped). Código promocional “Zodl”."
           }
         }
       }
@@ -16294,7 +16294,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ocorreu um erro ao tentar proteger as tuas\n        moedas. Por favor, tenta novamente."
+            "value" : "Ocorreu um erro ao tentar proteger as tuas moedas. Por favor, tenta novamente."
           }
         }
       }
@@ -18990,7 +18990,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Caso percas o acesso à app ou ao teu dispositivo, conhecer a Frase de\n        Recuperação Secreta é a única forma de recuperar os teus fundos. Não a conseguimos ver nem te conseguimos ajudar a recuperá-la."
+            "value" : "Caso percas o acesso à app ou ao teu dispositivo, conhecer a Frase de Recuperação Secreta é a única forma de recuperar os teus fundos. Não a conseguimos ver nem te conseguimos ajudar a recuperá-la."
           }
         }
       }
@@ -19013,7 +19013,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Qualquer pessoa com acesso à tua Frase de Recuperação Secreta terá controlo\n        total da tua carteira, por isso mantém-na segura e nunca a mostres a ninguém."
+            "value" : "Qualquer pessoa com acesso à tua Frase de Recuperação Secreta terá controlo total da tua carteira, por isso mantém-na segura e nunca a mostres a ninguém."
           }
         }
       }
@@ -19036,7 +19036,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Frase de Recuperação Secreta (um conjunto único de 24 palavras numa ordem\n        exata)"
+            "value" : "Frase de Recuperação Secreta (um conjunto único de 24 palavras numa ordem exata)"
           }
         }
       }
@@ -19059,7 +19059,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Altura de Nascimento da Carteira (a altura de bloco em que a tua carteira\n        foi criada)"
+            "value" : "Altura de Nascimento da Carteira (a altura de bloco em que a tua carteira foi criada)"
           }
         }
       }
@@ -19105,7 +19105,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Parece que estás sem conexão. Por favor, restabelece a tua conexão à\n        internet para usar a carteira Zodl."
+            "value" : "Parece que estás sem conexão. Por favor, restabelece a tua conexão à internet para usar a carteira Zodl."
           }
         }
       }
@@ -19491,7 +19491,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O Zodl está a analisar a blockchain à procura das tuas transações mais recentes para garantir\n        que os teus saldos são apresentados corretamente. Mantém a app do Zodl aberta com o ecrã do telefone ativo para evitar interrupções."
+            "value" : "O Zodl está a analisar a blockchain à procura das tuas transações mais recentes para garantir que os teus saldos são apresentados corretamente. Mantém a app do Zodl aberta com o ecrã do telefone ativo para evitar interrupções."
           }
         }
       }
