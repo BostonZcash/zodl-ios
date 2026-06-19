@@ -304,17 +304,16 @@ struct ServerSetupView: View {
 
     @ViewBuilder
     private func multiServerInfoFooter() -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoCircle.image
-                .zImage(size: 16, style: Design.Text.tertiary)
-                .padding(.top, 2)
+        HStack(alignment: .top, spacing: 0) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 20, style: Design.Text.tertiary)
+                .padding(.trailing, 12)
 
             Text(localizable: .serverSetupMultiServerInfo)
-                .zFont(size: 12, style: Design.Text.tertiary)
-                .multilineTextAlignment(.leading)
         }
+        .zFont(size: 12, style: Design.Text.tertiary)
         .screenHorizontalPadding()
-        .padding(.bottom, 12)
+        .padding(.bottom, 20)
     }
 
     // MARK: - Save Button
