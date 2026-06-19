@@ -12979,6 +12979,23 @@
         }
       }
     },
+    "serverSetup.multiServerInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We may use multiple servers to optimize performance. To reduce metadata exposure, choose Manual connection mode to select your single server of choice, and ensure Tor is enabled in Advanced Settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Podemos usar varios servidores para optimizar el rendimiento. Para reducir la exposición de metadatos, selecciona el modo de conexión Manual para elegir un único servidor de tu preferencia y asegúrate de que Tor esté habilitado en Configuración Avanzada."
+          }
+        }
+      }
+    },
     "serverSetup.otherServers" : {
       "extractionState" : "manual",
       "localizations" : {
