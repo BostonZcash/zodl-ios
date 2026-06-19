@@ -36,6 +36,9 @@ struct ServerSetupView: View {
                 .disabled(store.isUpdatingServer)
                 .padding(.vertical, 1)
 
+                // MARK: - Multi-server / privacy info
+                multiServerInfoFooter()
+
                 // MARK: - Save Button
                 saveButton()
             }
@@ -295,6 +298,23 @@ struct ServerSetupView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Multi-server / privacy info footer
+
+    @ViewBuilder
+    private func multiServerInfoFooter() -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoCircle.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+                .padding(.top, 2)
+
+            Text(localizable: .serverSetupMultiServerInfo)
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+        }
+        .screenHorizontalPadding()
+        .padding(.bottom, 12)
     }
 
     // MARK: - Save Button
