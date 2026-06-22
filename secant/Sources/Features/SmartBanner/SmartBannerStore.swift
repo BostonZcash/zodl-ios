@@ -18,7 +18,7 @@ struct SmartBanner {
         static let remindMe2days: TimeInterval = 86_400 * 2
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
-        static let smartBannerSyncingThreshold = 0.98
+        static let smartBannerSyncingBlocksThreshold: BlockHeight = 3456
     }
     
     @ObservableState
@@ -56,6 +56,7 @@ struct SmartBanner {
         var isSyncTimedOutAutoAppeareDisabled = false
         var isWalletBackupAcknowledged = false
         var isWalletBackupAcknowledgedAtKeychain = false
+        var lastKnownBlocksRemaining: BlockHeight = -1
         var lastKnownErrorMessage = ""
         var lastKnownSyncPercentage = -1.0
         var messageToBeShared: String?
@@ -354,6 +355,10 @@ struct SmartBanner {
                     var isSyncing = false
                     if case let .syncing(syncProgress, isScanProgressComplete) = snapshot.syncStatus {
                         state.lastKnownSyncPercentage = Double(syncProgress)
+                        state.lastKnownBlocksRemaining = max(
+                            0,
+                            latestState.data.latestBlockHeight - latestState.data.fullyScannedHeight
+                        )
                         state.isScanProgressComplete = isScanProgressComplete
                         isSyncing = true
 
@@ -366,6 +371,11 @@ struct SmartBanner {
                     switch snapshot.syncStatus {
                     case .upToDate:
                         state.isSyncTimedOutAutoAppeareDisabled = false
+                        // Reset the syncing block-count so a re-eval of priority 4 after sync
+                        // completes (account change, reconnect) doesn't see the last `.syncing`
+                        // sample (which can still be >= the show threshold if the SDK skipped
+                        // a final low-remainder update) and spuriously re-show the banner.
+                        state.lastKnownBlocksRemaining = -1
                         if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
                             return .send(.closeAndCleanupBanner)
                         }
@@ -402,7 +412,7 @@ struct SmartBanner {
                             //return .send(.triggerPriority(.priority45))
                         } else if state.walletStatus == .restoring {
                             return .send(.triggerPriority(.priority3))
-                        } else if state.lastKnownSyncPercentage >= 0 && state.lastKnownSyncPercentage < Constants.smartBannerSyncingThreshold {
+                        } else if state.lastKnownBlocksRemaining >= Constants.smartBannerSyncingBlocksThreshold {
                             return .send(.triggerPriority(.priority4))
                         }
                     }
@@ -427,7 +437,7 @@ struct SmartBanner {
 
                 // syncing
             case .evaluatePriority4:
-                if state.walletStatus != .restoring && state.lastKnownSyncPercentage >= 0 && state.lastKnownSyncPercentage < Constants.smartBannerSyncingThreshold {
+                if state.walletStatus != .restoring && state.lastKnownBlocksRemaining >= Constants.smartBannerSyncingBlocksThreshold {
                     return .send(.triggerPriority(.priority4))
                 }
                 return .send(.evaluatePriority45)
