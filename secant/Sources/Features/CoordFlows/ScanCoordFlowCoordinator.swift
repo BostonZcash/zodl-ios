@@ -235,10 +235,20 @@ extension ScanCoordFlow {
                 return .none
                 
             case .getProposal(let paymentRequest):
+                // SECURITY (MOB-1348 / dossier #37, Android mirror MOB-1341): iOS signs only a single
+                // explicit recipient/amount/memo (payments.first) via `proposeTransfer` — the raw
+                // ZIP-321 URI is never handed to the SDK, so hidden multi-recipient payments cannot be
+                // signed. Fail closed on any non-single-payment request instead of silently collapsing
+                // to payments[0]; honouring multiple payments would first require enumerating and
+                // displaying every recipient in review (otherwise it reintroduces the Android bug).
+                guard paymentRequest.payments.count == 1 else {
+                    return .send(.requestZecFailed)
+                }
+
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
-                
+
                 do {
                     if let payment = paymentRequest.payments.first {
                         var textMemo = ""

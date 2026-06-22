@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Changed
+- QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
+
 ## 3.7.0 build 1
 
 ### Changed
