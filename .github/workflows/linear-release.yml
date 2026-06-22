@@ -11,7 +11,12 @@ name: Linear release tracking
 on:
   push:
     tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
+      # GitHub Actions tag filters are glob patterns (minimatch), not regex.
+      # `+` is a literal `+` in glob — the previous `[0-9]+.[0-9]+.[0-9]+`
+      # was being interpreted as "digit + literal `+` + literal `.` + …"
+      # and so only ever matched strings like `3+.5+.2+`, never real
+      # release tags like `3.5.3`. The workflow had never fired.
+      - '*.*.*'
 
 jobs:
   linear-release:
