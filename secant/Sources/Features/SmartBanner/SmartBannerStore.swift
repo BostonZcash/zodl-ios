@@ -371,6 +371,11 @@ struct SmartBanner {
                     switch snapshot.syncStatus {
                     case .upToDate:
                         state.isSyncTimedOutAutoAppeareDisabled = false
+                        // Reset the syncing block-count so a re-eval of priority 4 after sync
+                        // completes (account change, reconnect) doesn't see the last `.syncing`
+                        // sample (which can still be >= the show threshold if the SDK skipped
+                        // a final low-remainder update) and spuriously re-show the banner.
+                        state.lastKnownBlocksRemaining = -1
                         if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
                             return .send(.closeAndCleanupBanner)
                         }
