@@ -9618,6 +9618,23 @@
         }
       }
     },
+    "partners.flexa.keystoneNotSupportedMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flexa payments require a Zodl (mobile) account. Switch to a Zodl account to pay with Flexa."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los pagos con Flexa requieren una cuenta Zodl (móvil). Cambia a una cuenta Zodl para pagar con Flexa."
+          }
+        }
+      }
+    },
     "partners.flexa.transactionFailedMessage" : {
       "extractionState" : "manual",
       "localizations" : {
