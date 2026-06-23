@@ -1,22 +1,26 @@
 name: Linear release tracking
 
-# Fires on every release tag push (`<major>.<minor>.<patch>`, e.g. `3.5.2`).
-# The single job runs Linear's release action, which scans commits since the
-# previous tag for `MOB-###` references and creates a matching release under
-# the iOS Linear pipeline (Settings → Releases → zodl-ios in Linear).
+# Runs when a GitHub Release is published. The single job runs Linear's release
+# action, which scans commits since the previous release tag for `MOB-###`
+# references and creates a matching release under the iOS Linear pipeline
+# (Settings → Releases → zodl-ios in Linear).
+#
+# Why `release: published` and not `push: tags`? For tag-push events GitHub runs
+# the workflow file *as it exists on the tagged commit*. Our release tags are cut
+# from a release branch that predates this workflow, so the file isn't present
+# there and nothing fires. `release` events run the workflow from the default
+# branch (main) instead, so this file is always used regardless of what the tag
+# points at — while still releasing exactly the tag's commit range.
 #
 # Requires the LINEAR_ACCESS_KEY repo secret, generated against the iOS
 # pipeline in Linear's UI.
 
 on:
-  push:
-    tags:
-      # GitHub Actions tag filters are glob patterns (minimatch), not regex.
-      # `+` is a literal `+` in glob — the previous `[0-9]+.[0-9]+.[0-9]+`
-      # was being interpreted as "digit + literal `+` + literal `.` + …"
-      # and so only ever matched strings like `3+.5+.2+`, never real
-      # release tags like `3.5.3`. The workflow had never fired.
-      - '*.*.*'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
 
 jobs:
   linear-release:
@@ -25,6 +29,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.release.tag_name }}  # the released tag's commit
           fetch-depth: 0  # full history so the Linear release action sees every commit since the previous tag
 
       - name: Create Linear release
