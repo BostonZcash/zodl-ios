@@ -12024,6 +12024,23 @@
         }
       }
     },
+    "send.failureAnchorInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your wallet was still syncing when you tried to send. Please wait for sync to complete and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu cartera aún estaba sincronizando cuando intentaste enviar. Por favor, espera a que la sincronización termine e intenta de nuevo."
+          }
+        }
+      }
+    },
     "send.failureInfo" : {
       "extractionState" : "manual",
       "localizations" : {

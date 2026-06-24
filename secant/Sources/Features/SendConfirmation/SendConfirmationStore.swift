@@ -663,9 +663,17 @@ extension SendConfirmation.State {
         : String(localizable: .swapAndPayPendingPayTitle)
     }
     
+    var isAnchorError: Bool {
+        failedDescription?.localizedCaseInsensitiveContains("Unable to compute anchor") == true
+    }
+
     var failureInfo: String {
         if !partialFailureTxIds.isEmpty {
             return String(localizable: .sendPartialFailureInfo)
+        }
+
+        if isAnchorError {
+            return String(localizable: .sendFailureAnchorInfo)
         }
 
         return isShielding
