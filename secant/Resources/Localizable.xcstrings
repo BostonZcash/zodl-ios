@@ -12030,13 +12030,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your wallet was still syncing when you tried to send. Please wait for sync to complete and try again."
+            "value" : "Your wallet's chain state changed while preparing this transaction. Please wait for sync to complete and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu cartera aún estaba sincronizando cuando intentaste enviar. Por favor, espera a que la sincronización termine e intenta de nuevo."
+            "value" : "El estado de la cadena cambió mientras se preparaba la transacción. Por favor, espera a que la sincronización termine e intenta de nuevo."
           }
         }
       }
