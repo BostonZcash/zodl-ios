@@ -645,10 +645,13 @@ import ComposableArchitecture
 
 @MainActor
 private func waitForStore(
-    // Generous deadline: the polling runs on the main actor, which the rest of the test suite
-    // contends for during a full parallel run. The poll exits as soon as the condition holds,
-    // so a healthy test never waits this long.
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
+    // Generous deadline: these live stores deliver `.send`/`.run` effects through the cooperative
+    // pool and `DispatchQueue.main`, both of which are heavily contended during a full parallel run
+    // (the whole test target runs concurrently on a CPU-limited CI runner). The poll pumps the main
+    // queue (via `Task.sleep`) and exits as soon as the condition holds, so a healthy test never
+    // waits anywhere near this long — the deadline only guards against extreme scheduler starvation,
+    // which is what made the 15s deadline flake on CI.
+    timeoutNanoseconds: UInt64 = 60_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {
