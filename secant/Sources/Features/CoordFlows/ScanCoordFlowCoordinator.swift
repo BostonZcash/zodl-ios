@@ -242,6 +242,12 @@ extension ScanCoordFlow {
                 // to payments[0]; honouring multiple payments would first require enumerating and
                 // displaying every recipient in review (otherwise it reintroduces the Android bug).
                 guard paymentRequest.payments.count == 1 else {
+                    // Drop any recipient/amount/memo carried over from a previous scan: the guard fails
+                    // before the parse block below ever writes them, so without this reset the rejection
+                    // bounce-back would re-pre-fill the send form with the prior scan's stale details.
+                    state.recipient = nil
+                    state.amount = Zatoshi(0)
+                    state.memo = nil
                     return .send(.requestZecFailed)
                 }
 

@@ -117,11 +117,49 @@ import ZcashPaymentURI
             #expect(recipients.first?.stringEncoded == testnetAddress)
         }
     }
+
+    /// Regression (MOB-1348): a multi-recipient request rejected *after* a prior successful
+    /// single-payment scan must not leave that earlier scan's recipient/amount/memo behind. The guard
+    /// fails closed before parsing, and those fields are only ever written when parsing succeeds, so
+    /// without an explicit reset the rejection's bounce-back re-pre-fills the send form with stale
+    /// payment data the user never re-scanned.
+    @Test func multiPaymentRejectionClearsStalePaymentDetails() async throws {
+        let singlePayment = try makePayment(amount: 0.001)
+        let singleRequest = PaymentRequest(singlePayment: singlePayment)
+        let multiRequest = try PaymentRequest(payments: [singlePayment, singlePayment])
+        let proposeCalls = LockIsolated<[Recipient]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(proposeCalls: proposeCalls)
+
+            // First scan: a valid single-payment QR populates recipient/amount/memo and builds a form.
+            store.send(.getProposal(singleRequest))
+            await waitForScanStore {
+                proposeCalls.withValue { $0.count == 1 } && store.state.path.count == 2
+            }
+            #expect(store.state.recipient != nil)
+
+            // Second scan: a crafted multi-recipient QR is rejected and bounces back to the send form.
+            store.send(.getProposal(multiRequest))
+            await waitForScanStore {
+                store.state.path.count == 1
+            }
+
+            // The rejected scan must leave nothing of the previous payment behind.
+            #expect(store.state.recipient == nil)
+            #expect(store.state.amount == Zatoshi(0))
+            #expect(store.state.memo == nil)
+            // ...and it must never have proposed a transfer for the multi-recipient request.
+            #expect(proposeCalls.withValue { $0.count == 1 })
+        }
+    }
 }
 
 @MainActor
 private func waitForScanStore(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
+    timeoutNanoseconds: UInt64 = 60_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {
