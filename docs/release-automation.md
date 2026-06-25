@@ -70,14 +70,15 @@ tests; you do not need it to build or ship.
      builds and read build numbers), and **Generate**.
    - Copy the **Key ID** (next to the key) and the **Issuer ID** (top of the page).
    - Click **Download API Key** to get `AuthKey_<KEYID>.p8`. **You can only
-     download it once** — Apple keeps no copy. Store it outside the repo
-     (e.g. `~/.appstoreconnect/`); if lost, revoke and create a new one.
+     download it once** — Apple keeps no copy; if lost, revoke and create a new one.
 
-   Then:
+   Put the `.p8` in `fastlane/` (it's gitignored, so it won't be committed) and
+   reference it by filename — `ASC_KEY_FILEPATH` is resolved relative to the
+   `fastlane/` directory. An absolute path anywhere also works. Then:
    ```bash
    cp fastlane/.env.example fastlane/.env
    # set ASC_KEY_ID (the Key ID), ASC_ISSUER_ID (the Issuer ID), and
-   # ASC_KEY_FILEPATH (absolute path to the .p8)
+   # ASC_KEY_FILEPATH — e.g. just AuthKey_<KEYID>.p8 when the key is in fastlane/
    ```
    `fastlane/.env` and `*.p8` are gitignored — they are never committed.
 2. **Partner keys.** Put `PartnerKeys.plist` at `secant/Resources/PartnerKeys.plist`
