@@ -188,7 +188,16 @@ def resolve_sha(repo_root, ref)
 end
 
 def ref_on_origin?(repo_root, sha)
-  !run("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null").strip.empty?
+  # branch -r --contains lists only remote-tracking branches, never tags. A
+  # release built from a tag whose commit isn't on a remote branch is still on
+  # origin if the tag is pushed, so also match the sha against origin's tags
+  # (ls-remote prints the tagged commit on the ^{} line for annotated tags).
+  on_branch = !run("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null").strip.empty?
+  return true if on_branch
+
+  run("git -C #{repo_root.shellescape} ls-remote --tags origin 2>/dev/null").lines.any? do |line|
+    line.split(/\s+/).first == sha
+  end
 end
 
 def dirty_tree?(repo_root)
