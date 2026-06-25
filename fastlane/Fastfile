@@ -1,0 +1,217 @@
+# frozen_string_literal: true
+
+require "ostruct"
+require "tmpdir"
+require "fileutils"
+require "shellwords"
+
+$LOAD_PATH.unshift(File.expand_path("lib", __dir__))
+require "zodl/version"
+require "zodl/variants"
+require "zodl/build_number"
+require "zodl/preflight"
+
+PROJECT = "secant.xcodeproj"
+TEST_SCHEME = "zodl-internal"        # only scheme wired to the zodlTests target
+TEST_DEVICE = "iPhone 17 Pro"
+PARTNER_KEYS_REL = "secant/Resources/PartnerKeys.plist"
+
+desc "Build, sign, and upload one or more variants. Driven by Scripts/release.sh."
+lane :release do |options|
+  repo_root = sh("git rev-parse --show-toplevel", log: false).strip
+  ref       = options.fetch(:ref)
+  version   = options.fetch(:version)
+  build     = Integer(options.fetch(:build))
+  dry_run   = truthy(options[:dry_run])
+
+  variants = Zodl::Variants.expand(options.fetch(:variant))
+  sha = sh("git -C #{repo_root.shellescape} rev-parse #{ref.shellescape}", log: false).strip
+  branch_version = Zodl::Version.from_branch(ref)
+  project_version = marketing_version_at(repo_root, sha)
+  api_key = asc_api_key
+
+  variants.each do |variant|
+    cfg = Zodl::Variants.config(variant)
+    ctx = OpenStruct.new(
+      variant: variant,
+      requested_version: version,
+      requested_build: build,
+      project_version: project_version,
+      branch_version: branch_version,
+      latest_build: latest_build_number(api_key, cfg[:app_identifier], version),
+      ref_on_origin: ref_on_origin?(repo_root, sha),
+      dirty_tree: dirty_tree?(repo_root),
+      partner_keys_ok: partner_keys_ok?(repo_root),
+      xcode_ok: xcode_ok?(repo_root),
+      signing_identity_ok: signing_identity_ok?
+    )
+    report = Zodl::Preflight.check(ctx)
+    print_summary(variant, cfg, ref, sha, ctx, report)
+    UI.user_error!("Preflight failed for #{variant} — aborting.") unless report.ok?
+  end
+
+  if dry_run
+    UI.success("Dry run complete — preflight passed for: #{variants.join(', ')}. No build performed.")
+    next
+  end
+
+  UI.user_error!("Aborted.") unless truthy(options[:yes]) || UI.confirm("Proceed with the build above?")
+
+  worktree = File.join(Dir.tmpdir, "zodl-release-#{sha[0, 8]}")
+  begin
+    sh("git -C #{repo_root.shellescape} worktree add --detach #{worktree.shellescape} #{sha}")
+    FileUtils.cp(File.join(repo_root, PARTNER_KEYS_REL), File.join(worktree, PARTNER_KEYS_REL))
+
+    Dir.chdir(worktree) do
+      sh("xcodebuild -project #{PROJECT} -scheme #{TEST_SCHEME} -resolvePackageDependencies")
+      run_unit_tests unless truthy(options[:skip_tests])
+      variants.each { |variant| build_and_upload(variant, version, build, api_key) }
+    end
+  ensure
+    if File.directory?(worktree)
+      sh("git -C #{repo_root.shellescape} worktree remove --force #{worktree.shellescape}")
+    end
+  end
+
+  UI.success("Done: #{variants.join(', ')} #{version} (#{build}) from #{ref} @ #{sha[0, 8]}")
+end
+
+desc "Set MARKETING_VERSION and CURRENT_PROJECT_VERSION and commit. Driven by Scripts/bump.sh."
+lane :bump do |options|
+  version = options.fetch(:version)
+  build   = Integer(options.fetch(:build))
+  UI.user_error!("version '#{version}' is not in X.Y.Z form") unless Zodl::Version.valid?(version)
+  repo_root = sh("git rev-parse --show-toplevel", log: false).strip
+
+  Dir.chdir(repo_root) do
+    sh("agvtool new-marketing-version #{version.shellescape}")
+    sh("agvtool new-version -all #{build}")
+    sh("git add secant.xcodeproj/project.pbxproj")
+    sh("git commit -m #{"[MOB-1446] Bump to #{version} (#{build})".shellescape}")
+  end
+
+  UI.success("Bumped to #{version} (#{build}) and committed.")
+end
+
+# --- helpers -------------------------------------------------------------
+
+def truthy(value)
+  ["1", "true", "yes", true].include?(value)
+end
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_FILEPATH")
+  )
+end
+
+# Latest build number for an app+version on App Store Connect (TestFlight train).
+# Returns 0 when there is no build yet.
+def latest_build_number(api_key, app_identifier, version)
+  app_store_build_number(
+    api_key: api_key,
+    app_identifier: app_identifier,
+    version: version,
+    live: false,
+    initial_build_number: 0
+  )
+rescue StandardError => e
+  UI.important("No existing build for #{app_identifier} #{version} (#{e.message}); treating latest as 0.")
+  0
+end
+
+# MARKETING_VERSION as committed at `sha`. All app targets share one value, so
+# the first MARKETING_VERSION line in the project at that commit is correct.
+def marketing_version_at(repo_root, sha)
+  line = sh(
+    "git -C #{repo_root.shellescape} show #{sha}:secant.xcodeproj/project.pbxproj | grep -m1 'MARKETING_VERSION ='",
+    log: false
+  )
+  line[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
+end
+
+def ref_on_origin?(repo_root, sha)
+  !sh("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null", log: false).strip.empty?
+rescue StandardError
+  false
+end
+
+def dirty_tree?(repo_root)
+  !sh("git -C #{repo_root.shellescape} status --porcelain", log: false).strip.empty?
+end
+
+def partner_keys_ok?(repo_root)
+  script = File.join(repo_root, "Scripts/validate-partner-keys.sh")
+  sh("ACTION=install SRCROOT=#{repo_root.shellescape} bash #{script.shellescape}", log: false)
+  true
+rescue StandardError
+  false
+end
+
+def xcode_ok?(repo_root)
+  pinned = File.read(File.join(repo_root, ".xcode-version")).strip
+  current = sh("xcodebuild -version", log: false)[/Xcode (\S+)/, 1]
+  current == pinned
+rescue StandardError
+  false
+end
+
+def signing_identity_ok?
+  out = sh("security find-identity -v -p codesigning", log: false)
+  out.include?("Apple Distribution") || out.include?("iPhone Distribution")
+rescue StandardError
+  false
+end
+
+def run_unit_tests
+  run_tests(
+    project: PROJECT,
+    scheme: TEST_SCHEME,
+    devices: [TEST_DEVICE],
+    only_testing: ["zodlTests"],
+    derived_data_path: "build/DerivedData",
+    code_coverage: false,
+    clean: false,
+    xcargs: "CODE_SIGNING_ALLOWED=NO -skipPackagePluginValidation -skipMacroValidation"
+  )
+end
+
+def build_and_upload(variant, version, build, api_key)
+  cfg = Zodl::Variants.config(variant)
+
+  ipa = build_app(
+    project: PROJECT,
+    scheme: cfg[:scheme],
+    configuration: cfg[:configuration],
+    export_method: "app-store",
+    output_directory: "build",
+    output_name: "#{variant}-#{version}-#{build}.ipa",
+    clean: true,
+    derived_data_path: "build/DerivedData",
+    xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates"
+  )
+
+  upload_to_testflight(
+    api_key: api_key,
+    app_identifier: cfg[:app_identifier],
+    ipa: ipa,
+    skip_submission: true,
+    distribute_external: false,
+    skip_waiting_for_build_processing: false # wait for App Store Connect processing
+  )
+
+  UI.success("Uploaded #{cfg[:app_identifier]} #{version} (#{build}) to TestFlight.")
+end
+
+def print_summary(variant, cfg, ref, sha, ctx, report)
+  UI.message("──────── preflight: #{variant} ────────")
+  UI.message("  scheme/target  #{cfg[:scheme]} / #{cfg[:target]} (#{cfg[:configuration]})")
+  UI.message("  app            #{cfg[:app_identifier]}")
+  UI.message("  ref            #{ref} @ #{sha[0, 8]}")
+  UI.message("  version        #{ctx.requested_version} (project #{ctx.project_version})")
+  UI.message("  build          #{ctx.requested_build} (latest on ASC #{ctx.latest_build})")
+  report.warnings.each { |w| UI.important("  warning: #{w}") }
+  report.errors.each { |e| UI.error("  error:   #{e}") }
+end
