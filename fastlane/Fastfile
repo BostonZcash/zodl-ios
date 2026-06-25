@@ -4,11 +4,11 @@ require "tmpdir"
 require "fileutils"
 require "shellwords"
 
+# require_relative (not fastlane's intercepted `require`) avoids the spurious
+# "you have required a gem" notices for our local files. $LOAD_PATH lets these
+# files require each other by name; requiring preflight pulls in the other three.
 $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
-require "zodl/version"
-require "zodl/variants"
-require "zodl/build_number"
-require "zodl/preflight"
+require_relative "lib/zodl/preflight"
 
 # Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
 # always used. The Scripts/*.sh wrappers invoke `bundle exec fastlane`.
