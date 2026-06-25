@@ -144,7 +144,8 @@ def asc_api_key
 end
 
 # Latest build number for an app+version on App Store Connect (TestFlight train).
-# Returns 0 when there is no build yet.
+# initial_build_number: 0 makes the action return 0 (not raise) when there is no
+# build yet for this version, so any exception below is a genuine failure.
 def latest_build_number(api_key, app_identifier, version)
   app_store_build_number(
     api_key: api_key,
@@ -154,8 +155,10 @@ def latest_build_number(api_key, app_identifier, version)
     initial_build_number: 0
   )
 rescue StandardError => e
-  UI.important("No existing build for #{app_identifier} #{version} (#{e.message}); treating latest as 0.")
-  0
+  # Fail closed: treating an auth/network/API failure as "latest = 0" would let
+  # any requested build number pass the preflight build-number check and upload a
+  # duplicate or regressing build. Abort instead so the developer can retry.
+  UI.user_error!("Could not fetch the latest build number for #{app_identifier} #{version} from App Store Connect (#{e.message}). Re-run once App Store Connect is reachable.")
 end
 
 # MARKETING_VERSION as committed at `sha`. All app targets share one value, so
