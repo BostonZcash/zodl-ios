@@ -8,6 +8,16 @@ module Zodl
   # Pure reconciliation of declared intent against gathered facts. No I/O — the
   # Fastfile gathers facts and passes them in as `ctx`, so this is fully testable.
   class Preflight
+    # The facts the Fastfile gathers and hands to `check`. A plain Struct so the
+    # tooling depends on no extra gems (avoids ostruct, which newer Ruby is
+    # phasing out of the standard library).
+    Context = Struct.new(
+      :variant, :requested_version, :requested_build, :project_version,
+      :branch_version, :latest_build, :ref_on_origin, :dirty_tree,
+      :partner_keys_ok, :xcode_ok, :signing_identity_ok,
+      keyword_init: true
+    )
+
     Report = Struct.new(:errors, :warnings) do
       def ok?
         errors.empty?

@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "ostruct"
 require "tmpdir"
 require "fileutils"
 require "shellwords"
@@ -10,6 +9,12 @@ require "zodl/version"
 require "zodl/variants"
 require "zodl/build_number"
 require "zodl/preflight"
+
+# Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
+# always used. The Scripts/*.sh wrappers invoke `bundle exec fastlane`.
+unless ENV["BUNDLE_GEMFILE"]
+  UI.user_error!("Run through bundler: use ./Scripts/release.sh or ./Scripts/bump.sh (they call `bundle exec fastlane`).")
+end
 
 PROJECT = "secant.xcodeproj"
 TEST_SCHEME = "zodl-internal"        # only scheme wired to the zodlTests target
@@ -28,14 +33,15 @@ lane :release do |options|
   dry_run   = truthy(options[:dry_run])
 
   variants = Zodl::Variants.expand(options.fetch(:variant))
-  sha = sh("git -C #{repo_root.shellescape} rev-parse #{ref.shellescape}", log: false).strip
+  sh("git -C #{repo_root.shellescape} fetch --quiet --tags origin", log: false)
+  sha = resolve_sha(repo_root, ref)
   branch_version = Zodl::Version.from_branch(ref)
   project_version = marketing_version_at(repo_root, sha)
   api_key = asc_api_key
 
   variants.each do |variant|
     cfg = Zodl::Variants.config(variant)
-    ctx = OpenStruct.new(
+    ctx = Zodl::Preflight::Context.new(
       variant: variant,
       requested_version: version,
       requested_build: build,
@@ -142,6 +148,16 @@ def set_marketing_version(version)
   content = File.read(path)
   content.gsub!(/MARKETING_VERSION = [^;]+;/, "MARKETING_VERSION = #{version};")
   File.write(path, content)
+end
+
+# Resolves a branch/tag/commit to a commit SHA, trying the ref as given and then
+# origin/<ref>, so a release branch can be built without checking it out locally.
+def resolve_sha(repo_root, ref)
+  ["#{ref}", "origin/#{ref}"].each do |candidate|
+    out = sh("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{candidate.shellescape}^{commit} || true", log: false).strip
+    return out unless out.empty?
+  end
+  UI.user_error!("Could not resolve ref '#{ref}' (tried '#{ref}' and 'origin/#{ref}'). Fetch or push it first.")
 end
 
 def ref_on_origin?(repo_root, sha)

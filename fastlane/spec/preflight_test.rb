@@ -1,5 +1,4 @@
 require "minitest/autorun"
-require "ostruct"
 require "zodl/preflight"
 
 class ZodlPreflightTest < Minitest::Test
@@ -10,7 +9,7 @@ class ZodlPreflightTest < Minitest::Test
       ref_on_origin: true, dirty_tree: false, partner_keys_ok: true,
       xcode_ok: true, signing_identity_ok: true
     }
-    OpenStruct.new(base.merge(overrides))
+    Zodl::Preflight::Context.new(**base.merge(overrides))
   end
 
   def test_clean_context_passes
