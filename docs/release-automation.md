@@ -63,13 +63,21 @@ tests; you do not need it to build or ship.
 
 ### B. Secrets and inputs (per machine, but not committed)
 
-1. **App Store Connect API key.** In App Store Connect → *Users and Access →
-   Integrations → App Store Connect API*, create a key and download the `.p8`.
+1. **App Store Connect API key.** As an **Account Holder or Admin**, in App Store
+   Connect → *Users and Access* → **Integrations** → *App Store Connect API*
+   (Team Keys):
+   - Click **+**, name the key, set the role to **App Manager** (enough to upload
+     builds and read build numbers), and **Generate**.
+   - Copy the **Key ID** (next to the key) and the **Issuer ID** (top of the page).
+   - Click **Download API Key** to get `AuthKey_<KEYID>.p8`. **You can only
+     download it once** — Apple keeps no copy. Store it outside the repo
+     (e.g. `~/.appstoreconnect/`); if lost, revoke and create a new one.
+
    Then:
    ```bash
    cp fastlane/.env.example fastlane/.env
-   # edit fastlane/.env and set ASC_KEY_ID, ASC_ISSUER_ID, and ASC_KEY_FILEPATH
-   # (absolute path to the .p8)
+   # set ASC_KEY_ID (the Key ID), ASC_ISSUER_ID (the Issuer ID), and
+   # ASC_KEY_FILEPATH (absolute path to the .p8)
    ```
    `fastlane/.env` and `*.p8` are gitignored — they are never committed.
 2. **Partner keys.** Put `PartnerKeys.plist` at `secant/Resources/PartnerKeys.plist`
