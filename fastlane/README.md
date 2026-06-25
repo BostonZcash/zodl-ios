@@ -5,7 +5,7 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 ## One-time setup
 
-1. Ruby is pinned by `.ruby-version` (3.3.7); install it with `rbenv install` if needed.
+1. Ruby is pinned by `.ruby-version` (4.0.5); install it with `rbenv install` if needed.
 2. `bundle install`
 3. `brew install bats-core` (only needed to run the wrapper tests)
 4. Create an App Store Connect API key (App Store Connect → Users and Access →
