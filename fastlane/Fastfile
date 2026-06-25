@@ -110,7 +110,7 @@ lane :bump do |options|
     run("agvtool new-version -all #{build}", must_succeed: true)
     UI.message("Committing the version bump…")
     run("git add secant.xcodeproj/project.pbxproj", must_succeed: true)
-    run("git commit -m #{"[MOB-1446] Bump to #{version} (#{build})".shellescape}", must_succeed: true)
+    run("git commit -m #{"Bump to #{version} (#{build})".shellescape}", must_succeed: true)
   end
 
   UI.success("Bumped to #{version} (#{build}) and committed.")
