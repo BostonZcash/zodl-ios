@@ -16,6 +16,9 @@ TEST_SCHEME = "zodl-internal"        # only scheme wired to the zodlTests target
 TEST_DEVICE = "iPhone 17 Pro"
 PARTNER_KEYS_REL = "secant/Resources/PartnerKeys.plist"
 
+# Don't auto-generate fastlane/README.md on every run; it is maintained by hand.
+skip_docs
+
 desc "Build, sign, and upload one or more variants. Driven by Scripts/release.sh."
 lane :release do |options|
   repo_root = sh("git rev-parse --show-toplevel", log: false).strip
@@ -84,7 +87,7 @@ lane :bump do |options|
   repo_root = sh("git rev-parse --show-toplevel", log: false).strip
 
   Dir.chdir(repo_root) do
-    sh("agvtool new-marketing-version #{version.shellescape}")
+    set_marketing_version(version)
     sh("agvtool new-version -all #{build}")
     sh("git add secant.xcodeproj/project.pbxproj")
     sh("git commit -m #{"[MOB-1446] Bump to #{version} (#{build})".shellescape}")
@@ -130,6 +133,15 @@ def marketing_version_at(repo_root, sha)
     log: false
   )
   line[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
+end
+
+# Sets MARKETING_VERSION on all targets directly in the pbxproj. agvtool's
+# new-marketing-version does not update the build-setting form this project uses.
+def set_marketing_version(version)
+  path = "secant.xcodeproj/project.pbxproj"
+  content = File.read(path)
+  content.gsub!(/MARKETING_VERSION = [^;]+;/, "MARKETING_VERSION = #{version};")
+  File.write(path, content)
 end
 
 def ref_on_origin?(repo_root, sha)
