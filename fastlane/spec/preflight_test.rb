@@ -6,7 +6,7 @@ class ZodlPreflightTest < Minitest::Test
     base = {
       variant: "appstore", requested_version: "3.8.0", requested_build: 3,
       project_version: "3.8.0", branch_version: "3.8.0", latest_build: 2,
-      ref_on_origin: true, dirty_tree: false, partner_keys_ok: true,
+      ref_on_origin: true, dirty_tree: false, partner_keys_error: nil,
       xcode_ok: true, signing_identity_ok: true
     }
     Zodl::Preflight::Context.new(**base.merge(overrides))
@@ -43,9 +43,9 @@ class ZodlPreflightTest < Minitest::Test
   end
 
   def test_missing_partner_keys_blocks
-    report = Zodl::Preflight.check(facts(partner_keys_ok: false))
+    report = Zodl::Preflight.check(facts(partner_keys_error: "PartnerKeys.plist: missing key 'cbProjectId'"))
     refute report.ok?
-    assert(report.errors.any? { |e| e.include?("PartnerKeys") })
+    assert(report.errors.any? { |e| e.include?("missing key 'cbProjectId'") })
   end
 
   def test_dirty_tree_is_warning_only

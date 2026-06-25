@@ -14,7 +14,7 @@ module Zodl
     Context = Struct.new(
       :variant, :requested_version, :requested_build, :project_version,
       :branch_version, :latest_build, :ref_on_origin, :dirty_tree,
-      :partner_keys_ok, :xcode_ok, :signing_identity_ok,
+      :partner_keys_error, :xcode_ok, :signing_identity_ok,
       keyword_init: true
     )
 
@@ -45,7 +45,7 @@ module Zodl
       warnings << bn.warning if bn.warning
 
       errors << "ref is not on origin — push it before releasing" unless ctx.ref_on_origin
-      errors << "PartnerKeys.plist is missing or invalid" unless ctx.partner_keys_ok
+      errors << ctx.partner_keys_error if ctx.partner_keys_error
       errors << "Xcode version does not match .xcode-version" unless ctx.xcode_ok
       errors << "no distribution signing identity found in the keychain" unless ctx.signing_identity_ok
 

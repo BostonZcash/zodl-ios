@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "tmpdir"
 require "fileutils"
 require "shellwords"
@@ -27,14 +28,16 @@ skip_docs
 
 desc "Build, sign, and upload one or more variants. Driven by Scripts/release.sh."
 lane :release do |options|
-  repo_root = sh("git rev-parse --show-toplevel", log: false).strip
+  repo_root = run("git rev-parse --show-toplevel", must_succeed: true).strip
   ref       = options.fetch(:ref)
   version   = options.fetch(:version)
   build     = Integer(options.fetch(:build))
   dry_run   = truthy(options[:dry_run])
 
   variants = Zodl::Variants.expand(options.fetch(:variant))
-  sh("git -C #{repo_root.shellescape} fetch --quiet --tags origin", log: false)
+
+  UI.message("Fetching latest refs from origin…")
+  run("git -C #{repo_root.shellescape} fetch --quiet --tags origin")
   sha = resolve_sha(repo_root, ref)
   branch_version = Zodl::Version.from_branch(ref)
   project_version = marketing_version_at(repo_root, sha)
@@ -42,6 +45,7 @@ lane :release do |options|
 
   variants.each do |variant|
     cfg = Zodl::Variants.config(variant)
+    UI.message("Reconciling #{variant} against git, the project, and App Store Connect…")
     ctx = Zodl::Preflight::Context.new(
       variant: variant,
       requested_version: version,
@@ -51,7 +55,7 @@ lane :release do |options|
       latest_build: latest_build_number(api_key, cfg[:app_identifier], version),
       ref_on_origin: ref_on_origin?(repo_root, sha),
       dirty_tree: dirty_tree?(repo_root),
-      partner_keys_ok: partner_keys_ok?(repo_root),
+      partner_keys_error: partner_keys_error(repo_root),
       xcode_ok: xcode_ok?(repo_root),
       signing_identity_ok: signing_identity_ok?
     )
@@ -69,17 +73,23 @@ lane :release do |options|
 
   worktree = File.join(Dir.tmpdir, "zodl-release-#{sha[0, 8]}")
   begin
-    sh("git -C #{repo_root.shellescape} worktree add --detach #{worktree.shellescape} #{sha}")
+    UI.message("Creating a clean build worktree at #{sha[0, 8]}…")
+    run("git -C #{repo_root.shellescape} worktree add --detach #{worktree.shellescape} #{sha}", must_succeed: true)
     FileUtils.cp(File.join(repo_root, PARTNER_KEYS_REL), File.join(worktree, PARTNER_KEYS_REL))
 
     Dir.chdir(worktree) do
-      sh("xcodebuild -project #{PROJECT} -scheme #{TEST_SCHEME} -resolvePackageDependencies")
+      UI.message("Resolving Swift packages…")
+      run("xcodebuild -project #{PROJECT} -scheme #{TEST_SCHEME} -resolvePackageDependencies", must_succeed: true)
       run_unit_tests unless truthy(options[:skip_tests])
-      variants.each { |variant| build_and_upload(variant, version, build, api_key) }
+      variants.each do |variant|
+        UI.message("Building and uploading #{variant}…")
+        build_and_upload(variant, version, build, api_key)
+      end
     end
   ensure
     if File.directory?(worktree)
-      sh("git -C #{repo_root.shellescape} worktree remove --force #{worktree.shellescape}")
+      UI.message("Cleaning up the build worktree…")
+      run("git -C #{repo_root.shellescape} worktree remove --force #{worktree.shellescape}")
     end
   end
 
@@ -91,19 +101,33 @@ lane :bump do |options|
   version = options.fetch(:version)
   build   = Integer(options.fetch(:build))
   UI.user_error!("version '#{version}' is not in X.Y.Z form") unless Zodl::Version.valid?(version)
-  repo_root = sh("git rev-parse --show-toplevel", log: false).strip
+  repo_root = run("git rev-parse --show-toplevel", must_succeed: true).strip
 
   Dir.chdir(repo_root) do
+    UI.message("Setting marketing version to #{version}…")
     set_marketing_version(version)
-    sh("agvtool new-version -all #{build}")
-    sh("git add secant.xcodeproj/project.pbxproj")
-    sh("git commit -m #{"[MOB-1446] Bump to #{version} (#{build})".shellescape}")
+    UI.message("Setting build number to #{build}…")
+    run("agvtool new-version -all #{build}", must_succeed: true)
+    UI.message("Committing the version bump…")
+    run("git add secant.xcodeproj/project.pbxproj", must_succeed: true)
+    run("git commit -m #{"[MOB-1446] Bump to #{version} (#{build})".shellescape}", must_succeed: true)
   end
 
   UI.success("Bumped to #{version} (#{build}) and committed.")
 end
 
 # --- helpers -------------------------------------------------------------
+
+# Runs a shell command WITHOUT creating a fastlane "shell command" step (those
+# are unlabelled and noisy). Returns captured stdout. With must_succeed:, a
+# non-zero exit aborts the lane with the command's stderr.
+def run(command, must_succeed: false)
+  stdout, stderr, status = Open3.capture3("/bin/sh", "-c", command)
+  if must_succeed && !status.success?
+    UI.user_error!("Command failed (exit #{status.exitstatus}): #{command}\n#{stderr.strip}")
+  end
+  stdout
+end
 
 def truthy(value)
   ["1", "true", "yes", true].include?(value)
@@ -137,10 +161,7 @@ end
 # MARKETING_VERSION as committed at `sha`. All app targets share one value, so
 # the first MARKETING_VERSION line in the project at that commit is correct.
 def marketing_version_at(repo_root, sha)
-  line = sh(
-    "git -C #{repo_root.shellescape} show #{sha}:secant.xcodeproj/project.pbxproj | grep -m1 'MARKETING_VERSION ='",
-    log: false
-  )
+  line = run("git -C #{repo_root.shellescape} show #{sha}:secant.xcodeproj/project.pbxproj | grep -m1 'MARKETING_VERSION ='")
   line[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
 end
 
@@ -157,43 +178,42 @@ end
 # origin/<ref>, so a release branch can be built without checking it out locally.
 def resolve_sha(repo_root, ref)
   ["#{ref}", "origin/#{ref}"].each do |candidate|
-    out = sh("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{candidate.shellescape}^{commit} || true", log: false).strip
+    out = run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{candidate.shellescape}^{commit}").strip
     return out unless out.empty?
   end
   UI.user_error!("Could not resolve ref '#{ref}' (tried '#{ref}' and 'origin/#{ref}'). Fetch or push it first.")
 end
 
 def ref_on_origin?(repo_root, sha)
-  !sh("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null", log: false).strip.empty?
-rescue StandardError
-  false
+  !run("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null").strip.empty?
 end
 
 def dirty_tree?(repo_root)
-  !sh("git -C #{repo_root.shellescape} status --porcelain", log: false).strip.empty?
+  !run("git -C #{repo_root.shellescape} status --porcelain").strip.empty?
 end
 
-def partner_keys_ok?(repo_root)
+# Runs the archive-time PartnerKeys validator and returns nil when it passes, or
+# the validator's specific complaint (e.g. "PartnerKeys.plist: missing key 'x'").
+def partner_keys_error(repo_root)
   script = File.join(repo_root, "Scripts/validate-partner-keys.sh")
-  sh("ACTION=install SRCROOT=#{repo_root.shellescape} bash #{script.shellescape}", log: false)
-  true
-rescue StandardError
-  false
+  stdout, _stderr, status = Open3.capture3({ "ACTION" => "install", "SRCROOT" => repo_root }, "bash", script)
+  return nil if status.success?
+
+  detail = stdout.lines.map(&:strip).find { |l| l.start_with?("error:") }
+  detail ? detail.sub(/^error:\s*/, "") : "PartnerKeys.plist is missing or invalid"
 end
 
 def xcode_ok?(repo_root)
   pinned = File.read(File.join(repo_root, ".xcode-version")).strip
-  current = sh("xcodebuild -version", log: false)[/Xcode (\S+)/, 1]
+  current = run("xcodebuild -version")[/Xcode (\S+)/, 1]
   current == pinned
 rescue StandardError
   false
 end
 
 def signing_identity_ok?
-  out = sh("security find-identity -v -p codesigning", log: false)
+  out = run("security find-identity -v -p codesigning")
   out.include?("Apple Distribution") || out.include?("iPhone Distribution")
-rescue StandardError
-  false
 end
 
 def run_unit_tests
