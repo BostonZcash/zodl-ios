@@ -14,6 +14,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## 3.7.0 build 1
 
+### Fixed
+- When a send fails because the wallet's chain state changed between tapping review and confirm (due to syncing catching up, a reorg, or the app resuming from background), a clear actionable message is now shown instead of the generic error copy.
+
 ### Changed
 - Sending, swapping, shielding, and Flexa payments now broadcast your transaction to multiple servers at once when you're in Automatic server mode (Manual mode still uses the server you selected), so a single slow or unreachable server is less likely to make a submission fail. If a server times out before confirming, you now see a clear message that your transaction may still have been broadcast, rather than an outright failure.
 
