@@ -177,14 +177,16 @@ def set_marketing_version(version)
   File.write(path, content)
 end
 
-# Resolves a branch/tag/commit to a commit SHA, trying the ref as given and then
-# origin/<ref>, so a release branch can be built without checking it out locally.
+# Resolves a branch/tag/commit to a commit SHA. Prefers origin/<ref> so a release
+# built from a branch name uses the freshly-fetched origin tip, not a possibly-stale
+# local branch of the same name; falls back to the bare ref, which is what resolves
+# tags and commit SHAs (origin/<tag> and origin/<sha> don't exist).
 def resolve_sha(repo_root, ref)
-  ["#{ref}", "origin/#{ref}"].each do |candidate|
+  ["origin/#{ref}", "#{ref}"].each do |candidate|
     out = run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{candidate.shellescape}^{commit}").strip
     return out unless out.empty?
   end
-  UI.user_error!("Could not resolve ref '#{ref}' (tried '#{ref}' and 'origin/#{ref}'). Fetch or push it first.")
+  UI.user_error!("Could not resolve ref '#{ref}' (tried 'origin/#{ref}' and '#{ref}'). Fetch or push it first.")
 end
 
 def ref_on_origin?(repo_root, sha)
