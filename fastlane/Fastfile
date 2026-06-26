@@ -37,7 +37,9 @@ lane :release do |options|
   variants = Zodl::Variants.expand(options.fetch(:variant))
 
   UI.message("Fetching latest refs from origin…")
-  run("git -C #{repo_root.shellescape} fetch --quiet --tags origin")
+  # Fail closed: the preflight reconciles against origin, so a failed fetch must abort
+  # rather than silently leave the checks running on stale local refs.
+  run("git -C #{repo_root.shellescape} fetch --quiet --tags origin", must_succeed: true)
   sha = resolve_sha(repo_root, ref)
   branch_version = Zodl::Version.from_branch(ref)
   project_version = marketing_version_at(repo_root, sha)
