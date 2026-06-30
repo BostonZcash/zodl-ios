@@ -82,6 +82,14 @@ struct SomeCoordFlow {
 - **Features vs UI Components:** Features are standalone screens/flows; UI Components are reusable building blocks shared across features
 - **Commit messages:** `[#<issue_number>] <descriptive title>`
 
+## Changelog
+
+Every implemented task — any feature, fix, or other user-facing change — MUST be recorded in `CHANGELOG.md` as part of the same change. Treat the changelog entry as part of "done": do not consider an implementation complete until its entry exists, and add it automatically without waiting to be asked.
+
+- Add the entry under the `## [Unreleased]` section (create that section if it isn't there), in the matching `### Added` / `### Changed` / `### Fixed` / `### Removed` subsection.
+- Prefix every line with the issue identifier in brackets, e.g. `- [MOB-1321] Short, user-facing description of the change.`
+- Write from the user's perspective — what changed for them and why it matters — not the implementation detail. The changelog focuses on user-impacting modifications.
+
 ## Key Files
 
 - `SecantApp.swift` - `@main` entry point
