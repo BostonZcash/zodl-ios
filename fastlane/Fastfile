@@ -36,6 +36,14 @@ TEAM_ID = "RLPRR8CPQG"               # Apple Developer team (matches DEVELOPMENT
 # here so the two invocations can't drift apart.
 SKIP_VALIDATION_XCARGS = "-skipPackagePluginValidation -skipMacroValidation"
 
+# Render xcodebuild output with xcbeautify rather than xcpretty. Most of this app's
+# tests are Swift Testing (@Test / #expect); xcpretty predates that format and
+# silently swallows its output, so a failing Swift Testing test would scroll past
+# with nothing printed. fastlane only auto-selects xcbeautify when it's installed
+# (otherwise it falls back to xcpretty), so pin it here and treat it as a build
+# prerequisite: `brew install xcbeautify`.
+XCODEBUILD_FORMATTER = "xcbeautify"
+
 # Don't auto-generate fastlane/README.md on every run; it is maintained by hand.
 skip_docs
 
@@ -307,6 +315,7 @@ def run_unit_tests(paths)
     derived_data_path: paths[:derived_data],
     code_coverage: false,
     clean: false,
+    xcodebuild_formatter: XCODEBUILD_FORMATTER,
     xcargs: "CODE_SIGNING_ALLOWED=NO #{SKIP_VALIDATION_XCARGS}"
   )
 end
@@ -366,6 +375,7 @@ def build_and_upload(variant, version, build, api_key, paths, auth_xcargs)
       output_name: "#{variant}-#{version}-#{build}.ipa",
       clean: true,
       derived_data_path: paths[:derived_data],
+      xcodebuild_formatter: XCODEBUILD_FORMATTER,
       xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates #{auth_xcargs} #{SKIP_VALIDATION_XCARGS}",
       export_options: {
         signingStyle: "manual",
