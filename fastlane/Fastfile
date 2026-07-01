@@ -316,6 +316,12 @@ def run_unit_tests(paths)
     code_coverage: false,
     clean: false,
     xcodebuild_formatter: XCODEBUILD_FORMATTER,
+    # Emit no scan reports. Nothing consumes them (CI runs tests on its own
+    # xcresult path, and the release lane never reads them), and HTML reports
+    # require xcpretty — which we intentionally don't use — so scan's default
+    # "html,junit" makes xcbeautify warn about the unsupported 'html' type.
+    # Pass/fail comes from the test run itself, not from these files.
+    output_types: "",
     xcargs: "CODE_SIGNING_ALLOWED=NO #{SKIP_VALIDATION_XCARGS}"
   )
 end
