@@ -83,7 +83,21 @@ struct Near1Click {
             "nep141:sui-c1b81ecaf27933252d31a963bc5e9458f13c18ce.omft.near",   // USDC@sui
             "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", // USDC@base
             "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", // USDC@near
-            "nep141:wrap.near" // wNEAR@near
+            "nep141:wrap.near", // wNEAR@near
+            "nep245:v2_1.omni.hot.tg:137_3hpYoaLtt8MP1Z2GH1U473DMRKgr", // USDT@pol
+            "nep141:eth-0x2260fac5e5542a773aa44fbcfedf7c193bc2c599.omft.near", // WBTC@eth
+            "nep141:nbtc.bridge.near", // BTC@near
+            "nep141:eth-0x6b175474e89094c44da98b954eedeac495271d0f.omft.near", // DAI@eth
+            "nep141:ltc.omft.near", // LTC@ltc
+            "nep141:tron.omft.near", // TRX@tron
+            "nep141:usdt.tether-token.near", // USDT@near
+            "nep245:v2_1.omni.hot.tg:56_11111111111111111111", // BNB@bsc
+            "nep245:v2_1.omni.hot.tg:43114_11111111111111111111", // AVAX@avax
+            "nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near", // USDT0@arb
+            "nep141:arb.omft.near", // ETH@arb
+            "nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L", // USDC@pol
+            "nep141:xrp.omft.near", // XRP@xrp
+            "nep141:base.omft.near" // ETH@base
         ]
     }
     
