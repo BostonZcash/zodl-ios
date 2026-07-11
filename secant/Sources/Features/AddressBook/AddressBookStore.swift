@@ -167,7 +167,10 @@ struct AddressBook {
                 state.nameAlreadyExists = false
                 state.addressAlreadyExists = false
                 if !state.swapAssets.isEmpty {
-                    let uniqueByChain = Dictionary(grouping: state.swapAssets, by: { $0.chain })
+                    // Zcash is recognized automatically from the address; never offer it as a
+                    // manually-pickable contact chain (else any string could be saved as zcash).
+                    let swapChains = state.swapAssets.filter { $0.chain.lowercased() != "zec" }
+                    let uniqueByChain = Dictionary(grouping: swapChains, by: { $0.chain })
                         .compactMapValues { $0.first }
                         .values
                         .sorted(by: { $0.chainName < $1.chainName })

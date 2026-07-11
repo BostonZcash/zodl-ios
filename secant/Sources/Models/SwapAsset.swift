@@ -106,8 +106,10 @@ extension SwapAsset {
     /// list hasn't loaded yet. Mirrors the chains behind the curated offering
     /// (`Near1Click.Constants.supportedAssetIds`, MOB-1472) so creating a contact
     /// only offers chains you can actually swap. Keep in sync with that list.
+    /// Deliberately excludes "zec": Zcash is recognized automatically from the
+    /// address, not a manually-pickable contact chain.
     static func curatedChains() -> [SwapAsset] {
-        ["arb", "base", "bsc", "btc", "eth", "sol", "sui", "tron", "zec"].map {
+        ["arb", "base", "bsc", "btc", "eth", "sol", "sui", "tron"].map {
             SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0)
         }
     }
