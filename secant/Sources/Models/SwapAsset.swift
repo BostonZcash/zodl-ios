@@ -109,7 +109,7 @@ extension SwapAsset {
     /// Deliberately excludes "zec": Zcash is recognized automatically from the
     /// address, not a manually-pickable contact chain.
     static func curatedChains() -> [SwapAsset] {
-        ["arb", "base", "bsc", "btc", "eth", "sol", "sui", "tron"].map {
+        ["arb", "base", "bsc", "btc", "eth", "near", "sol", "sui", "tron"].map {
             SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0)
         }
     }

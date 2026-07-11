@@ -81,7 +81,9 @@ struct Near1Click {
             "nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g",         // USDT@bsc
             "nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near",  // USDT@tron
             "nep141:sui-c1b81ecaf27933252d31a963bc5e9458f13c18ce.omft.near",   // USDC@sui
-            "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near" // USDC@base
+            "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", // USDC@base
+            "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", // USDC@near
+            "nep141:wrap.near" // wNEAR@near
         ]
     }
     

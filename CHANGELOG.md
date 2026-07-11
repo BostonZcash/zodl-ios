@@ -7,7 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Changed
-- [MOB-1472] The assets you can swap are now a curated set — BTC, ETH, SOL, and USDC/USDT across major chains, plus swapping to ZEC — instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
+- [MOB-1472] The assets you can swap are now a curated set — BTC, ETH, SOL, NEAR, and USDC/USDT across major chains, plus swapping to ZEC — instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
 
 ## 3.7.2 build 1
 
