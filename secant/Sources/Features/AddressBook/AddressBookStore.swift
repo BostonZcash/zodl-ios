@@ -173,7 +173,7 @@ struct AddressBook {
                         .sorted(by: { $0.chainName < $1.chainName })
                     state.chains = IdentifiedArray(uniqueElements: uniqueByChain)
                 } else {
-                    state.chains = IdentifiedArray(uniqueElements: SwapAsset.hardcodedChains())
+                    state.chains = IdentifiedArray(uniqueElements: SwapAsset.curatedChains())
                 }
                 if let editId = state.editId {
                     return .concatenate(
@@ -286,7 +286,11 @@ struct AddressBook {
                 state.isNameFocused = true
                 state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network().networkType)
                 state.isEditingContactWithChain = record.chainId != nil
+                // Resolve the contact's chain from the curated picker list; if it's a
+                // chain no longer offered (MOB-1472), keep the contact's own chain so
+                // editing/saving an existing (e.g. Litecoin) contact doesn't wipe it.
                 state.selectedChain = state.chains.first { $0.chain == record.chainId }
+                    ?? record.chainId.map { SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0) }
                 return .none
 
             case .saveButtonTapped:
