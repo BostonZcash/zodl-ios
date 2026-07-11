@@ -70,7 +70,9 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
     }
 
     var tokenIcon: Image {
-        guard let icon = UIImage(named: token.lowercased()) else {
+        // USDT0 is Tether's omnichain USDT — reuse the USDT logo (no dedicated art).
+        let iconName = token.lowercased() == "usdt0" ? "usdt" : token.lowercased()
+        guard let icon = UIImage(named: iconName) else {
             return Asset.Assets.Tickers.none.image
         }
 
