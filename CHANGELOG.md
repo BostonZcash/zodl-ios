@@ -6,6 +6,8 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+## 3.7.3 build 1 (20026-07-12)
+
 ### Changed
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
 
