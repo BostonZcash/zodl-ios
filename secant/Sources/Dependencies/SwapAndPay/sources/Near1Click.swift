@@ -216,6 +216,32 @@ struct Near1Click {
         assets.filter { Constants.supportedAssetIds.contains($0.assetId) }
     }
 
+    /// Maps a 1Click `status` string to `SwapDetails.Status`. Pure so it can be
+    /// unit-tested independently of the networking in the `status` closure.
+    static func swapStatus(from statusStr: String, isSwapToZec: Bool) -> SwapDetails.Status {
+        if isSwapToZec {
+            switch statusStr {
+            case SwapConstants.pendingDeposit: .pendingDeposit
+            case SwapConstants.refunded: .refunded
+            case SwapConstants.success: .success
+            case SwapConstants.failed: .failed
+            case SwapConstants.incompleteDeposit: .incompleteDeposit
+            case SwapConstants.processing: .processing
+            default: .pending
+            }
+        } else {
+            switch statusStr {
+            case SwapConstants.incompleteDeposit: .incompleteDeposit
+            case SwapConstants.pendingDeposit: .pending
+            case SwapConstants.refunded: .refunded
+            case SwapConstants.success: .success
+            case SwapConstants.failed: .failed
+            case SwapConstants.processing: .processing
+            default: .pending
+            }
+        }
+    }
+
     /// Fetches and parses the provider's full token list — every asset, deduped,
     /// before curation. `swapAssets` returns `curated(...)` of this (the offering);
     /// `swapAssetsCatalog` returns this full list (for resolving historical assets).
@@ -388,27 +414,7 @@ extension Near1Click {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `status` parameter.")
             }
             
-            var status: SwapDetails.Status
-            
-            if isSwapToZec {
-                status = switch statusStr {
-                case SwapConstants.pendingDeposit: .pendingDeposit
-                case SwapConstants.refunded: .refunded
-                case SwapConstants.success: .success
-                case SwapConstants.failed: .failed
-                case SwapConstants.incompleteDeposit: .incompleteDeposit
-                case SwapConstants.processing: .processing
-                default: .pending
-                }
-            } else {
-                status = switch statusStr {
-                case SwapConstants.incompleteDeposit: .incompleteDeposit
-                case SwapConstants.pendingDeposit: .pending
-                case SwapConstants.refunded: .refunded
-                case SwapConstants.success: .success
-                default: .pending
-                }
-            }
+            var status = Near1Click.swapStatus(from: statusStr, isSwapToZec: isSwapToZec)
             
             guard let quoteResponseDict = jsonObject[Constants.quoteResponse] as? [String: Any],
                   let quoteRequestDict = quoteResponseDict[Constants.quoteRequest] as? [String: Any] else {

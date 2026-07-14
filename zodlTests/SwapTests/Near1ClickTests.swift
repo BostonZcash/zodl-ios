@@ -65,6 +65,36 @@ import Foundation
         }
     }
 
+    // MARK: - swapStatus(from:isSwapToZec:) 1Click status mapping (PRO-325)
+
+    @Test func failedMapsToFailedInBothDirections() {
+        #expect(Near1Click.swapStatus(from: SwapConstants.failed, isSwapToZec: false) == .failed)
+        #expect(Near1Click.swapStatus(from: SwapConstants.failed, isSwapToZec: true) == .failed)
+    }
+
+    @Test func processingMapsToProcessingInBothDirections() {
+        #expect(Near1Click.swapStatus(from: SwapConstants.processing, isSwapToZec: false) == .processing)
+        #expect(Near1Click.swapStatus(from: SwapConstants.processing, isSwapToZec: true) == .processing)
+    }
+
+    @Test func pendingDepositKeepsDirectionSpecificMapping() {
+        #expect(Near1Click.swapStatus(from: SwapConstants.pendingDeposit, isSwapToZec: false) == .pending)
+        #expect(Near1Click.swapStatus(from: SwapConstants.pendingDeposit, isSwapToZec: true) == .pendingDeposit)
+    }
+
+    @Test func sharedTerminalAndPartialStatusesMap() {
+        for isSwapToZec in [false, true] {
+            #expect(Near1Click.swapStatus(from: SwapConstants.refunded, isSwapToZec: isSwapToZec) == .refunded)
+            #expect(Near1Click.swapStatus(from: SwapConstants.success, isSwapToZec: isSwapToZec) == .success)
+            #expect(Near1Click.swapStatus(from: SwapConstants.incompleteDeposit, isSwapToZec: isSwapToZec) == .incompleteDeposit)
+        }
+    }
+
+    @Test func unknownStatusFallsBackToPending() {
+        #expect(Near1Click.swapStatus(from: "KNOWN_DEPOSIT_TX", isSwapToZec: false) == .pending)
+        #expect(Near1Click.swapStatus(from: "KNOWN_DEPOSIT_TX", isSwapToZec: true) == .pending)
+    }
+
     // MARK: - curated(_:) source-level allow-list (MOB-1472)
 
     @Test func curatedKeepsSupportedAndDropsRest() {
