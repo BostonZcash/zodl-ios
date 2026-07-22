@@ -516,6 +516,28 @@ struct Root {
 }
 
 extension Root {
+    enum WalletDatabaseReconcileError: Error {
+        case wipeUnavailable
+    }
+
+    /// After a successful `prepare`, verifies the opened wallet DB actually belongs to
+    /// `seedBytes`. If not (stale DB from another wallet, e.g. restored device backup),
+    /// wipes the SDK database and re-prepares so the SDK creates this seed's account.
+    /// Returns `true` when a heal (wipe + re-prepare) happened.
+    static func reconcileWalletDatabaseWithSeed(
+        seedBytes: [UInt8],
+        isSeedRelevant: ([UInt8]) async throws -> Bool,
+        wipe: () async throws -> Void,
+        reprepare: () async throws -> Void
+    ) async throws -> Bool {
+        guard try await isSeedRelevant(seedBytes) else {
+            try await wipe()
+            try await reprepare()
+            return true
+        }
+        return false
+    }
+
     static func walletInitializationState(
         databaseFiles: DatabaseFilesClient,
         walletStorage: WalletStorageClient,
@@ -662,7 +684,15 @@ extension AlertState where Action == Root.Action {
             TextState(String(localizable: .rootExistingWalletMessage))
         }
     }
-    
+
+    static func staleWalletDatabaseHealed() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .rootInitializationAlertStaleWalletDatabaseHealedTitle))
+        } message: {
+            TextState(String(localizable: .rootInitializationAlertStaleWalletDatabaseHealedMessage))
+        }
+    }
+
     static func serviceUnavailable() -> AlertState {
         AlertState {
             TextState(String(localizable: .generalAlertCaution))

@@ -5,6 +5,7 @@
 //  Created by Lukáš Korba on 01.12.2022.
 //
 
+import Combine
 import ComposableArchitecture
 import Foundation
 @preconcurrency import ZcashLightClientKit
@@ -26,6 +27,7 @@ extension Root {
         case checkWalletInitialization
         case checkWalletConfig
         case initializeSDK(WalletInitMode)
+        case staleWalletDatabaseHealed
         case initialSetups
         case initializationFailed(ZcashError)
         case initializationSuccessfullyDone
@@ -339,6 +341,29 @@ extension Root {
                                 String(localizable: .accountsZashi).lowercased()
                             )
 
+                            let healed = try await Root.reconcileWalletDatabaseWithSeed(
+                                seedBytes: seedBytes,
+                                isSeedRelevant: { try await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount($0) },
+                                wipe: {
+                                    guard let wipePublisher = sdkSynchronizer.wipe() else {
+                                        throw Root.WalletDatabaseReconcileError.wipeUnavailable
+                                    }
+                                    for try await _ in wipePublisher.values { }
+                                },
+                                reprepare: {
+                                    try await sdkSynchronizer.prepareWith(
+                                        seedBytes,
+                                        birthday,
+                                        .restoreWallet,
+                                        String(localizable: .accountsZashi),
+                                        String(localizable: .accountsZashi).lowercased()
+                                    )
+                                }
+                            )
+                            if healed {
+                                await send(.initialization(.staleWalletDatabaseHealed))
+                            }
+
                             await send(.fetchTransactionsForTheSelectedAccount)
                             /// The TCA spins an async Task in `fetchTransactionsForTheSelectedAccount` and it's needed to run
                             /// before next code here therefore Task is asleep for 0.01s. The purpose is also to not block the main thread
@@ -389,7 +414,14 @@ extension Root {
                 } catch {
                     return .send(.initialization(.initializationFailed(error.toZcashError())))
                 }
-                
+
+            case .initialization(.staleWalletDatabaseHealed):
+                state.isRestoringWallet = true
+                userDefaults.setValue(true, Constants.udIsRestoringWallet)
+                state.$walletStatus.withLock { $0 = .restoring }
+                state.alert = AlertState.staleWalletDatabaseHealed()
+                return .none
+
             case .initialization(.initializationSuccessfullyDone):
                 return .merge(
                     .send(.initialization(.registerForSynchronizersUpdate)),

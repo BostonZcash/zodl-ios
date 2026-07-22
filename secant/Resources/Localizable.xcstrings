@@ -11530,6 +11530,28 @@
         }
       }
     },
+    "root.initialization.alert.staleWalletDatabaseHealed.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device contained wallet data belonging to a different recovery phrase. ZODL removed it and is re-syncing the wallet for your current recovery phrase. If you expected funds from another wallet, restore that wallet's recovery phrase."
+          }
+        }
+      }
+    },
+    "root.initialization.alert.staleWalletDatabaseHealed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wallet data replaced"
+          }
+        }
+      }
+    },
     "root.initialization.alert.walletStateFailed.message" : {
       "extractionState" : "manual",
       "localizations" : {
