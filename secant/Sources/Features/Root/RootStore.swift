@@ -516,26 +516,116 @@ struct Root {
 }
 
 extension Root {
-    enum WalletDatabaseReconcileError: Error {
+    enum WalletDatabaseHealError: Error {
         case wipeUnavailable
+        case viewOnlyDatabase
+        case reprepareFailed(underlying: Error)
     }
 
-    /// After a successful `prepare`, verifies the opened wallet DB actually belongs to
-    /// `seedBytes`. If not (stale DB from another wallet, e.g. restored device backup),
-    /// wipes the SDK database and re-prepares so the SDK creates this seed's account.
-    /// Returns `true` when a heal (wipe + re-prepare) happened.
+    /// After a `prepare`, verifies the opened wallet DB actually belongs to `seedBytes`.
+    /// If not (stale DB from another wallet, e.g. restored device backup), clears this
+    /// device's previous-wallet scoped state, wipes the SDK database, and re-prepares so
+    /// the SDK creates this seed's account. Returns `true` when a heal (clear + wipe +
+    /// re-prepare) happened.
+    ///
+    /// - Parameters:
+    ///   - knownStale: `true` when the caller already knows the on-disk database predates
+    ///     this seed (the SDK's `prepare()` reported `.seedNotRelevant` during a
+    ///     seed-requiring migration). When `true`, the heal runs unconditionally and
+    ///     neither `isSeedRelevant` nor `hasSeedDerivedAccount` is probed.
+    ///   - isSeedRelevant: probes whether `seedBytes` is relevant to any derived account
+    ///     already in the database. Only consulted when `knownStale` is `false`.
+    ///   - hasSeedDerivedAccount: reports whether the database has at least one
+    ///     seed-derived account, as opposed to being populated exclusively by
+    ///     imported/view-only accounts, which cannot be recovered from any seed. Only
+    ///     consulted on the probe path, once the current seed has been found irrelevant.
+    ///   - clearDeviceScopedState: clears this device's previous-wallet scoped state
+    ///     (voting configuration/history, Flexa session, cached preferences, …) before the
+    ///     database itself is wiped.
+    /// - Throws: `WalletDatabaseHealError.viewOnlyDatabase` when every account in the
+    ///   database is imported/view-only; `WalletDatabaseHealError.reprepareFailed` when
+    ///   `wipe()` succeeds but `reprepare()` throws (the database is already gone at that
+    ///   point); any other error thrown by `isSeedRelevant`, `hasSeedDerivedAccount`, or
+    ///   `wipe` is rethrown as-is.
     static func reconcileWalletDatabaseWithSeed(
+        knownStale: Bool,
         seedBytes: [UInt8],
         isSeedRelevant: ([UInt8]) async throws -> Bool,
+        hasSeedDerivedAccount: () async throws -> Bool,
+        clearDeviceScopedState: () async -> Void,
         wipe: () async throws -> Void,
         reprepare: () async throws -> Void
     ) async throws -> Bool {
-        guard try await isSeedRelevant(seedBytes) else {
-            try await wipe()
-            try await reprepare()
-            return true
+        if !knownStale {
+            let seedIsRelevant = try await isSeedRelevant(seedBytes)
+            guard !seedIsRelevant else { return false }
+
+            guard try await hasSeedDerivedAccount() else {
+                throw WalletDatabaseHealError.viewOnlyDatabase
+            }
         }
-        return false
+
+        await clearDeviceScopedState()
+        try await wipe()
+
+        do {
+            try await reprepare()
+        } catch {
+            throw WalletDatabaseHealError.reprepareFailed(underlying: error)
+        }
+
+        return true
+    }
+
+    /// Clears device/global-scoped wallet state that must never leak from one wallet into
+    /// the next on the same device — voting configuration and history, the Flexa session,
+    /// cached preferences, and locally-cached read-transaction state. Shared by the full
+    /// `resetZashi` flow (`.resetZashiSDKSucceeded`) and by `reconcileWalletDatabaseWithSeed`,
+    /// so a healed stale database (e.g. from a restored device backup) starts out just as
+    /// clean as an explicit reset.
+    ///
+    /// Synchronous on purpose: every call site is a plain (non-`.run`) `Reduce` case, and
+    /// none of the underlying operations are actually asynchronous.
+    static func clearDeviceScopedWalletState(
+        userDefaults: UserDefaultsClient,
+        flexaHandler: FlexaHandlerClient,
+        userStoredPreferences: UserPreferencesStorageClient,
+        readTransactionsStorage: ReadTransactionsStorageClient
+    ) {
+        userDefaults.remove(Constants.udIsRestoringWallet)
+        userDefaults.remove(Constants.udIsResyncingWallet)
+        userDefaults.remove(Constants.udLeavesScreenOpen)
+        userDefaults.remove(.hasSeenHowToVote)
+        userDefaults.remove(.hasSeenHowToVoteKeystone)
+        // Drop the user-supplied voting chain override and the saved
+        // custom-chain list. Without this wipe, the next wallet on
+        // this device would silently resolve voting through whatever
+        // third-party host the previous owner had pointed at.
+        userDefaults.remove(.votingConfigOverrideURL)
+        userDefaults.remove(.votingCustomChains)
+        // Delete the voting SQLite DB so per-round share delegation
+        // history, vote records, and stored TX hashes from the
+        // previous wallet don't leak across the reset boundary. The
+        // file is recreated empty on the next voting flow entry.
+        if let documents = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)
+            .first {
+            let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
+            try? FileManager.default.removeItem(at: votingDbURL)
+        }
+        // Belt-and-suspenders: voting drafts and vote records live in
+        // the encrypted per-account `votingMetadata` file now, which
+        // resetAccount() below removes. This sweep catches any stale
+        // plaintext entries from the previous UserDefaults-based
+        // storage that hung around on internal dev devices.
+        let standardDefaults = UserDefaults.standard
+        for key in standardDefaults.dictionaryRepresentation().keys
+            where key.hasPrefix("voting.voteRecord.") || key.hasPrefix("voting.draftVotes.") {
+            standardDefaults.removeObject(forKey: key)
+        }
+        flexaHandler.signOut()
+        userStoredPreferences.removeAll()
+        try? readTransactionsStorage.resetZashi()
     }
 
     static func walletInitializationState(

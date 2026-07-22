@@ -59,14 +59,13 @@ extension SDKSynchronizerClient: DependencyKey {
             exchangeRateUSDStream: { synchronizer.exchangeRateUSDStream },
             latestState: { synchronizer.latestState },
             prepareWith: { seedBytes, walletBirtday, walletMode, name, keySource in
-                let result = try await synchronizer.prepare(
+                return try await synchronizer.prepare(
                     with: seedBytes,
                     walletBirthday: walletBirtday,
                     for: walletMode,
                     name: name,
                     keySource: keySource
                 )
-                if result != .success { throw ZcashError.synchronizerNotPrepared }
             },
             start: { retry in try await synchronizer.start(retry: retry) },
             stop: { synchronizer.stop() },
