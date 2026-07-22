@@ -142,8 +142,19 @@ struct AddKeystoneHWWalletCoordFlowView: View {
             }
             .padding(.bottom, 12)
 
-            ZashiButton(String(localizable: .keystoneAddHWWalletContactSupport)) {
+            ZashiButton(
+                String(localizable: .keystoneAddHWWalletContactSupport),
+                type: .secondary
+            ) {
                 store.send(.contactSupportTapped)
+            }
+            .padding(.bottom, 12)
+
+            ZashiButton(
+                String(localizable: .generalCancel),
+                type: .ghost
+            ) {
+                store.send(.cancelFailureTapped)
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }

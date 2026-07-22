@@ -44,9 +44,9 @@ struct AddKeystoneHWWalletCoordFlow {
     enum Action: BindableAction {
         case addKeystoneHWWallet(AddKeystoneHWWallet.Action)
         case binding(BindingAction<AddKeystoneHWWalletCoordFlow.State>)
+        case cancelFailureTapped
         case closeHelpSheetTapped
         case contactSupportTapped
-        case dismissFailureSheet
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
         case shareFinished
@@ -73,9 +73,12 @@ struct AddKeystoneHWWalletCoordFlow {
                 state.isHelpSheetPresented = false
                 return .none
 
-            case .dismissFailureSheet:
+            case .cancelFailureTapped:
+                // Close the sheet and leave the whole add-Keystone flow. Root
+                // observes `backToHomeTapped` and tears the flow down (path = nil),
+                // so the user is never stranded on the connection screen.
                 state.isFailureSheetPresented = false
-                return .none
+                return .send(.addKeystoneHWWallet(.backToHomeTapped))
 
             case .contactSupportTapped:
                 state.isFailureSheetPresented = false
