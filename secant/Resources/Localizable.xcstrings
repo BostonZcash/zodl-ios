@@ -16957,13 +16957,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The refunded amount will be returned to your wallet in the source currency - USDC on NEAR. Please enter a valid address to avoid loss of funds."
+            "value" : "The refunded amount will be returned to your wallet in the source currency on the same network. Please enter a valid address to avoid loss of funds."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El monto reembolsado será devuelto a tu wallet en la moneda de origen - USDC en NEAR. Ingresa una dirección válida para evitar la pérdida de fondos."
+            "value" : "El monto reembolsado será devuelto a tu wallet en la moneda de origen en la misma red. Ingresa una dirección válida para evitar la pérdida de fondos."
           }
         }
       }
