@@ -135,16 +135,8 @@ struct AddKeystoneHWWalletCoordFlowView: View {
                 .padding(.bottom, 32)
 
             ZashiButton(
-                String(localizable: .keystoneAddHWWalletTryAgain),
-                type: .destructive2
-            ) {
-                store.send(.tryAgainTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(
                 String(localizable: .keystoneAddHWWalletContactSupport),
-                type: .secondary
+                type: .destructive2
             ) {
                 store.send(.contactSupportTapped)
             }

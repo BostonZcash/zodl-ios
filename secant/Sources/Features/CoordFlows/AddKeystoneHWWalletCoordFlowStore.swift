@@ -50,7 +50,6 @@ struct AddKeystoneHWWalletCoordFlow {
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
         case shareFinished
-        case tryAgainTapped
     }
 
     @Dependency(\.audioServices) var audioServices

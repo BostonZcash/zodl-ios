@@ -49,20 +49,7 @@ extension AddKeystoneHWWalletCoordFlow {
                 state.isFailureSheetPresented = true
                 return .none
 
-            case .tryAgainTapped:
-                state.isFailureSheetPresented = false
-                for id in state.path.ids {
-                    if case .keystoneDeviceReady = state.path[id: id] {
-                        let birthday = state.birthday
-                        return .run { send in
-                            try? await Task.sleep(for: .seconds(0.3))
-                            await send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(birthday)))))
-                        }
-                    }
-                }
-                return .none
-
-            case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
+case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
                 state.path.append(.estimateBirthdaysDate(birthdayState))
