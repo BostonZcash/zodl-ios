@@ -65,7 +65,7 @@ struct AddKeystoneHWWallet {
 
     enum Action: BindableAction, Equatable {
         case accountImported(AccountUUID)
-        case accountImportFailed
+        case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
         case backToHomeTapped
@@ -138,18 +138,24 @@ struct AddKeystoneHWWallet {
                             await send(.accountImported(uuid))
                         }
                     } catch {
-                        // TODO: error handling
-                        await send(.accountImportFailed)
+                        // Surface only the SDK error's localizedDescription (a static
+                        // code + message, e.g. "ZRUST0067: …"); the raw Rust error
+                        // string is never included, so no UFVK/seed data can leak.
+                        await send(.accountImportFailed(error.localizedDescription))
                     }
                 }
-                
+
             case .accountImported(let uuid):
                 return .run { send in
-                    let walletAccounts = try await sdkSynchronizer.walletAccounts()
-                    await send(.loadedWalletAccounts(walletAccounts, uuid))
-                    await send(.accountImportSucceeded)
+                    do {
+                        let walletAccounts = try await sdkSynchronizer.walletAccounts()
+                        await send(.loadedWalletAccounts(walletAccounts, uuid))
+                        await send(.accountImportSucceeded)
+                    } catch {
+                        await send(.accountImportFailed(error.localizedDescription))
+                    }
                 }
-                
+
             case .accountImportFailed:
                 return .none
                 

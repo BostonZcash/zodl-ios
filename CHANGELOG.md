@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Fixed
+- [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Try Again and Contact Support options) instead of silently doing nothing. The support message includes a safe error identifier and never exposes any wallet keys.
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.
 
 ## 3.7.3 build 1 (20026-07-12)

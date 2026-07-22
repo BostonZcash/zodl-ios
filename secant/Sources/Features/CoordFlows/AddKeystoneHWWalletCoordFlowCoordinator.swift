@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import MessageUI
 
 extension AddKeystoneHWWalletCoordFlow {
     func coordinatorReduce() -> Reduce<AddKeystoneHWWalletCoordFlow.State, AddKeystoneHWWalletCoordFlow.Action> {
@@ -39,6 +40,26 @@ extension AddKeystoneHWWalletCoordFlow {
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))):
                 state.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
+                return .none
+
+            case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed(let errMsg)))):
+                state.errMsg = errMsg
+                // TCA Store is @MainActor; reducer body always runs on main.
+                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.isFailureSheetPresented = true
+                return .none
+
+            case .tryAgainTapped:
+                state.isFailureSheetPresented = false
+                for id in state.path.ids {
+                    if case .keystoneDeviceReady = state.path[id: id] {
+                        let birthday = state.birthday
+                        return .run { send in
+                            try? await Task.sleep(for: .seconds(0.3))
+                            await send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(birthday)))))
+                        }
+                    }
+                }
                 return .none
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
