@@ -62,14 +62,17 @@ extension Root.State: @retroactive Equatable {
     /// `setUserDefaultsBools`) or a benign no-op, so the whole effect — including the
     /// `.initializationSuccessfullyDone` fan-out (SmartBanner priority evaluation, contacts,
     /// user metadata, the battery-state subscription, …) — runs to completion without ever
-    /// touching an unimplemented dependency closure.
+    /// touching an unimplemented dependency closure. When `reprepareError` is non-nil, the
+    /// second (re-prepare, `.restoreWallet`-mode) `prepareWith` call throws it instead of
+    /// succeeding, for exercising the `WalletDatabaseHealError.reprepareFailed` recovery route.
     private func makeStore(
         calls: LockIsolated<[String]>,
         removedUserDefaultsKeys: LockIsolated<[String]>,
         setUserDefaultsBools: LockIsolated<[String: Bool]>,
         firstPrepareResult: Initializer.InitializationResult,
         isSeedRelevant: Bool,
-        walletAccountsResult: [WalletAccount] = [RootInitializeSDKHealTests.seedDerivedAccount]
+        walletAccountsResult: [WalletAccount] = [RootInitializeSDKHealTests.seedDerivedAccount],
+        reprepareError: Error? = nil
     ) -> TestStore<Root.State, Root.Action> {
         let store = TestStore(
             initialState: Root.State(
@@ -93,6 +96,13 @@ extension Root.State: @retroactive Equatable {
             )
 
             $0.mnemonic = .noOp
+
+            // Only reached by the F5 recovery route (the `reprepareFailed` catch re-enters
+            // `.checkWalletInitialization`, which calls `Root.walletInitializationState`).
+            // `DatabaseFilesClient` is `@DependencyClient`-generated, so leaving it
+            // unoverridden would make `areDbFilesPresentFor` an "unimplemented" stub that
+            // fails the test the moment that route is exercised.
+            $0.databaseFiles = .noOp
 
             let seededWallet = RootInitializeSDKHealTests.seededWallet
             $0.walletStorage = .noOp
@@ -126,7 +136,13 @@ extension Root.State: @retroactive Equatable {
                     case .existingWallet: modeLabel = "existingWallet"
                     }
                     calls.withValue { $0.append("prepareWith(\(modeLabel))") }
-                    return walletMode == .restoreWallet ? .success : firstPrepareResult
+                    if walletMode == .restoreWallet {
+                        if let reprepareError {
+                            throw reprepareError
+                        }
+                        return .success
+                    }
+                    return firstPrepareResult
                 },
                 getAllTransactions: { _ in [] },
                 wipe: {
@@ -319,4 +335,54 @@ extension Root.State: @retroactive Equatable {
 
         await drain(store)
     }
+
+    // MARK: - Scenario 5: re-prepare failure after a successful wipe (F5)
+
+    /// The heal's `wipe()` can succeed while the follow-up `reprepare()` throws — the stale
+    /// database is already gone at that point, so a hard `initializationFailed` alert (which
+    /// only ever recovers via app relaunch) would leave the user at a dead end. `initializeSDK`
+    /// catches `Root.WalletDatabaseHealError.reprepareFailed` specifically and re-enters
+    /// `.checkWalletInitialization` instead — an in-session recovery route. `databaseFiles` and
+    /// `walletStorage.areKeysPresent` (via the `.noOp` clients set up in `makeStore`) both
+    /// report nothing present, so the recomputed state resolves to `.uninitialized` (terminal:
+    /// onboarding) rather than `.filesMissing`, which would re-enter `.initializeSDK` and hit
+    /// the same throwing stub again.
+    @Test func reprepareFailureAfterWipeRoutesToCheckWalletInitialization() async throws {
+        let calls = LockIsolated<[String]>([])
+        let removedKeys = LockIsolated<[String]>([])
+        let setBools = LockIsolated<[String: Bool]>([:])
+        let store = makeStore(
+            calls: calls,
+            removedUserDefaultsKeys: removedKeys,
+            setUserDefaultsBools: setBools,
+            firstPrepareResult: .success,
+            isSeedRelevant: false,
+            reprepareError: ReprepareStubError()
+        )
+
+        await store.send(.initialization(.initializeSDK(.existingWallet)))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.checkWalletInitialization) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        let recordedCalls = calls.value
+        let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
+        let reprepareIndex = try #require(recordedCalls.firstIndex(of: "prepareWith(restoreWallet)"))
+        #expect(wipeIndex < reprepareIndex, "the database must be wiped before the failing re-prepare is attempted")
+
+        // `.staleWalletDatabaseHealed` and the catch's `.checkWalletInitialization` are
+        // mutually exclusive outcomes of the same `do`/`catch` in `initializeSDK` — only the
+        // former ever sets these fields, so their absence here confirms it was never sent.
+        #expect(!store.state.isRestoringWallet, "a failed re-prepare must not signal a heal")
+        #expect(store.state.alert == nil, "no heal alert should be shown when re-prepare fails")
+
+        await drain(store)
+    }
 }
+
+private struct ReprepareStubError: Error { }
