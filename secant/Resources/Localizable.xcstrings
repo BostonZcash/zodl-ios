@@ -11538,6 +11538,12 @@
             "state" : "translated",
             "value" : "This device contained wallet data belonging to a different recovery phrase. ZODL removed it and is re-syncing the wallet for your current recovery phrase. If you expected funds from another wallet, restore that wallet's recovery phrase."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este dispositivo contenía datos de billetera pertenecientes a una frase de recuperación diferente. ZODL los eliminó y está volviendo a sincronizar la billetera de tu frase de recuperación actual. Si esperabas fondos de otra billetera, restaura la frase de recuperación de esa billetera."
+          }
         }
       }
     },
@@ -11548,6 +11554,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet data replaced"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datos de billetera reemplazados"
           }
         }
       }
