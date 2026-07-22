@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.7.4",
+            "date": "22-07-2026",
+            "timestamp": 1784719803,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where some wallets showed an incorrect balance or couldn't shield funds. The app now detects and repairs this automatically when you open it."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.3",
             "date": "11-07-2026",
             "timestamp": 1783775476,
