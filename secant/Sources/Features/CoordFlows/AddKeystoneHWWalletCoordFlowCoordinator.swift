@@ -43,6 +43,11 @@ extension AddKeystoneHWWalletCoordFlow {
                 return .none
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed(let errMsg)))):
+                for id in state.path.ids {
+                    if case .restoreInfo = state.path[id: id] {
+                        state.path[id: id, case: \.restoreInfo]?.isProcessing = false
+                    }
+                }
                 state.errMsg = errMsg
                 // TCA Store is @MainActor; reducer body always runs on main.
                 state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
@@ -111,9 +116,10 @@ extension AddKeystoneHWWalletCoordFlow {
 
                 // MARK: - RestoreInfo
                 
-            case .path(.element(id: _, action: .restoreInfo(.gotItTapped))):
+            case .path(.element(id: let restoreInfoId, action: .restoreInfo(.gotItTapped))):
                 for id in state.path.ids {
                     if case .keystoneDeviceReady = state.path[id: id] {
+                        state.path[id: restoreInfoId, case: \.restoreInfo]?.isProcessing = true
                         return .send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(state.birthday)))))
                     }
                 }

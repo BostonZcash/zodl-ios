@@ -40,14 +40,26 @@ struct KeystoneDeviceReadyView: View {
                 ) {
                     store.send(.setBirthdayTapped)
                 }
+                .disabled(store.isImportingAccount)
                 .padding(.bottom, 12)
 
-                ZashiButton(
-                    String(localizable: .keystoneAddHWWalletConnectNew)
-                ) {
-                    store.send(.unlockTapped(nil))
+                if store.isImportingAccount {
+                    ZashiButton(
+                        String(localizable: .keystoneAddHWWalletConnectNew),
+                        accessoryView: ProgressView()
+                    ) {
+                        store.send(.unlockTapped(nil))
+                    }
+                    .disabled(true)
+                    .padding(.bottom, 24)
+                } else {
+                    ZashiButton(
+                        String(localizable: .keystoneAddHWWalletConnectNew)
+                    ) {
+                        store.send(.unlockTapped(nil))
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
             .zashiBackV2(background: false) {
