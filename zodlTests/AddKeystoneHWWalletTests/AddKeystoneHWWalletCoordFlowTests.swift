@@ -16,7 +16,9 @@
 //
 
 import Testing
+import Foundation
 import ComposableArchitecture
+@preconcurrency import KeystoneSDK
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
@@ -98,7 +100,58 @@ import ComposableArchitecture
         #expect(store.state.messageToBeShared == nil)
     }
 
+    // MARK: - Successful import (repro: failure sheet must NOT show on success)
+
+    @Test func successfulImportPushesSuccessScreenWithoutFailureSheet() async throws {
+        var elementState = AddKeystoneHWWallet.State.initial
+        elementState.zcashAccounts = Self.makeZcashAccounts()
+        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        initialState.path.append(.keystoneDeviceReady(elementState))
+
+        let importCount = LockIsolated(0)
+        let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
+        let store = Store(initialState: initialState) {
+            AddKeystoneHWWalletCoordFlow()
+        } withDependencies: {
+            $0.audioServices.systemSoundVibrate = { }
+            $0.sdkSynchronizer = .mocked(
+                importAccount: { _, _, _, _, _, _, _ in
+                    importCount.withValue { $0 += 1 }
+                    return uuid
+                },
+                walletAccounts: { [] }
+            )
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(nil)))))
+
+        // Effects chain asynchronously (unlockTapped -> accountImported -> accountImportSucceeded);
+        // poll until the success screen lands or we give up.
+        for _ in 0..<50 {
+            if store.state.path.contains(where: { if case .keystoneConnected = $0 { true } else { false } }) { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        #expect(importCount.value == 1)
+        #expect(store.state.path.contains(where: { if case .keystoneConnected = $0 { true } else { false } }))
+        #expect(store.state.isFailureSheetPresented == false)
+        #expect(store.state.errMsg.isEmpty)
+    }
+
     // MARK: - Helpers
+
+    private static func makeZcashAccounts() -> ZcashAccounts {
+        // ZcashAccounts has internal memberwise inits; decode via Codable instead.
+        let json = Data("""
+            {
+                "seedFingerprint": "\(String(repeating: "aa", count: 32))",
+                "accounts": [{"ufvk": "utest1abc", "index": 0, "name": "Keystone"}]
+            }
+            """.utf8)
+        // swiftlint:disable:next force_try
+        return try! JSONDecoder().decode(ZcashAccounts.self, from: json)
+    }
 
     private func makeStore(
         initialState: AddKeystoneHWWalletCoordFlow.State = AddKeystoneHWWalletCoordFlow.State()
