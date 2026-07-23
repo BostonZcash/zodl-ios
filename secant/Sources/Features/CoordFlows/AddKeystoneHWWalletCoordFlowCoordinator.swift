@@ -49,7 +49,7 @@ extension AddKeystoneHWWalletCoordFlow {
                 state.isFailureSheetPresented = true
                 return .none
 
-case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
+            case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
                 state.path.append(.estimateBirthdaysDate(birthdayState))

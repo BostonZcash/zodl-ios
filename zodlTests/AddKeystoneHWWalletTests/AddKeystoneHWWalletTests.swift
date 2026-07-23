@@ -10,6 +10,7 @@
 import Testing
 import Foundation
 import ComposableArchitecture
+@preconcurrency import KeystoneSDK
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
@@ -86,6 +87,42 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - accountImportFailed
+
+    @MainActor @Test func accountImportFailedIsNoOpOnElementStore() async {
+        // The element store just passes the error string along; the coordinator
+        // owns the failure-sheet state and handles the visual side.
+        let store = TestStore(initialState: AddKeystoneHWWallet.State()) { AddKeystoneHWWallet() }
+        await store.send(.accountImportFailed("ZRUST0067: some rust error"))
+    }
+
+    @MainActor @Test func unlockTappedSDKThrowSendsAccountImportFailed() async {
+        var state = AddKeystoneHWWallet.State()
+        state.zcashAccounts = makeZcashAccounts()
+        let store = TestStore(initialState: state) {
+            AddKeystoneHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(importAccount: { _, _, _, _, _, _, _ in
+                throw TestError.importFailed
+            })
+        }
+        store.exhaustivity = .off
+        await store.send(.unlockTapped(nil))
+        await store.receive(\.accountImportFailed)
+    }
+
+    @MainActor @Test func accountImportedWalletLoadThrowSendsAccountImportFailed() async {
+        let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
+        let store = TestStore(initialState: AddKeystoneHWWallet.State()) {
+            AddKeystoneHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer.walletAccounts = { throw TestError.loadFailed }
+        }
+        store.exhaustivity = .off
+        await store.send(.accountImported(uuid))
+        await store.receive(\.accountImportFailed)
+    }
+
     // MARK: - Derived state
 
     @Test func keystoneNameDefaultsToKeystoneWalletWithoutScannedAccount() {
@@ -99,6 +136,21 @@ import ComposableArchitecture
     }
 
     // MARK: - Helpers
+
+    private enum TestError: Error { case importFailed, loadFailed }
+
+    private func makeZcashAccounts() -> ZcashAccounts {
+        // ZcashAccounts/ZcashUnifiedFullViewingKey have internal memberwise inits (inaccessible from
+        // this test module), so decode from JSON using their Codable conformance instead.
+        let json = Data("""
+            {
+                "seedFingerprint": "\(String(repeating: "aa", count: 32))",
+                "accounts": [{"ufvk": "utest1abc", "index": 0, "name": "Keystone"}]
+            }
+            """.utf8)
+        // swiftlint:disable:next force_try
+        return try! JSONDecoder().decode(ZcashAccounts.self, from: json)
+    }
 
     private func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(Account(
