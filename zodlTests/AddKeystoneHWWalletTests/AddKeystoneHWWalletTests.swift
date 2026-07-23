@@ -111,6 +111,40 @@ import ComposableArchitecture
         await store.receive(\.accountImportFailed)
     }
 
+    @MainActor @Test func unlockTappedIgnoresRetapsWhileImportInFlight() async {
+        var state = AddKeystoneHWWallet.State()
+        state.zcashAccounts = makeZcashAccounts()
+        let importCount = LockIsolated(0)
+        let store = TestStore(initialState: state) {
+            AddKeystoneHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(
+                importAccount: { _, _, _, _, _, _, _ in
+                    importCount.withValue { $0 += 1 }
+                    try await Task.sleep(for: .milliseconds(100))
+                    return AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
+                },
+                walletAccounts: { [] }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.unlockTapped(nil)) { $0.isImportingAccount = true }
+        await store.send(.unlockTapped(nil))
+        await store.receive(\.accountImportSucceeded, timeout: .seconds(2))
+        await store.finish()
+
+        #expect(importCount.value == 1)
+    }
+
+    @MainActor @Test func accountImportFailedClearsImportingFlag() async {
+        var state = AddKeystoneHWWallet.State()
+        state.isImportingAccount = true
+        let store = TestStore(initialState: state) { AddKeystoneHWWallet() }
+
+        await store.send(.accountImportFailed("boom")) { $0.isImportingAccount = false }
+    }
+
     @MainActor @Test func accountImportedWalletLoadThrowSendsAccountImportFailed() async {
         let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
         let store = TestStore(initialState: AddKeystoneHWWallet.State()) {

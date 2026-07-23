@@ -7,7 +7,8 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Fixed
-- [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Try Again, Contact Support, and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
+- [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
+- [#1920] The "Connection Failed" sheet no longer appears on top of the success screen when connecting a Keystone device actually succeeds. Tapping the connect/OK button again while the import was still running started a duplicate import whose failure surfaced as a bogus error; the button now shows a progress indicator and extra taps are ignored.
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.
 
 ## 3.7.3 build 1 (20026-07-12)

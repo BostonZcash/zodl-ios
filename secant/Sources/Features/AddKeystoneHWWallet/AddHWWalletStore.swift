@@ -15,6 +15,7 @@ struct AddKeystoneHWWallet {
     @ObservableState
     struct State: Equatable {
         var isHelpSheetPresented = false
+        var isImportingAccount = false
         var isInAppBrowserOn = false
         var isKSAccountSelected = false
         var randomSuccessIconIndex = 0
@@ -123,6 +124,13 @@ struct AddKeystoneHWWallet {
                 guard let account = state.zcashAccounts, let firstAccount = account.accounts.first else {
                     return .none
                 }
+                // Re-taps while an import is in flight would start a duplicate
+                // importAccount; the duplicate throws (the account already
+                // exists) and pops the failure sheet over the success screen.
+                guard !state.isImportingAccount else {
+                    return .none
+                }
+                state.isImportingAccount = true
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -157,9 +165,11 @@ struct AddKeystoneHWWallet {
                 }
 
             case .accountImportFailed:
+                state.isImportingAccount = false
                 return .none
-                
+
             case .accountImportSucceeded:
+                state.isImportingAccount = false
                 return .none
 
             case let .loadedWalletAccounts(walletAccounts, uuid):
