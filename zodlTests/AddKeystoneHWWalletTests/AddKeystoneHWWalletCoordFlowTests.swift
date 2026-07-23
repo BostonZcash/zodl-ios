@@ -95,7 +95,13 @@ import ComposableArchitecture
 
     @Test func sendSupportMailFinishedClearsSupportData() async {
         var initialState = AddKeystoneHWWalletCoordFlow.State()
-        initialState.supportData = SupportDataGenerator.generate("")
+        // generate() reads walletStorage; this call runs in test code, outside
+        // the store's dependency scope, so it needs its own override.
+        initialState.supportData = withDependencies {
+            $0.walletStorage = .noOp
+        } operation: {
+            SupportDataGenerator.generate("")
+        }
         let store = makeStore(initialState: initialState)
 
         store.send(.sendSupportMailFinished)
@@ -173,6 +179,8 @@ import ComposableArchitecture
             AddKeystoneHWWalletCoordFlow()
         } withDependencies: {
             $0.audioServices.systemSoundVibrate = { }
+            // SupportDataGenerator.generate (contactSupportTapped) reads walletStorage.
+            $0.walletStorage = .noOp
         }
     }
 }
