@@ -43,6 +43,14 @@ extension AddKeystoneHWWalletCoordFlow {
                 return .none
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed(let errMsg)))):
+                // A failure arriving after the success screen is on the stack can
+                // only be a stray duplicate attempt — the account is imported, so
+                // don't cover the success screen with the failure sheet.
+                for element in state.path {
+                    if case .keystoneConnected = element {
+                        return .none
+                    }
+                }
                 for id in state.path.ids {
                     if case .restoreInfo = state.path[id: id] {
                         state.path[id: id, case: \.restoreInfo]?.isProcessing = false

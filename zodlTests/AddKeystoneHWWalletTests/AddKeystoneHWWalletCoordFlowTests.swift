@@ -38,6 +38,19 @@ import ComposableArchitecture
         #expect(store.state.errMsg == "boom")
     }
 
+    @Test func accountImportFailedAfterSuccessScreenIsIgnored() async {
+        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+        initialState.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .keystoneDeviceReady(.accountImportFailed("duplicate")))))
+
+        #expect(store.state.isFailureSheetPresented == false)
+        #expect(store.state.errMsg.isEmpty)
+    }
+
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
