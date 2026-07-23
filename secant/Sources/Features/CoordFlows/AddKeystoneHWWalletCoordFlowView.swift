@@ -136,7 +136,7 @@ struct AddKeystoneHWWalletCoordFlowView: View {
 
             ZashiButton(
                 String(localizable: .keystoneAddHWWalletContactSupport),
-                type: .destructive2
+                type: .secondary
             ) {
                 store.send(.contactSupportTapped)
             }
@@ -144,7 +144,7 @@ struct AddKeystoneHWWalletCoordFlowView: View {
 
             ZashiButton(
                 String(localizable: .generalCancel),
-                type: .ghost
+                type: .primary
             ) {
                 store.send(.cancelFailureTapped)
             }
