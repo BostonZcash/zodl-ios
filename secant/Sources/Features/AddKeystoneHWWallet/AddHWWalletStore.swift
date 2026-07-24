@@ -144,6 +144,11 @@ struct AddKeystoneHWWallet {
                         )
                         if let uuid {
                             await send(.accountImported(uuid))
+                        } else {
+                            // The live SDK never returns nil today, but the interface
+                            // permits it; treat it as a failure so isImportingAccount
+                            // can't be left stuck true.
+                            await send(.accountImportFailed("Keystone account import returned no account UUID"))
                         }
                     } catch {
                         // Surface only the SDK error's localizedDescription (a static

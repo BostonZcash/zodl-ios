@@ -98,7 +98,7 @@ import ComposableArchitecture
 
     @MainActor @Test func unlockTappedSDKThrowSendsAccountImportFailed() async {
         var state = AddKeystoneHWWallet.State()
-        state.zcashAccounts = makeZcashAccounts()
+        state.zcashAccounts = ZcashAccounts.testFixture()
         let store = TestStore(initialState: state) {
             AddKeystoneHWWallet()
         } withDependencies: {
@@ -111,9 +111,24 @@ import ComposableArchitecture
         await store.receive(\.accountImportFailed)
     }
 
+    @MainActor @Test func unlockTappedNilImportResultSendsAccountImportFailed() async {
+        // The interface types importAccount as AccountUUID?; a nil result must
+        // clear isImportingAccount via accountImportFailed, not hang the UI.
+        var state = AddKeystoneHWWallet.State()
+        state.zcashAccounts = ZcashAccounts.testFixture()
+        let store = TestStore(initialState: state) {
+            AddKeystoneHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(importAccount: { _, _, _, _, _, _, _ in nil })
+        }
+        store.exhaustivity = .off
+        await store.send(.unlockTapped(nil))
+        await store.receive(\.accountImportFailed)
+    }
+
     @MainActor @Test func unlockTappedIgnoresRetapsWhileImportInFlight() async {
         var state = AddKeystoneHWWallet.State()
-        state.zcashAccounts = makeZcashAccounts()
+        state.zcashAccounts = ZcashAccounts.testFixture()
         let importCount = LockIsolated(0)
         let store = TestStore(initialState: state) {
             AddKeystoneHWWallet()
@@ -172,19 +187,6 @@ import ComposableArchitecture
     // MARK: - Helpers
 
     private enum TestError: Error { case importFailed, loadFailed }
-
-    private func makeZcashAccounts() -> ZcashAccounts {
-        // ZcashAccounts/ZcashUnifiedFullViewingKey have internal memberwise inits (inaccessible from
-        // this test module), so decode from JSON using their Codable conformance instead.
-        let json = Data("""
-            {
-                "seedFingerprint": "\(String(repeating: "aa", count: 32))",
-                "accounts": [{"ufvk": "utest1abc", "index": 0, "name": "Keystone"}]
-            }
-            """.utf8)
-        // swiftlint:disable:next force_try
-        return try! JSONDecoder().decode(ZcashAccounts.self, from: json)
-    }
 
     private func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(Account(

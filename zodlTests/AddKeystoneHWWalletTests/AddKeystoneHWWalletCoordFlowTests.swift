@@ -51,6 +51,29 @@ import ComposableArchitecture
         #expect(store.state.errMsg.isEmpty)
     }
 
+    @Test func accountImportFailedAfterSuccessScreenStillClearsRestoreInfoProcessing() async {
+        // Even when the failure sheet is suppressed (success screen on the stack),
+        // any RestoreInfo element must not be left with a stuck spinner.
+        var restoreInfoState = RestoreInfo.State.initial
+        restoreInfoState.isKeystoneFlow = true
+        restoreInfoState.isProcessing = true
+        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+        initialState.path.append(.restoreInfo(restoreInfoState))
+        initialState.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .keystoneDeviceReady(.accountImportFailed("duplicate")))))
+
+        #expect(store.state.isFailureSheetPresented == false)
+        #expect(store.state.errMsg.isEmpty)
+        let restoreInfoIsProcessing = store.state.path.compactMap {
+            if case .restoreInfo(let element) = $0 { element.isProcessing } else { nil }
+        }.first
+        #expect(restoreInfoIsProcessing == false)
+    }
+
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
@@ -123,7 +146,7 @@ import ComposableArchitecture
 
     @Test func successfulImportPushesSuccessScreenWithoutFailureSheet() async throws {
         var elementState = AddKeystoneHWWallet.State.initial
-        elementState.zcashAccounts = Self.makeZcashAccounts()
+        elementState.zcashAccounts = ZcashAccounts.testFixture()
         var initialState = AddKeystoneHWWalletCoordFlow.State()
         initialState.path.append(.keystoneDeviceReady(elementState))
 
@@ -159,18 +182,6 @@ import ComposableArchitecture
     }
 
     // MARK: - Helpers
-
-    private static func makeZcashAccounts() -> ZcashAccounts {
-        // ZcashAccounts has internal memberwise inits; decode via Codable instead.
-        let json = Data("""
-            {
-                "seedFingerprint": "\(String(repeating: "aa", count: 32))",
-                "accounts": [{"ufvk": "utest1abc", "index": 0, "name": "Keystone"}]
-            }
-            """.utf8)
-        // swiftlint:disable:next force_try
-        return try! JSONDecoder().decode(ZcashAccounts.self, from: json)
-    }
 
     private func makeStore(
         initialState: AddKeystoneHWWalletCoordFlow.State = AddKeystoneHWWalletCoordFlow.State()
