@@ -8762,6 +8762,57 @@
         }
       }
     },
+    "keystone.addHWWallet.contactSupport" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contact Support"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contactar Soporte"
+          }
+        }
+      }
+    },
+    "keystone.addHWWallet.failureDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not connect your Keystone wallet. Your funds are safe. Please check that you are running the latest firmware."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo conectar tu wallet Keystone. Tus fondos están seguros. Verifica que tengas el firmware más reciente instalado."
+          }
+        }
+      }
+    },
+    "keystone.addHWWallet.failureTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connection Failed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error de Conexión"
+          }
+        }
+      }
+    },
     "keystone.addHWWallet.connect" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -13,6 +13,7 @@ struct RestoreInfo {
     struct State: Equatable {
         var isAcknowledged = true
         var isKeystoneFlow = false
+        var isProcessing = false
         var isResyncFlow = false
     }
     

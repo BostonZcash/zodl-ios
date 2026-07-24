@@ -95,13 +95,26 @@ struct RestoreInfoView: View {
                 }
                 .padding(.leading, 1)
 
-                ZashiButton((store.isKeystoneFlow || store.isResyncFlow)
-                            ? String(localizable: .generalOk).uppercased()
-                            : String(localizable: .restoreInfoGotIt)
-                ) {
-                    store.send(.gotItTapped)
+                if store.isProcessing {
+                    ZashiButton(
+                        (store.isKeystoneFlow || store.isResyncFlow)
+                        ? String(localizable: .generalOk).uppercased()
+                        : String(localizable: .restoreInfoGotIt),
+                        accessoryView: ProgressView()
+                    ) {
+                        store.send(.gotItTapped)
+                    }
+                    .disabled(true)
+                    .padding(.vertical, 24)
+                } else {
+                    ZashiButton((store.isKeystoneFlow || store.isResyncFlow)
+                                ? String(localizable: .generalOk).uppercased()
+                                : String(localizable: .restoreInfoGotIt)
+                    ) {
+                        store.send(.gotItTapped)
+                    }
+                    .padding(.vertical, 24)
                 }
-                .padding(.vertical, 24)
             }
             .zashiBack(hidden: true)
         }

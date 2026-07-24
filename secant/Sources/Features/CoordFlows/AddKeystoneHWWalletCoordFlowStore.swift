@@ -8,6 +8,7 @@
 import SwiftUI
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
+@preconcurrency import MessageUI
 
 @Reducer
 struct AddKeystoneHWWalletCoordFlow {
@@ -27,8 +28,15 @@ struct AddKeystoneHWWalletCoordFlow {
     struct State {
         var addKeystoneHWWalletState = AddKeystoneHWWallet.State.initial
         var birthday: BlockHeight? = nil
+        var isFailureSheetPresented = false
         var isHelpSheetPresented = false
         var path = StackState<Path.State>()
+
+        // support
+        var canSendMail = false
+        var errMsg = ""
+        var messageToBeShared: String?
+        var supportData: SupportData?
 
         init() { }
     }
@@ -36,8 +44,12 @@ struct AddKeystoneHWWalletCoordFlow {
     enum Action: BindableAction {
         case addKeystoneHWWallet(AddKeystoneHWWallet.Action)
         case binding(BindingAction<AddKeystoneHWWalletCoordFlow.State>)
+        case cancelFailureTapped
         case closeHelpSheetTapped
+        case contactSupportTapped
         case path(StackActionOf<Path>)
+        case sendSupportMailFinished
+        case shareFinished
     }
 
     @Dependency(\.audioServices) var audioServices
@@ -59,6 +71,42 @@ struct AddKeystoneHWWalletCoordFlow {
             case .closeHelpSheetTapped:
                 state.isHelpSheetPresented = false
                 return .none
+
+            case .cancelFailureTapped:
+                // Close the sheet and leave the whole add-Keystone flow. Root
+                // observes `backToHomeTapped` and tears the flow down (path = nil),
+                // so the user is never stranded on the connection screen.
+                state.isFailureSheetPresented = false
+                return .send(.addKeystoneHWWallet(.backToHomeTapped))
+
+            case .contactSupportTapped:
+                state.isFailureSheetPresented = false
+                let prefixMessage = "\(state.errMsg)\n\n"
+                if state.canSendMail {
+                    state.supportData = SupportDataGenerator.generate(prefixMessage)
+                    return .none
+                } else {
+                    let sharePrefix =
+                    """
+                    ===
+                    \(String(localizable: .sendFeedbackShareNotAppleMailInfo)) \(SupportDataGenerator.Constants.email)
+                    ===
+
+                    \(prefixMessage)
+                    """
+                    let supportData = SupportDataGenerator.generate(sharePrefix)
+                    state.messageToBeShared = supportData.message
+                }
+                return .none
+
+            case .sendSupportMailFinished:
+                state.supportData = nil
+                return .none
+
+            case .shareFinished:
+                state.messageToBeShared = nil
+                return .none
+
             default: return .none
             }
         }

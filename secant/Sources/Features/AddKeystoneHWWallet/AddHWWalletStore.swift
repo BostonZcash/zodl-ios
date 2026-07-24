@@ -15,6 +15,7 @@ struct AddKeystoneHWWallet {
     @ObservableState
     struct State: Equatable {
         var isHelpSheetPresented = false
+        var isImportingAccount = false
         var isInAppBrowserOn = false
         var isKSAccountSelected = false
         var randomSuccessIconIndex = 0
@@ -65,7 +66,7 @@ struct AddKeystoneHWWallet {
 
     enum Action: BindableAction, Equatable {
         case accountImported(AccountUUID)
-        case accountImportFailed
+        case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
         case backToHomeTapped
@@ -123,6 +124,13 @@ struct AddKeystoneHWWallet {
                 guard let account = state.zcashAccounts, let firstAccount = account.accounts.first else {
                     return .none
                 }
+                // Re-taps while an import is in flight would start a duplicate
+                // importAccount; the duplicate throws (the account already
+                // exists) and pops the failure sheet over the success screen.
+                guard !state.isImportingAccount else {
+                    return .none
+                }
+                state.isImportingAccount = true
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -136,24 +144,37 @@ struct AddKeystoneHWWallet {
                         )
                         if let uuid {
                             await send(.accountImported(uuid))
+                        } else {
+                            // The live SDK never returns nil today, but the interface
+                            // permits it; treat it as a failure so isImportingAccount
+                            // can't be left stuck true.
+                            await send(.accountImportFailed("Keystone account import returned no account UUID"))
                         }
                     } catch {
-                        // TODO: error handling
-                        await send(.accountImportFailed)
+                        // Surface only the SDK error's localizedDescription (a static
+                        // code + message, e.g. "ZRUST0067: …"); the raw Rust error
+                        // string is never included, so no UFVK/seed data can leak.
+                        await send(.accountImportFailed(error.localizedDescription))
                     }
                 }
-                
+
             case .accountImported(let uuid):
                 return .run { send in
-                    let walletAccounts = try await sdkSynchronizer.walletAccounts()
-                    await send(.loadedWalletAccounts(walletAccounts, uuid))
-                    await send(.accountImportSucceeded)
+                    do {
+                        let walletAccounts = try await sdkSynchronizer.walletAccounts()
+                        await send(.loadedWalletAccounts(walletAccounts, uuid))
+                        await send(.accountImportSucceeded)
+                    } catch {
+                        await send(.accountImportFailed(error.localizedDescription))
+                    }
                 }
-                
+
             case .accountImportFailed:
+                state.isImportingAccount = false
                 return .none
-                
+
             case .accountImportSucceeded:
+                state.isImportingAccount = false
                 return .none
 
             case let .loadedWalletAccounts(walletAccounts, uuid):
