@@ -28,6 +28,7 @@ extension Root {
         case checkWalletConfig
         case initializeSDK(WalletInitMode)
         case staleWalletDatabaseHealed
+        case presentStaleWalletHealedAlert
         case initialSetups
         case initializationFailed(ZcashError)
         case initializationSuccessfullyDone
@@ -449,6 +450,26 @@ extension Root {
                 state.isRestoringWallet = true
                 userDefaults.setValue(true, Constants.udIsRestoringWallet)
                 state.$walletStatus.withLock { $0 = .restoring }
+                state.isStaleWalletHealedAlertPending = true
+                // Covers the third transition point: the destination may have already settled
+                // on `.home` before this heal signal arrives (e.g. the new-wallet cascade), in
+                // which case neither of the other two hooks (`updateDestination` / the
+                // `.phraseDisplay`/`.onboarding` bypass arm) will ever fire again to deliver it.
+                if state.destinationState.destination == .home {
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
+                }
+                return .none
+
+            case .initialization(.presentStaleWalletHealedAlert):
+                // Re-check the destination: the 0.5s wait isn't cancelled by leaving `.home`
+                // (only re-entering `.home` reschedules this effect), so a deep link or other
+                // navigation during the window must not present the notice over whatever screen
+                // is showing now. Leave the flag set so a later return to `.home` re-fires the
+                // hook and the notice still gets delivered.
+                guard state.isStaleWalletHealedAlertPending, state.destinationState.destination == .home else {
+                    return .none
+                }
+                state.isStaleWalletHealedAlertPending = false
                 state.alert = AlertState.staleWalletDatabaseHealed()
                 return .none
 
@@ -728,6 +749,11 @@ extension Root {
 
             case .phraseDisplay(.finishedTapped), .onboarding(.newWalletSuccessfulyCreated):
                 state.destinationState.destination = .home
+                // This is the second (synchronous, action-round-trip-free) place the destination
+                // can land on `.home` — see `presentStaleWalletHealedAlertEffect` (RootStore.swift).
+                if state.isStaleWalletHealedAlertPending {
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
+                }
                 return .none
 
             case .onboarding(.createNewWalletTapped):

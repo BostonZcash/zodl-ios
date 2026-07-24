@@ -49,6 +49,7 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        var staleWalletHealedAlertCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -64,6 +65,7 @@ struct Root {
         var homeState: Home.State = .initial
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        var isStaleWalletHealedAlertPending = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts
@@ -659,6 +661,31 @@ extension Root {
         }
         
         return .uninitialized
+    }
+
+    /// The stale-wallet-heal notice (`AlertState.staleWalletDatabaseHealed()`) is deferred until
+    /// the root destination settles on `.home`: presenting it immediately at heal time gets it
+    /// auto-dismissed by the very destination switch that follows (SwiftUI tears down the
+    /// presenting view branch before the alert has a chance to be seen). Three call sites can
+    /// first satisfy "flag pending AND destination == `.home`" — the
+    /// `.destination(.updateDestination)` hook, the synchronous `.phraseDisplay(.finishedTapped)` /
+    /// `.onboarding(.newWalletSuccessfulyCreated)` transition, and `.staleWalletDatabaseHealed`
+    /// itself when the heal completes while already on `.home` — so this effect is shared between
+    /// all of them, keeping the wait-then-present logic in exactly one place.
+    ///
+    /// `cancelId` must be a dedicated ID (`state.staleWalletHealedAlertCancelId`) — never a
+    /// shared/general-purpose one — so `cancelInFlight` only ever supersedes an earlier deferred
+    /// present of this same notice, never an unrelated in-flight effect. Cancellation alone does
+    /// not cover every misfire path (leaving `.home` while this is in flight doesn't cancel it,
+    /// since only entering `.home` reschedules on this ID); `.presentStaleWalletHealedAlert`
+    /// re-checks the destination at delivery time as the authoritative guard against presenting
+    /// over the wrong screen.
+    func presentStaleWalletHealedAlertEffect(cancelId: UUID) -> Effect<Root.Action> {
+        .run { send in
+            try await mainQueue.sleep(for: .seconds(0.5))
+            await send(.initialization(.presentStaleWalletHealedAlert))
+        }
+        .cancellable(id: cancelId, cancelInFlight: true)
     }
 }
 

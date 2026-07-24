@@ -56,6 +56,14 @@ extension Root {
                     return .none
                 }
                 state.destinationState.destination = destination
+
+                // See `presentStaleWalletHealedAlertEffect` (RootStore.swift) for why this is
+                // deferred and shared with the `.phraseDisplay(.finishedTapped)` /
+                // `.onboarding(.newWalletSuccessfulyCreated)` transition in RootInitialization.swift.
+                if destination == .home && state.isStaleWalletHealedAlertPending {
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
+                }
+
                 return .none
 
             case .destination(.deeplink(let url)):

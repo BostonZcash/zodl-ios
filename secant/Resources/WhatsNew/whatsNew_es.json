@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.7.4",
+            "date": "22-07-2026",
+            "timestamp": 1784719803,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual algunas billeteras mostraban un saldo incorrecto o no podían proteger fondos. Ahora la app lo detecta y lo repara automáticamente al abrirla."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.3",
             "date": "11-07-2026",
             "timestamp": 1783775476,
