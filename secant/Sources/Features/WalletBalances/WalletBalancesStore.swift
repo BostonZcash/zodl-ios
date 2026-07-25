@@ -30,23 +30,37 @@ struct WalletBalances {
         var spendability: Spendability = .everything
         var totalBalance: Zatoshi
         var transparentBalance: Zatoshi
+        var awaitingResolutionBalance: Zatoshi = .zero
+        var ironwoodPoolBalance: Zatoshi = .zero
+        var orchardPoolBalance: Zatoshi = .zero
+        var saplingPoolBalance: Zatoshi = .zero
 
         var isExchangeRateUSDInFlight: Bool {
             fiatCurrencyResult?.state == .fetching
         }
-        
+
         var isProcessingZeroAvailableBalance: Bool {
             if shieldedBalance.amount == 0 && transparentBalance.amount > autoShieldingThreshold.amount {
                 return false
             }
-            
+
             return totalBalance.amount != shieldedBalance.amount && shieldedBalance.amount == 0
+        }
+
+        // Display-only: deliberately not folded into `transparentBalance`, which feeds
+        // `isProcessingZeroAvailableBalance`, the auto-shielding threshold comparison, and spendability.
+        var transparentPoolBalance: Zatoshi {
+            transparentBalance + awaitingResolutionBalance
         }
 
         var currencyValue: String {
             currencyConversion?.convert(totalBalance) ?? ""
         }
-        
+
+        var isFiatAvailable: Bool {
+            isExchangeRateFeatureOn && currencyConversion != nil
+        }
+
         init(
             fiatCurrencyResult: FiatCurrencyResult? = nil,
             isAvailableBalanceTappable: Bool = true,
@@ -70,10 +84,15 @@ struct WalletBalances {
             self.totalBalance = totalBalance
             self.transparentBalance = transparentBalance
         }
+
+        func fiatValue(_ balance: Zatoshi) -> String {
+            currencyConversion?.convert(balance) ?? ""
+        }
     }
-    
+
     enum Action: Equatable {
         case availableBalanceTapped
+        case balanceTapped
         case balanceUpdated(AccountBalance?)
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
@@ -128,6 +147,10 @@ struct WalletBalances {
                 )
                 
             case .availableBalanceTapped:
+                return .none
+
+            case .balanceTapped:
+                // No-op — the parent feature decides what tapping the balance means.
                 return .none
 
             case .exchangeRateRefreshTapped:
@@ -193,7 +216,11 @@ struct WalletBalances {
                 state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
-               
+                state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
+                state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
+                state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
+                state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
+
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
                 || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && state.shieldedBalance == state.totalBalance - state.transparentBalance))
                 || state.totalBalance == .zero
