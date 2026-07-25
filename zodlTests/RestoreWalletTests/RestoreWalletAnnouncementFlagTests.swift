@@ -2,12 +2,14 @@
 //  RestoreWalletAnnouncementFlagTests.swift
 //  zodlTests
 //
-//  Ironwood announcement, workstream 3 — Features/CoordFlows/RestoreWalletCoordFlowCoordinator.swift
-//  marks the Ironwood-announcement keychain flag acknowledged up front when a wallet is freshly
-//  created (nothing to announce on a brand-new wallet, and creation is immediately followed by the
-//  recovery-phrase backup flow — the worst moment to interrupt with the announcement screen), but
-//  deliberately leaves the flag untouched when a wallet is restored (a returning user may have
-//  missed the announcement, so the one-time screen must remain eligible to show for them).
+//  Ironwood announcement — neither wallet-creation nor wallet-restore
+//  (Features/CoordFlows/RestoreWalletCoordFlowCoordinator.swift) may touch the
+//  Ironwood-announcement keychain flag. Ironwood is news about the network, not about a
+//  particular wallet, so both paths must leave the flag untouched and let Root's normal
+//  activation gate decide. An earlier revision pre-acknowledged the flag on creation; that made
+//  "fresh install, create a wallet" the one path on which the screen could never appear, which
+//  is also the most obvious way to test the feature by hand. These tests are what stop it
+//  coming back.
 //
 //  RestoreWalletCoordFlow.State is not Equatable (it holds a non-Equatable StackState, and its
 //  Action type — referenced via Action-typed AlertState — isn't Equatable either), so TestStore
@@ -25,13 +27,17 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct RestoreWalletAnnouncementFlagTests {
-    @Test func createNewWalletRequestedWritesIronwoodAnnouncementFlagTrueExactlyOnce() async {
+    @Test func createNewWalletRequestedNeverWritesIronwoodAnnouncementFlag() async {
         let calls = LockIsolated<[Bool]>([])
         let store = makeStore(initialState: RestoreWalletCoordFlow.State(), flagCalls: calls)
 
         store.send(.createNewWalletRequested)
 
-        #expect(calls.value == [true])
+        // Creating a wallet must leave the flag completely untouched — not even written `true`.
+        // Writing it here would permanently suppress the announcement for every user who starts
+        // with a fresh wallet, and would make the feature untestable by hand without the debug
+        // reset row. Asserting an empty call list is what catches a reintroduction.
+        #expect(calls.value.isEmpty)
     }
 
     @Test func resolveRestoreNeverWritesIronwoodAnnouncementFlag() async {
@@ -42,11 +48,8 @@ import ComposableArchitecture
 
         store.send(.resolveRestore)
 
-        // Restoring a seed must leave the Ironwood-announcement flag completely untouched — not
-        // even written `false` — so the one-time announcement screen remains eligible to show for
-        // this returning user. Asserting an empty call list (rather than inspecting the argument
-        // of some expected call) is what would catch someone "fixing" this asymmetry later by
-        // adding a call here to mirror .createNewWalletRequested.
+        // Restoring a seed likewise leaves the flag untouched, so the one-time announcement
+        // screen remains eligible to show for a returning user.
         #expect(calls.value.isEmpty)
     }
 

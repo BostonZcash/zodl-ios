@@ -31,13 +31,11 @@ extension RestoreWalletCoordFlow {
                     // store the wallet to the keychain
                     try walletStorage.importWallet(newRandomPhrase, birthday, .english, false)
 
-                    // A wallet created here starts fresh on an Ironwood-active chain, so there is
-                    // no Ironwood news to announce to it — and creation is immediately followed by
-                    // the recovery-phrase backup flow, the worst possible moment to interrupt with
-                    // a full-screen announcement. Marking it acknowledged up front keeps the
-                    // announcement out of onboarding entirely.
-                    try? walletStorage.importIronwoodAnnouncementFlag(true)
-
+                    // Deliberately does NOT pre-acknowledge the Ironwood announcement. Ironwood is
+                    // news about the network, not about this wallet, so a brand-new wallet gets it
+                    // like everyone else once the chain tip is known. Root's safety gate is what
+                    // keeps it from landing mid-onboarding — it requires the user to be idle on
+                    // Home with no flow pushed.
                     return .send(.newWalletSuccessfulyCreated)
                 } catch {
                     state.alert = AlertState.cantCreateNewWallet(error.toZcashError())
@@ -64,12 +62,6 @@ extension RestoreWalletCoordFlow {
                     try mnemonic.isValid(seedPhrase)
 
                     try walletStorage.importWallet(seedPhrase, birthday, .english, false)
-
-                    // Deliberately NOT marking the Ironwood announcement acknowledged here, unlike
-                    // .createNewWalletRequested. Restoring a seed means a returning user who may
-                    // have missed the Ironwood news, so this path leaves the flag untouched and
-                    // lets the one-time announcement screen appear for them. This asymmetry with
-                    // wallet creation is intentional — do not "fix" it.
 
                     // update the backup phrase validation flag
                     try walletStorage.markUserPassedPhraseBackupTest(true)
