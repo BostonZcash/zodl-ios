@@ -340,6 +340,106 @@ import ComposableArchitecture
         #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
     }
 
+    // MARK: - Keystone-connect auto-select must reload user metadata before decorating transactions
+
+    /// `.fetchedTransactions` (`RootTransactions.swift`) decorates the fetched list from
+    /// `userMetadataProvider.allSwaps()`, not from the SDK -- a transaction whose `zAddress` matches
+    /// a swap's `depositAddress` gets its `type`/`swapStatus` rewritten, and every swap-to-ZEC gets a
+    /// synthetic row appended. `UserMetadataStorage` holds ONE in-memory state, for whichever account
+    /// was loaded last, so without a metadata reload the freshly imported Keystone account's
+    /// transactions get decorated with the PREVIOUS (ZODL) account's swap metadata. Proven by making
+    /// `allSwaps()` answer with a ZODL swap until the `load` spy fires, then `[]` after -- if the
+    /// fetched Keystone transaction lands still decorated with that stale swap, metadata was never
+    /// reloaded before the fetch's decoration step ran.
+    @Test func keystoneAutoSelectReloadsUserMetadataBeforeDecoratingTheFetchedList() async {
+        let zashiAccount = Self.walletAccount(idByte: 76)
+        let keystoneAccount = Self.walletAccount(idByte: 77, keystone: true)
+        let loadCalled = LockIsolated<Bool>(false)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = zashiAccount }
+        initialState.$walletAccounts.withLock { $0 = [zashiAccount] }
+        initialState.path = Root.State.Path.addKeystoneHWWalletCoordFlow
+        initialState.addKeystoneHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        guard let keystoneDeviceReadyId = initialState.addKeystoneHWWalletCoordFlowState.path.ids.last else {
+            Issue.record("expected a keystoneDeviceReady element id on the Add Keystone HW Wallet path")
+            return
+        }
+
+        // Mirrors AddHWWalletStore's own `.loadedWalletAccounts`, which writes this SAME shared
+        // state directly, immediately before `.accountImportSucceeded` is sent (same `.run` effect)
+        // -- by the time Root observes `.accountImportSucceeded`, the switch has already happened.
+        initialState.$selectedWalletAccount.withLock { $0 = keystoneAccount }
+        initialState.$walletAccounts.withLock { $0 = [zashiAccount, keystoneAccount] }
+
+        // The stale ZODL account's swap -- a swap FROM zec whose deposit address matches the
+        // Keystone transaction fetched below, so the decoration would visibly apply if `allSwaps()`
+        // were still answering for the previous account instead of the freshly selected one.
+        let staleZAddress = "stale-zodl-swap-deposit-address"
+        let staleZodlSwap = UMSwapId(
+            depositAddress: staleZAddress,
+            provider: "near",
+            totalFees: 0,
+            totalUSDFees: "0",
+            lastUpdated: 0,
+            fromAsset: SwapConstants.zecAssetIdOnNear,
+            toAsset: "near.usdc.usdc",
+            exactInput: true,
+            status: SwapConstants.success,
+            amountOutFormatted: "0"
+        )
+
+        let keystoneTxId = "keystone-tx-matching-stale-zodl-swap"
+        let keystoneTx = TransactionState(
+            zAddress: staleZAddress,
+            fee: Zatoshi(10),
+            id: keystoneTxId,
+            status: .received,
+            zecAmount: Zatoshi(100_000)
+        )
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.sdkSynchronizer.getAllTransactions = { _ in
+                IdentifiedArrayOf(uniqueElements: [keystoneTx])
+            }
+            // Flips the moment `.loadUserMetadata` reloads for the newly selected account --
+            // mirrors `UserMetadataStorage` holding a single in-memory state that `load` replaces.
+            $0.userMetadataProvider.load = { _ in loadCalled.setValue(true) }
+            $0.userMetadataProvider.allSwaps = {
+                loadCalled.value ? [] : [staleZodlSwap]
+            }
+        }
+
+        store.send(
+            .addKeystoneHWWalletCoordFlow(
+                .path(.element(id: keystoneDeviceReadyId, action: .keystoneDeviceReady(.accountImportSucceeded)))
+            )
+        )
+
+        await waitForRootStore { store.state.transactions.contains { $0.id == keystoneTxId } }
+
+        guard let landedTransaction = store.state.transactions[id: keystoneTxId] else {
+            Issue.record("expected the Keystone transaction to have landed in state.transactions")
+            return
+        }
+
+        #expect(landedTransaction.type != .swapFromZec)
+        #expect(landedTransaction.type != .crossPay)
+        // `TransactionState.swapStatus` isn't Optional -- its un-decorated default is `.pending`
+        // (see the `tx(id:)` helper above), so "never decorated" reads as still-default here rather
+        // than `nil`. The stale swap above uses `SwapConstants.success` (-> `.completed`)
+        // specifically so a wrongly-applied decoration would visibly move this off `.pending`.
+        #expect(landedTransaction.swapStatus == .pending)
+        #expect(store.state.transactions.count == 1)
+        #expect(loadCalled.value)
+    }
+
     /// `Settings.Path.accountHWWalletSelection(.accountImportSucceeded)` is DEFENSIVE wiring, not a
     /// live UI path -- `Settings.Path` has no `.keystoneDeviceReady` case at all, and
     /// `SettingsCoordinator.swift` has no handler for `.accountHWWalletSelection(.nextTapped)`, so

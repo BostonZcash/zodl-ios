@@ -74,8 +74,23 @@ extension Root {
                 // below still runs its own refetch afterward too -- redundant but harmless once the
                 // provenance guard on `.fetchedTransactions` is in place). Navigation (pushing
                 // `.keystoneConnected`) is owned by `AddKeystoneHWWalletCoordFlowCoordinator`, so this
-                // arm leaves `state.path` untouched.
-                return accountSwitchedEffect(state: &state)
+                // arm leaves `state.path` untouched. The metadata reload merged in below matters here
+                // just as much as the transaction/balance reactions: the fetched list gets decorated
+                // from `userMetadataProvider`, which holds a single in-memory state for whichever
+                // account was loaded last, and a freshly imported Keystone account has no metadata
+                // encryption keys yet -- `.resolveMetadataEncryptionKeys` provisions them for every
+                // account in `state.walletAccounts`, which `.loadedWalletAccounts` has just
+                // repopulated, before `.loadUserMetadata` reloads the in-memory state for the new
+                // account.
+                let switchedEffect = accountSwitchedEffect(state: &state)
+                return .merge(
+                    switchedEffect,
+                    .send(.loadContacts),
+                    .concatenate(
+                        .send(.resolveMetadataEncryptionKeys),
+                        .send(.loadUserMetadata)
+                    )
+                )
 
             case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
                 state.path = nil
