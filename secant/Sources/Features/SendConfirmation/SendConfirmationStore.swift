@@ -175,8 +175,10 @@ struct SendConfirmation {
         case foundPCZT(Pczt)
         // MOB-1510: Keystone minimum-firmware gate — `keystoneFirmwareUpdateRequired` fires from
         // `foundPCZT` in place of scheduling `createTransactionFromPCZT` when the signed PCZT's
-        // firmware is unstamped or below `KeystoneFirmwareVersion.minimumSupported`;
+        // firmware is unstamped or below `KeystoneFirmwareVersion.minimumSupported`; on an accepted
+        // firmware, `foundPCZT` fires `keystoneFirmwareAccepted` for the coordinators to observe.
         // `keystoneFirmwareUpdateCloseTapped` is `KeystoneFirmwareUpdateView`'s Close button.
+        case keystoneFirmwareAccepted
         case keystoneFirmwareUpdateCloseTapped
         case keystoneFirmwareUpdateRequired
         case pcztResolved(Pczt)
@@ -485,23 +487,25 @@ struct SendConfirmation {
                     }
 
                     state.pcztWithSigs = pcztWithSigs
-                    return .run { send in
-                        try? await mainQueue.sleep(for: .seconds(Constants.delay))
-                        await send(.createTransactionFromPCZT)
-                    }
+                    return .merge(
+                        .send(.keystoneFirmwareAccepted),
+                        .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                            await send(.createTransactionFromPCZT)
+                        }
+                    )
                 }
+                return .none
+
+            case .keystoneFirmwareAccepted:
                 return .none
 
             case .keystoneFirmwareUpdateRequired:
                 return .none
 
             case .keystoneFirmwareUpdateCloseTapped:
-                // Mirrors `getSignatureTapped`'s reset so a fresh scan (after the device's firmware
-                // is updated) is processed rather than silently dropped by the `isKeystoneCodeFound`
-                // guard above.
-                state.detectedKeystoneFirmware = nil
-                state.isKeystoneCodeFound = false
-                keystoneHandler.resetQRDecoder()
+                // Handled by the coordinators: they pop this path element before this reducer would
+                // see the action, same shape as `backFromPCZTFailureTapped`.
                 return .none
 
             case .resolvePCZT:

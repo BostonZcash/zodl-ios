@@ -46,6 +46,7 @@ struct SendCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.numberFormatter) var numberFormatter
 
     init() { }

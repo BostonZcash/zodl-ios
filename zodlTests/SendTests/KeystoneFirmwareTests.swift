@@ -7,9 +7,8 @@
 //  `SendConfirmationStore` gate at `.foundPCZT` that blocks below-minimum/unstamped firmware
 //  before `createTransactionFromPCZT` ever schedules.
 //
-//  `KeystoneFirmwareGateTests`: `SendConfirmation.State` carries `@Shared(.inMemory(...))`
-//  process-global storage, so — mirroring `MultiServerSubmitPCZTRoutingTests`'s own reasoning —
-//  the suite is serialized. The reader/Comparable suites are pure/dependency-free, so unserialized.
+//  The reader/Comparable suites are pure and dependency-free, so they run unserialized; see
+//  `KeystoneFirmwareGateTests` below for why the gate suite needs more than that.
 //
 
 import Testing
@@ -117,8 +116,10 @@ import ComposableArchitecture
 // MARK: - SendConfirmationStore gate
 
 // `SendConfirmation.State` carries `@Shared(.inMemory(...))` process-global storage (address book
-// contacts, feature flags, wallet accounts) — serialized to avoid cross-suite races on that
-// storage, mirroring `MultiServerSubmitPCZTRoutingTests`'s own reasoning.
+// contacts, feature flags, wallet accounts). `.serialized` only orders this suite's own tests — it
+// does NOT prevent other suites from running in parallel with it — so each test also binds a fresh
+// in-memory store via `withDependencies { $0.defaultInMemoryStorage = InMemoryStorage() }`, which is
+// what actually isolates this suite from cross-suite races on that storage.
 @Suite(.serialized) @MainActor struct KeystoneFirmwareGateTests {
     private func makeStore() -> TestStore<SendConfirmation.State, SendConfirmation.Action> {
         let initialState = SendConfirmation.State(
@@ -129,15 +130,17 @@ import ComposableArchitecture
             proposal: .testOnlyFakeProposal(totalFee: 10_000)
         )
 
-        let store = TestStore(initialState: initialState) {
+        return TestStore(initialState: initialState) {
             SendConfirmation()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            // `KeystoneHandlerClient` provides only `liveValue` (no `testValue`), so the override
+            // must happen in this construction-time closure: mutating `store.dependencies`
+            // afterward would read (and fail on) the missing test value before the override is
+            // ever applied. Same idiom as `AddKeystoneHWWalletTests.swift`'s `readyToScanTapped`
+            // test.
+            $0.keystoneHandler.resetQRDecoder = { }
         }
-        store.dependencies.mainQueue = .immediate
-        // `KeystoneHandlerClient` has no `testValue` (only `liveValue`), so a `TestStore` requires
-        // a full override rather than a partial-property mutation — the latter reads the current
-        // (missing) test value first and fails before the override is ever applied.
-        store.dependencies.keystoneHandler = .noOp
-        return store
     }
 
     private func signedPczt(firmware: (major: Int, minor: Int, build: Int)?) -> Pczt {
@@ -149,86 +152,88 @@ import ComposableArchitecture
         return Pczt(data)
     }
 
-    @Test func belowMinimumFirmwarePresentsUpdateScreenAndNeverSchedulesCreateTransaction() async {
-        let store = makeStore()
-        let pczt = signedPczt(firmware: (2, 4, 6))
+    // Below-minimum firmware in two shapes — a clearly-old version and the boundary case one build
+    // below the 3.0.1 minimum — both must still be blocked and must never schedule
+    // `createTransactionFromPCZT`.
+    @Test(arguments: [(2, 4, 6), (3, 0, 0)])
+    func belowMinimumFirmwarePresentsUpdateScreen(major: Int, minor: Int, build: Int) async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore()
+            let pczt = signedPczt(firmware: (major, minor, build))
 
-        await store.send(.foundPCZT(pczt)) {
-            $0.isKeystoneCodeFound = true
-            $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
+            await store.send(.foundPCZT(pczt)) {
+                $0.isKeystoneCodeFound = true
+                $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: major, minor: minor, build: build)
+            }
+            await store.receive(.keystoneFirmwareUpdateRequired)
+            // No further action arrives: `createTransactionFromPCZT` is never scheduled. An
+            // exhaustive `TestStore` fails on any unasserted action, so reaching `finish()`
+            // cleanly here IS the "never schedules" assertion.
+            await store.finish()
+
+            #expect(store.state.pcztWithSigs == nil)
         }
-        await store.receive(.keystoneFirmwareUpdateRequired)
-        // No further action arrives: `createTransactionFromPCZT` is never scheduled. An exhaustive
-        // `TestStore` fails on any unasserted action, so reaching `finish()` cleanly here IS the
-        // "never schedules" assertion.
-        await store.finish()
-
-        #expect(store.state.pcztWithSigs == nil)
-    }
-
-    // Just-below-minimum boundary: 3.0.0 is one build below the 3.0.1 minimum and must still be
-    // blocked.
-    @Test func oneBuildBelowMinimumFirmwarePresentsUpdateScreen() async {
-        let store = makeStore()
-        let pczt = signedPczt(firmware: (3, 0, 0))
-
-        await store.send(.foundPCZT(pczt)) {
-            $0.isKeystoneCodeFound = true
-            $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 3, minor: 0, build: 0)
-        }
-        await store.receive(.keystoneFirmwareUpdateRequired)
-        // No further action arrives: `createTransactionFromPCZT` is never scheduled. An exhaustive
-        // `TestStore` fails on any unasserted action, so reaching `finish()` cleanly here IS the
-        // "never schedules" assertion.
-        await store.finish()
-
-        #expect(store.state.pcztWithSigs == nil)
     }
 
     @Test func atMinimumFirmwareProceedsUnchanged() async {
-        let store = makeStore()
-        let pczt = signedPczt(firmware: (3, 0, 1))
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore()
+            let pczt = signedPczt(firmware: (3, 0, 1))
 
-        await store.send(.foundPCZT(pczt)) {
-            $0.isKeystoneCodeFound = true
-            $0.pcztWithSigs = pczt
+            await store.send(.foundPCZT(pczt)) {
+                $0.isKeystoneCodeFound = true
+                $0.pcztWithSigs = pczt
+            }
+            await store.receive(.keystoneFirmwareAccepted)
+            // `createTransactionFromPCZT`'s own guard bails with no state change: `pcztWithProofs`
+            // was never set, so this proves scheduling happened without needing to mock the
+            // synchronizer.
+            await store.receive(.createTransactionFromPCZT)
+            await store.finish()
+
+            #expect(store.state.detectedKeystoneFirmware == nil)
         }
-        // `createTransactionFromPCZT`'s own guard bails with no state change: `pcztWithProofs` was
-        // never set, so this proves scheduling happened without needing to mock the synchronizer.
-        await store.receive(.createTransactionFromPCZT)
-        await store.finish()
-
-        #expect(store.state.detectedKeystoneFirmware == nil)
     }
 
     @Test func unstampedFirmwarePresentsUpdateScreenWithNilDetectedVersion() async {
-        let store = makeStore()
-        let pczt = signedPczt(firmware: nil)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore()
+            let pczt = signedPczt(firmware: nil)
 
-        await store.send(.foundPCZT(pczt)) {
-            $0.isKeystoneCodeFound = true
+            await store.send(.foundPCZT(pczt)) {
+                $0.isKeystoneCodeFound = true
+            }
+            await store.receive(.keystoneFirmwareUpdateRequired)
+            await store.finish()
+
+            #expect(store.state.detectedKeystoneFirmware == nil)
+            #expect(store.state.pcztWithSigs == nil)
         }
-        await store.receive(.keystoneFirmwareUpdateRequired)
-        await store.finish()
-
-        #expect(store.state.detectedKeystoneFirmware == nil)
-        #expect(store.state.pcztWithSigs == nil)
     }
 
     @Test func closeClearsStateForRescan() async {
-        let store = makeStore()
-        let pczt = signedPczt(firmware: (2, 4, 6))
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore()
+            let pczt = signedPczt(firmware: (2, 4, 6))
 
-        await store.send(.foundPCZT(pczt)) {
-            $0.isKeystoneCodeFound = true
-            $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
-        }
-        await store.receive(.keystoneFirmwareUpdateRequired)
+            await store.send(.foundPCZT(pczt)) {
+                $0.isKeystoneCodeFound = true
+                $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
+            }
+            await store.receive(.keystoneFirmwareUpdateRequired)
 
-        await store.send(.keystoneFirmwareUpdateCloseTapped) {
-            $0.detectedKeystoneFirmware = nil
-            $0.isKeystoneCodeFound = false
+            // The reset now lives in the coordinators, not here: they pop this path element before
+            // this reducer would see the action. Covered by `KeystoneFirmwareCoordFlowTests`.
+            await store.send(.keystoneFirmwareUpdateCloseTapped)
+            await store.finish()
         }
-        await store.finish()
     }
 }

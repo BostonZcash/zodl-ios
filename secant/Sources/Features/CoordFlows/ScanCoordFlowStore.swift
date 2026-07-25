@@ -63,6 +63,7 @@ struct ScanCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
