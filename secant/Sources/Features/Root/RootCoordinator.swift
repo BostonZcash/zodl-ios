@@ -252,6 +252,26 @@ extension Root {
                 state.path = .serverSwitch
                 return .none
 
+                // MARK: - Ironwood Announcement
+
+            case .ironwoodAnnouncement(.continueTapped):
+                // The feature reducer already wrote the keychain acknowledgment flag; Root owns
+                // navigation. Routing through `.updateDestination` (rather than assigning
+                // `destinationState.destination` directly) is what lets a pending
+                // stale-wallet-healed notice be delivered on this arrival at Home — see
+                // `presentStaleWalletHealedAlertEffect` (RootStore.swift).
+                return .send(.destination(.updateDestination(.home)))
+
+            case .settings(.path(.element(id: _, action: .advancedSettings(.debugResetIronwoodAnnouncementTapped)))):
+                // The debug row itself writes the keychain flag; without also clearing this
+                // session's latch here, the reset wouldn't take effect until the app is
+                // relaunched (the latch is what keeps the already-acknowledged path from
+                // re-reading the keychain more than once per session). No `#if` needed: this
+                // action is unreachable in a production build because the row that sends it is
+                // compiled out (see AdvancedSettingsView).
+                state.ironwoodAnnouncementResolved = false
+                return .none
+
                 // MARK: - Keystone
 
             case .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),

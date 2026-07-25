@@ -277,6 +277,17 @@ private extension RootView {
                         store.send(.splashRemovalRequested)
                     }
 
+                case .ironwoodAnnouncement:
+                    IronwoodAnnouncementView(
+                        store: store.scope(
+                            state: \.ironwoodAnnouncementState,
+                            action: \.ironwoodAnnouncement
+                        )
+                    )
+                    .overlayedWithSplash(store.splashAppeared) {
+                        store.send(.splashRemovalRequested)
+                    }
+
                 case .welcome:
                     WelcomeView(
                         store: store.scope(

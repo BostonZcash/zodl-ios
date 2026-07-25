@@ -9,6 +9,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
 - [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+- [Ironwood] Once ZODL sees that the Ironwood network upgrade is live on the network, it shows a short one-time screen introducing the change, with a link to a support article. It appears once per device — after you continue past it, it never comes back.
 
 ### Changed
 - [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
