@@ -29,6 +29,40 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    @MainActor @Test func guideTappedShowsInAppBrowser() async {
+        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
+            IronwoodAnnouncement()
+        }
+
+        await store.send(.guideTapped) {
+            $0.isInAppBrowserOn = true
+        }
+
+        await store.finish()
+    }
+
+    /// Opening the guide is NOT acknowledgement of the announcement: unlike `continueTapped`,
+    /// `guideTapped` must never write the keychain flag. This records every call to the
+    /// dependency and asserts the list stays empty, so a regression that starts treating the
+    /// guide link as acknowledgement would fail here.
+    @MainActor @Test func guideTappedIsNotAcknowledgement() async {
+        let calls = LockIsolated<[Bool]>([])
+
+        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
+            IronwoodAnnouncement()
+        } withDependencies: {
+            $0.walletStorage.importIronwoodAnnouncementFlag = { flag in calls.withValue { $0.append(flag) } }
+        }
+
+        await store.send(.guideTapped) {
+            $0.isInAppBrowserOn = true
+        }
+
+        #expect(calls.value.isEmpty)
+
+        await store.finish()
+    }
+
     @MainActor @Test func continueTappedPersistsAcknowledgementFlagExactlyOnce() async {
         let calls = LockIsolated<[Bool]>([])
 

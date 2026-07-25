@@ -8541,26 +8541,50 @@
         }
       }
     },
-    "ironwoodAnnouncement.body" : {
-      "comment" : "MARK: - Ironwood Announcement. Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+    "ironwoodAnnouncement.body1" : {
+      "comment" : "MARK: - Ironwood Announcement. Spanish deliberately pending: this copy makes precise claims about shielded pools and about what becomes public when value leaves Orchard, so it must be translated by a person, not machine-translated.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ZODL now supports Zcash's Ironwood network upgrade. Final copy pending."
+            "value" : "Ironwood is a new shielded pool: the same protocol as Orchard, now formally verified and independently audited. Your funds are safe and your addresses still work."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.body2" : {
+      "comment" : "Spanish deliberately pending — see ironwoodAnnouncement.body1.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Orchard funds stay until you move them. You can still spend them, but value leaving Orchard is public, so spending publishes an amount on-chain, and it can be larger than you send."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.body3" : {
+      "comment" : "Spanish deliberately pending — see ironwoodAnnouncement.body1.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A more private migration is coming in a later update. It moves your funds in standard-sized pieces that don't identify you, so we recommend waiting."
           }
         }
       }
     },
     "ironwoodAnnouncement.continue" : {
-      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "comment" : "Primary button. The mixed-case \"Zodl\" is intentional and matches the approved design — do NOT change it to the all-uppercase \"ZODL\" used elsewhere in the app. A test pins this exact string. Spanish deliberately pending — see ironwoodAnnouncement.body1.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Continue"
+            "value" : "Go to Zodl"
           }
         }
       }
@@ -8577,8 +8601,44 @@
         }
       }
     },
+    "ironwoodAnnouncement.guideLink" : {
+      "comment" : "The tappable link run inside the guide sentence. Rendered semibold, underlined and in the link colour, and concatenated between ironwoodAnnouncement.guidePrefix and .guideSuffix. Translate as the noun phrase only, with no surrounding spaces or punctuation. Spanish deliberately pending — see ironwoodAnnouncement.body1.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "our guide"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.guidePrefix" : {
+      "comment" : "First of three fragments concatenated into one sentence: guidePrefix + guideLink + guideSuffix. The TRAILING SPACE is significant — without it the sentence renders as \"waitour guide\". Spanish deliberately pending — see ironwoodAnnouncement.body1.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you'd rather not wait, "
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.guideSuffix" : {
+      "comment" : "Last of three fragments concatenated into one sentence: guidePrefix + guideLink + guideSuffix. The LEADING SPACE is significant — without it the sentence renders as \"our guideexplains\". Spanish deliberately pending — see ironwoodAnnouncement.body1.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " explains how to move funds manually."
+          }
+        }
+      }
+    },
     "ironwoodAnnouncement.learnMore" : {
-      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "comment" : "Secondary button. Spanish deliberately pending — see ironwoodAnnouncement.body1.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -8590,13 +8650,13 @@
       }
     },
     "ironwoodAnnouncement.title" : {
-      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "comment" : "Spanish deliberately pending — see ironwoodAnnouncement.body1.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ironwood is here"
+            "value" : "Zcash Upgraded to Ironwood"
           }
         }
       }
