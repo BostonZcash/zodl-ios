@@ -17,6 +17,7 @@ extension Root {
     struct DestinationState {
         enum Destination {
             case deeplinkWarning
+            case ironwoodAnnouncement
             case notEnoughFreeSpace
             case onboarding
             case osStatusError

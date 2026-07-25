@@ -41,6 +41,10 @@ struct SendConfirmation {
         var amount: Zatoshi
         var canSendMail = false
         var currencyAmount: RedactableString
+        /// MOB-1510: firmware version detected on the most recent `foundPCZT` scan that failed the
+        /// minimum-firmware gate — `nil` when the scan carried no version stamp at all (firmware
+        /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateView`.
+        var detectedKeystoneFirmware: KeystoneFirmwareVersion?
         var failedCode: Int?
         var failedDescription: String?
         var isAnchorError = false
@@ -169,6 +173,14 @@ struct SendConfirmation {
         case backFromPCZTFailureTapped
         case createTransactionFromPCZT
         case foundPCZT(Pczt)
+        // MOB-1510: Keystone minimum-firmware gate — `keystoneFirmwareUpdateRequired` fires from
+        // `foundPCZT` in place of scheduling `createTransactionFromPCZT` when the signed PCZT's
+        // firmware is unstamped or below `KeystoneFirmwareVersion.minimumSupported`; on an accepted
+        // firmware, `foundPCZT` fires `keystoneFirmwareAccepted` for the coordinators to observe.
+        // `keystoneFirmwareUpdateCloseTapped` is `KeystoneFirmwareUpdateView`'s Close button.
+        case keystoneFirmwareAccepted
+        case keystoneFirmwareUpdateCloseTapped
+        case keystoneFirmwareUpdateRequired
         case pcztResolved(Pczt)
         case pcztSendFailed(ZcashError?)
         case pcztWithProofsResolved(Pczt)
@@ -464,12 +476,36 @@ struct SendConfirmation {
                 }
                 if !state.isKeystoneCodeFound {
                     state.isKeystoneCodeFound = true
-                    state.pcztWithSigs = pcztWithSigs
-                    return .run { send in
-                        try? await mainQueue.sleep(for: .seconds(Constants.delay))
-                        await send(.createTransactionFromPCZT)
+
+                    // MOB-1510: firmware >= 2.4.6 stamps its version into every signed PCZT, two
+                    // releases before the minimum this gate enforces — an unstamped PCZT is
+                    // therefore necessarily below minimum, never merely "unknown".
+                    let detectedFirmware = pcztWithSigs.keystoneFirmwareVersion()
+                    guard let detectedFirmware, detectedFirmware >= KeystoneFirmwareVersion.minimumSupported else {
+                        state.detectedKeystoneFirmware = detectedFirmware
+                        return .send(.keystoneFirmwareUpdateRequired)
                     }
+
+                    state.pcztWithSigs = pcztWithSigs
+                    return .merge(
+                        .send(.keystoneFirmwareAccepted),
+                        .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                            await send(.createTransactionFromPCZT)
+                        }
+                    )
                 }
+                return .none
+
+            case .keystoneFirmwareAccepted:
+                return .none
+
+            case .keystoneFirmwareUpdateRequired:
+                return .none
+
+            case .keystoneFirmwareUpdateCloseTapped:
+                // Handled by the coordinators: they pop this path element before this reducer would
+                // see the action, same shape as `backFromPCZTFailureTapped`.
                 return .none
 
             case .resolvePCZT:

@@ -13,6 +13,7 @@ import ComposableArchitecture
 struct SignWithKeystoneCoordFlow {
     @Reducer
     enum Path {
+        case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
         case scan(Scan)
         case sending(SendConfirmation)
@@ -37,6 +38,7 @@ struct SignWithKeystoneCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.walletStorage) var walletStorage
 
     init() { }
