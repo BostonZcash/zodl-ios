@@ -17308,6 +17308,74 @@
         }
       }
     },
+    "sync.message.error.branchId" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expected consensus branch ID: %1$@\nServer's consensus branch ID: %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID de rama de consenso esperado: %1$@\nID de rama de consenso del servidor: %2$@"
+          }
+        }
+      }
+    },
+    "sync.message.error.code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error code: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código de error: %@"
+          }
+        }
+      }
+    },
+    "sync.message.error.incompatibleServer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL can't sync with this server. Its network rules don't match the ones this version of ZODL expects, which means either ZODL or the server is out of date, or the server is on a different network."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL no puede sincronizar con este servidor. Sus reglas de red no coinciden con las que espera esta versión de ZODL, lo que significa que ZODL o el servidor está desactualizado, o que el servidor está en otra red."
+          }
+        }
+      }
+    },
+    "sync.message.error.server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Servidor: %@"
+          }
+        }
+      }
+    },
     "sync.message.stopped" : {
       "extractionState" : "manual",
       "localizations" : {
