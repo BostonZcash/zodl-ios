@@ -16,6 +16,7 @@ struct SendCoordFlow {
         case addressBook(AddressBook)
         case addressBookContact(AddressBook)
         case confirmWithKeystone(SendConfirmation)
+        case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
         case requestZecConfirmation(SendConfirmation)
         case scan(Scan)
@@ -45,6 +46,7 @@ struct SendCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.numberFormatter) var numberFormatter
 
     init() { }
