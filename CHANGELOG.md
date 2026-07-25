@@ -9,6 +9,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
 - [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+- [MOB-1535] Tapping your balance on the home screen now opens a "Total Balance Across Pools" breakdown showing how much ZEC sits in each Zcash pool — Orchard, Sapling, Transparent and Ironwood — so you can see exactly where your funds are. When currency conversion is turned on, each pool also shows its value in your selected currency. Pools you hold nothing in are still listed, and with balances hidden every amount stays masked.
 
 ### Changed
 - [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
