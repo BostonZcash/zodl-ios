@@ -14591,6 +14591,23 @@
         }
       }
     },
+    "smartBanner.help.syncError.incompatibleServer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't sync with this server"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se puede sincronizar con este servidor"
+          }
+        }
+      }
+    },
     "smartBanner.help.syncError.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17304,6 +17321,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Error: %@"
+          }
+        }
+      }
+    },
+    "sync.message.error.branchId" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expected branch ID: %1$@\nServer's branch ID: %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID de rama esperado: %1$@\nID de rama del servidor: %2$@"
+          }
+        }
+      }
+    },
+    "sync.message.error.code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error code: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código de error: %@"
+          }
+        }
+      }
+    },
+    "sync.message.error.incompatibleServer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This server is running different network rules than ZODL expects. Usually that means the app or the server is out of date, or they're on different networks.\nTry switching to another server. If this keeps happening, updating ZODL often fixes it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este servidor usa reglas de red distintas a las que ZODL espera. Normalmente significa que la app o el servidor están desactualizados, o que están en redes diferentes.\nPrueba a cambiar de servidor. Si el problema continúa, actualizar ZODL suele solucionarlo."
+          }
+        }
+      }
+    },
+    "sync.message.error.server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Servidor: %@"
           }
         }
       }
