@@ -27,6 +27,7 @@ extension Root {
         case checkWalletInitialization
         case checkWalletConfig
         case initializeSDK(WalletInitMode)
+        case initializeSDKFinished
         case staleWalletDatabaseHealed
         case presentStaleWalletHealedAlert
         case initialSetups
@@ -321,6 +322,12 @@ extension Root {
                 /// Stored wallet is present, database files may or may not be present, trying to initialize app state variables and environments.
                 /// When initialization succeeds user is taken to the home screen.
             case .initialization(.initializeSDK(let walletMode)):
+                // First prepare wins: a foreground transition (or any other re-entry into the
+                // initialization chain) while `prepareWith` is still in flight must not start a
+                // second concurrent prepare — see `isInitializingSDK`. Dropping the action is
+                // safe: the in-flight effect always ends in one of the terminal actions that
+                // clear the latch and drive navigation themselves.
+                guard !state.isInitializingSDK else { return .none }
                 do {
                     let storedWallet: StoredWallet
                     do {
@@ -331,7 +338,8 @@ extension Root {
                     let birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
                     try mnemonic.isValid(storedWallet.seedPhrase.value())
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    
+
+                    state.isInitializingSDK = true
                     return .run { send in
                         do {
                             let result = try await sdkSynchronizer.prepareWith(
@@ -436,7 +444,9 @@ extension Root {
                             // `initializationFailed` alert for (that only recovers on relaunch).
                             // Recompute wallet-initialization state in-session instead: with the
                             // database gone this resolves to `.filesMissing`, which re-enters the
-                            // existing restore path.
+                            // existing restore path. The latch must drop first or the re-entry's
+                            // own `.initializeSDK` would be swallowed by the single-flight guard.
+                            await send(.initialization(.initializeSDKFinished))
                             await send(.initialization(.checkWalletInitialization))
                         } catch {
                             await send(.initialization(.initializationFailed(error.toZcashError())))
@@ -473,7 +483,12 @@ extension Root {
                 state.alert = AlertState.staleWalletDatabaseHealed()
                 return .none
 
+            case .initialization(.initializeSDKFinished):
+                state.isInitializingSDK = false
+                return .none
+
             case .initialization(.initializationSuccessfullyDone):
+                state.isInitializingSDK = false
                 return .merge(
                     .send(.initialization(.registerForSynchronizersUpdate)),
                     .publisher {
@@ -782,6 +797,7 @@ extension Root {
                 return .none
 
             case .initialization(.initializationFailed(let error)):
+                state.isInitializingSDK = false
                 state.appInitializationState = .failed
                 state.alert = AlertState.initializationFailed(error)
                 return .none
