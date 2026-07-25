@@ -498,7 +498,10 @@ extension Root {
         return .merge(
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),
-            .send(.fetchTransactionsForTheSelectedAccount)
+            .concatenate(
+                .cancel(id: state.CancelTransactionsFetchId),
+                .send(.fetchTransactionsForTheSelectedAccount)
+            )
         )
     }
 }

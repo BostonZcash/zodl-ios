@@ -168,6 +168,58 @@ import ComposableArchitecture
         #expect(!aFetchCompleted.value)
     }
 
+    // MARK: - Repeated fetch dispatch during a sync must not starve every dispatch's result
+
+    /// A FINITE burst of dispatches is not a valid regression guard here: whichever dispatch is
+    /// last has nothing after it to cancel it, so it always lands undisturbed under both the
+    /// shared-id `cancelInFlight: true` bug and the fix -- it would pass either way and prove
+    /// nothing (an earlier draft of this test did exactly that, and passed against the unfixed
+    /// code). The dispatch pressure must still be ONGOING at the moment of assertion, the same way
+    /// a still-syncing wallet keeps re-triggering the fetch: a background loop keeps re-dispatching
+    /// `.fetchTransactionsForTheSelectedAccount` every ~50ms -- faster than the mocked ~300ms
+    /// `getAllTransactions` -- for ~2s, far longer than the 1s window given to the assertion below.
+    /// Under the shared-id/`cancelInFlight` bug, no fetch can ever survive long enough to complete
+    /// while that pressure continues, so the wait times out; under the fix, the first fetch is
+    /// allowed to run to completion regardless of later dispatches and lands well inside the
+    /// window.
+    @Test func repeatedFetchDispatchesDuringSyncAllLandTheirResult() async {
+        let account = Self.walletAccount(idByte: 69)
+        let expectedTransaction = tx(id: "sync-landed-tx")
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$transactions.withLock { $0 = [] }
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.sdkSynchronizer.getAllTransactions = { _ in
+                try await Task.sleep(nanoseconds: 300_000_000)
+                return IdentifiedArrayOf<TransactionState>(uniqueElements: [expectedTransaction])
+            }
+        }
+
+        // Mirrors a throttled, still-syncing event stream: keeps re-triggering the fetch faster
+        // than any one fetch can complete, for far longer than the assertion's own window below.
+        let dispatchTask = Task { @MainActor in
+            for _ in 0..<40 {
+                if Task.isCancelled { break }
+                store.send(.fetchTransactionsForTheSelectedAccount)
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+
+        await waitForRootStore(timeoutNanoseconds: 1_000_000_000) {
+            store.state.transactions.contains { $0.id == expectedTransaction.id }
+        }
+
+        #expect(store.state.transactions.contains { $0.id == expectedTransaction.id })
+
+        dispatchTask.cancel()
+        _ = await dispatchTask.value
+    }
+
     // MARK: - (c) Keystone-connect auto-select parity
 
     /// `AddHWWalletStore`'s `.loadedWalletAccounts` flips `state.selectedWalletAccount` directly

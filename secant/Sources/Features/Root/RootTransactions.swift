@@ -56,18 +56,24 @@ extension Root {
                 guard let accountUUID = state.selectedWalletAccount?.id else {
                     return .none
                 }
-                // `cancelInFlight: true` on a stable, shared id means every fresh dispatch of this
-                // action -- whichever account it's for -- cancels whatever fetch was still running
-                // under this same id. This is the "belt": it closes the race for the common case,
-                // but a slow enrichment loop that has already passed its last cancellation checkpoint
-                // can still complete and call `send` -- the `.fetchedTransactions` provenance guard
-                // below is what actually keeps that from corrupting `state.transactions`.
+                // This id exists so an account switch can cancel whatever fetch is still running
+                // for the account just left (see `accountSwitchedEffect` in `RootCoordinator.swift`,
+                // which explicitly `.cancel`s this id before sending a fresh fetch for the new
+                // account). `cancelInFlight` is deliberately NOT used here: during a sync,
+                // `sdkSynchronizer.eventStream()` is throttled to one event per 0.2s and every
+                // `foundTransactions`/`minedTransaction` re-dispatches this action (see above) -- on
+                // a wallet where `getAllTransactions` takes longer than that 0.2s interval,
+                // `cancelInFlight` would cancel every one of those fetches before it could complete,
+                // starving `.fetchedTransactions` for the whole sync. Letting concurrent fetches for
+                // the same account run to completion is harmless: the `.fetchedTransactions`
+                // provenance guard below still drops any payload for an account other than the one
+                // currently selected.
                 return .run { send in
                     if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
                         await send(.fetchedTransactions(accountUUID, transactions))
                     }
                 }
-                .cancellable(id: state.CancelTransactionsFetchId, cancelInFlight: true)
+                .cancellable(id: state.CancelTransactionsFetchId)
 
             case .fetchedTransactions(let accountUUID, var transactions):
                 // Load-bearing provenance guard -- drop a payload that belongs to an account other
