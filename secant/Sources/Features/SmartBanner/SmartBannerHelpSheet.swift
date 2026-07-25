@@ -58,10 +58,16 @@ extension SmartBannerView {
 
     @ViewBuilder func syncingErrorHelpContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(localizable: .smartBannerHelpSyncErrorTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .padding(.top, 32)
-                .padding(.bottom, 12)
+            // A server-validation failure is specific enough to name in the title; every other sync
+            // error keeps the generic one, since the sheet is shared by all of them.
+            Text(
+                localizable: store.lastKnownErrorIsIncompatibleServer
+                    ? .smartBannerHelpSyncErrorIncompatibleServerTitle
+                    : .smartBannerHelpSyncErrorTitle
+            )
+            .zFont(.semiBold, size: 20, style: Design.Text.primary)
+            .padding(.top, 32)
+            .padding(.bottom, 12)
 
             Text(store.lastKnownErrorMessage)
                 .zFont(size: 16, style: Design.Text.tertiary)

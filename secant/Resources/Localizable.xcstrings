@@ -14591,6 +14591,23 @@
         }
       }
     },
+    "smartBanner.help.syncError.incompatibleServer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't sync with this server"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se puede sincronizar con este servidor"
+          }
+        }
+      }
+    },
     "smartBanner.help.syncError.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17314,13 +17331,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Expected consensus branch ID: %1$@\nServer's consensus branch ID: %2$@"
+            "value" : "Expected branch ID: %1$@\nServer's branch ID: %2$@"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ID de rama de consenso esperado: %1$@\nID de rama de consenso del servidor: %2$@"
+            "value" : "ID de rama esperado: %1$@\nID de rama del servidor: %2$@"
           }
         }
       }
@@ -17348,13 +17365,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ZODL can't sync with this server. Its network rules don't match the ones this version of ZODL expects, which means either ZODL or the server is out of date, or the server is on a different network."
+            "value" : "This server is running different network rules than ZODL expects. Usually that means the app or the server is out of date, or they're on different networks.\nTry switching to another server. If this keeps happening, updating ZODL often fixes it."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ZODL no puede sincronizar con este servidor. Sus reglas de red no coinciden con las que espera esta versión de ZODL, lo que significa que ZODL o el servidor está desactualizado, o que el servidor está en otra red."
+            "value" : "Este servidor usa reglas de red distintas a las que ZODL espera. Normalmente significa que la app o el servidor están desactualizados, o que están en redes diferentes.\nPrueba a cambiar de servidor. Si el problema continúa, actualizar ZODL suele solucionarlo."
           }
         }
       }

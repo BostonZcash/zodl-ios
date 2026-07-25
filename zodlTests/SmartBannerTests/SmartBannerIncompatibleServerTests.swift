@@ -108,8 +108,8 @@ import Testing
         let reportBody = store.state.supportData?.message ?? store.state.messageToBeShared ?? ""
 
         #expect(reportBody.contains("Server: outdated.example.com:443"))
-        #expect(reportBody.contains("Expected consensus branch ID: 0x5437f330"))
-        #expect(reportBody.contains("Server's consensus branch ID: 0x37a5165b"))
+        #expect(reportBody.contains("Expected branch ID: 0x5437f330"))
+        #expect(reportBody.contains("Server's branch ID: 0x37a5165b"))
         #expect(reportBody.contains("Error code: ZCBPEO0011"))
     }
 

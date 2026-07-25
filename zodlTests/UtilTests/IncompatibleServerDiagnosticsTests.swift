@@ -78,8 +78,8 @@ import Testing
         )
 
         #expect(message.contains("Server: outdated.example.com:443"))
-        #expect(message.contains("Expected consensus branch ID: 0x5437f330"))
-        #expect(message.contains("Server's consensus branch ID: 0x37a5165b"))
+        #expect(message.contains("Expected branch ID: 0x5437f330"))
+        #expect(message.contains("Server's branch ID: 0x37a5165b"))
         #expect(message.contains("Error code: ZCBPEO0011"))
     }
 
@@ -103,12 +103,13 @@ import Testing
         )
 
         let lines = message.components(separatedBy: "\n")
-        // Explanation, blank line, then exactly one fact per line.
-        #expect(lines.count == 6)
+        // Two-sentence explanation, blank line, then exactly one fact per line.
+        #expect(lines.count == 7)
         #expect(lines[0].hasSuffix("."))
-        #expect(lines[1].isEmpty)
-        #expect(lines[2].hasPrefix("Server: "))
-        #expect(lines[5].hasPrefix("Error code: "))
+        #expect(lines[1].hasSuffix("."))
+        #expect(lines[2].isEmpty)
+        #expect(lines[3].hasPrefix("Server: "))
+        #expect(lines[6].hasPrefix("Error code: "))
         // None of the SDK's unpunctuated text or its raw enum dump leaks in.
         #expect(!message.contains("compactBlockProcessorWrongConsensusBranchId"))
         #expect(!message.contains("expecting This could be caused by"))
@@ -166,8 +167,8 @@ import Testing
 
         #expect(message.contains("Server: wrongnet.example.com:443"))
         #expect(message.contains("Error code: ZCBPEO0012"))
-        #expect(!message.contains("consensus branch ID"))
-        #expect(message.components(separatedBy: "\n").count == 4)
+        #expect(!message.contains("branch ID"))
+        #expect(message.components(separatedBy: "\n").count == 5)
     }
 
     @Test func unrelatedErrorsAreNotIncompatibleServer() {
