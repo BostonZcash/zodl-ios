@@ -17,8 +17,6 @@ struct WalletBalancesView: View {
     let shortened: Bool
     let balanceTappable: Bool
 
-    @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
-
     init(
         store: StoreOf<WalletBalances>,
         tokenName: String,
@@ -76,7 +74,7 @@ struct WalletBalancesView: View {
     }
     
     @ViewBuilder private func tappableBalanceContent() -> some View {
-        if balanceTappable && !isSensitiveContentHidden {
+        if balanceTappable {
             Button {
                 store.send(.balanceTapped)
             } label: {

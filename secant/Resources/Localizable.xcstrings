@@ -9785,7 +9785,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu saldo de ZEC ahora está desglosado por pool de Zcash, para que veas exactamente dónde están tus fondos."
+            "value" : "Tu saldo de ZEC ahora se desglosa por pool de Zcash, para que veas exactamente dónde están tus fondos."
           }
         }
       }
@@ -9870,7 +9870,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Saldo total entre pools"
+            "value" : "Saldo Total En Todos Los Pools"
           }
         }
       }

@@ -62,8 +62,10 @@ extension HomeView {
                     ZatoshiText(balance, .expanded)
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
-                    Text(tokenName)
-                        .zFont(.semiBold, size: 16, style: Design.Text.tertiary)
+                    if !isSensitiveContentHidden {
+                        Text(tokenName)
+                            .zFont(.semiBold, size: 16, style: Design.Text.tertiary)
+                    }
                 }
             } else {
                 ZatoshiText(balance, .expanded, tokenName)
