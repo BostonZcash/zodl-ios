@@ -59,7 +59,9 @@ extension HomeView {
 
             if dimmedToken {
                 HStack(spacing: 4) {
-                    ZatoshiText(balance, .expanded)
+                    // .abbreviated matches the home screen's balance label: floored to 0.001 ZEC,
+                    // always three fraction digits.
+                    ZatoshiText(balance, .abbreviated)
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
                     if !isSensitiveContentHidden {
@@ -70,7 +72,7 @@ extension HomeView {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             } else {
-                ZatoshiText(balance, .expanded, tokenName)
+                ZatoshiText(balance, .abbreviated, tokenName)
                     .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
