@@ -6,7 +6,16 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
+- [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+
+### Changed
+- [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
+
 ### Fixed
+- [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
+- [MOB-140] On the Receive screen, the Zcash Sapling address (testnet debug builds only) now shows the same shield badge on its icon as the Zcash Shielded Address, instead of an incomplete badge that made the address look unshielded.
 - [#1948] The Syncing Error details now name the server ZODL is connected to and show both consensus branch IDs in hex (e.g. `0x37a5165b`) — the form used in ZIPs and other documentation — rather than unrecognizable decimal numbers, and the same information is included in the report sent to support. When the failure is a network-rules mismatch (ZCBPEO0011), where retrying can never succeed because either ZODL or the server is out of date, the sheet also offers a Switch server shortcut.
 - [#1943] Fixed a wallet initialization bug: initialization is now single-flight, so repeated startup triggers while the wallet is still initializing are ignored until it finishes.
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
