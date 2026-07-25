@@ -8541,6 +8541,180 @@
         }
       }
     },
+    "ironwoodAnnouncement.body1" : {
+      "comment" : "MARK: - Ironwood Announcement. Copy and its Spanish translation both come from MOB-1533; the English is verbatim from the approved design.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood is a new shielded pool: the same protocol as Orchard, now formally verified and independently audited. Your funds are safe and your addresses still work."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood es un nuevo grupo protegido: el mismo protocolo que Orchard, ahora verificado formalmente y auditado de forma independiente. Tus fondos están seguros y tus direcciones siguen funcionando."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.body2" : {
+      "comment" : "Copy and Spanish translation from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Orchard funds stay until you move them. You can still spend them, but value leaving Orchard is public, so spending publishes an amount on-chain, and it can be larger than you send."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tus fondos en Orchard permanecen ahí hasta que los muevas. Puedes seguir gastándolos, pero el valor que sale de Orchard es público: al gastar se publica un monto en la cadena de bloques, y puede ser mayor que el que envías."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.body3" : {
+      "comment" : "Copy and Spanish translation from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A more private migration is coming in a later update. It moves your funds in standard-sized pieces that don't identify you, so we recommend waiting."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una migración más privada llegará en una actualización posterior. Mueve tus fondos en partes de tamaño estándar que no te identifican, por eso recomendamos esperar."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.continue" : {
+      "comment" : "Primary button. The mixed-case \"Zodl\" is intentional in both languages and matches the approved design — do NOT change it to the all-uppercase \"ZODL\" used elsewhere in the app. A test pins the English string. Spanish from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go to Zodl"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ir a Zodl"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.debugReset" : {
+      "comment" : "Debug-only, compiled in behind #if !SECANT_DISTRIB. Never ships to users, so it needs no translation — not now, not later.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Ironwood announcement"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.guideLink" : {
+      "comment" : "The tappable link run inside the guide sentence, concatenated between guidePrefix and guideSuffix. Rendered semibold, underlined and in the link colour. Translate as the noun phrase only, with no surrounding spaces or punctuation. Spanish from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "our guide"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nuestra guía"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.guidePrefix" : {
+      "comment" : "First of three fragments concatenated into one sentence: guidePrefix + guideLink + guideSuffix. The TRAILING SPACE is significant in every language — without it the sentence renders as \"waitour guide\". Spanish from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you'd rather not wait, "
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si prefieres no esperar, "
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.guideSuffix" : {
+      "comment" : "Last of three fragments concatenated into one sentence: guidePrefix + guideLink + guideSuffix. The LEADING SPACE is significant in every language — without it the sentence renders as \"our guideexplains\". Spanish from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " explains how to move funds manually."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " explica cómo mover los fondos manualmente."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.learnMore" : {
+      "comment" : "Secondary button. NOTE: this Spanish is NOT from MOB-1533 — that ticket describes only the inline guide link and the primary button, so it carries no translation for this one. \"Más información\" is the standard iOS Spanish for this label and should be confirmed by a translator.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Learn more"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Más información"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.title" : {
+      "comment" : "Copy and Spanish translation from MOB-1533.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zcash Upgraded to Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zcash se actualizó a Ironwood"
+          }
+        }
+      }
+    },
     "keepScreenOnRestoring" : {
       "extractionState" : "manual",
       "localizations" : {

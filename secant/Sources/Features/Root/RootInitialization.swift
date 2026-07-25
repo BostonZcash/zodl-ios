@@ -70,6 +70,12 @@ extension Root {
                     }
                 }
                 state.appStartState = .willEnterForeground
+                // Placed after the biometric re-auth block above so that block's possible
+                // `splashAppeared = false` has already landed before the safety gate reads it.
+                // The tip survives backgrounding in memory (`sdkSynchronizer.latestState()`),
+                // which is what makes this call site immediate rather than waiting for a fresh
+                // sync tick to repopulate it via `.synchronizerStateChanged`.
+                presentIronwoodAnnouncementIfNeeded(state: &state, tip: sdkSynchronizer.latestState().latestBlockHeight)
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
                     return .send(.initialization(.initialSetups))
                 } else {
@@ -108,6 +114,13 @@ extension Root {
                 }
                 
             case .synchronizerStateChanged(let latestState):
+                // Must run above the `selectedWalletAccount` guard and the background-task
+                // branch below — both early-return, but the announcement gate has to keep
+                // evaluating on every sync tick regardless of whether an account is selected
+                // (normal on a fresh install) or a background task is in flight (already
+                // excluded by `canPresentIronwoodAnnouncement`'s own `bgTask == nil` term).
+                presentIronwoodAnnouncementIfNeeded(state: &state, tip: latestState.data.latestBlockHeight)
+
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
                 guard let account = state.selectedWalletAccount else {
@@ -846,5 +859,47 @@ extension Root {
             return true
         default: return false
         }
+    }
+
+    /// Presents the one-time Ironwood announcement screen once the device hasn't acknowledged
+    /// it yet, Ironwood is active on chain, and it is safe to take the screen over. Called from
+    /// both `.synchronizerStateChanged` (cold start and the tail of a restore) and
+    /// `.appDelegate(.willEnterForeground)` (returning to the foreground, where the tip is
+    /// already known in memory from before backgrounding) — together the two cover every moment
+    /// the tip or the safety gate can newly satisfy the predicate.
+    ///
+    /// Each guard below is load-bearing and deliberately ordered:
+    /// 1. the in-memory per-session latch short-circuits every call once the gate has already
+    ///    "resolved" this session (presented, or found already-acknowledged in the keychain);
+    /// 2. the tip/activation check runs before any keychain access — cheap, and it keeps the
+    ///    (overwhelmingly common, pre-activation) path from ever touching the keychain. `tip > 0`
+    ///    is a deliberate fail-safe: the chain tip is in-memory only and reads `0` before the
+    ///    first successful server round-trip, and an unknown tip must count as "not active" —
+    ///    never as a false positive that skips straight past activation;
+    /// 3. the keychain read happens at most once per session: as soon as it reports
+    ///    already-acknowledged, the latch is set so this guard is never evaluated again;
+    /// 4. the safety gate is re-checked on every call and deliberately does NOT set the latch on
+    ///    failure, so a blocked attempt (e.g. mid-flow) retries on a later tick instead of being
+    ///    silently skipped for the rest of the session.
+    func presentIronwoodAnnouncementIfNeeded(state: inout Root.State, tip: BlockHeight) {
+        guard !state.ironwoodAnnouncementResolved else { return }
+        guard tip > 0, tip >= zcashSDKEnvironment.ironwoodActivationHeight() else { return }
+        guard walletStorage.exportIronwoodAnnouncementFlag() != true else {
+            state.ironwoodAnnouncementResolved = true
+            return
+        }
+        guard state.canPresentIronwoodAnnouncement else { return }
+        state.ironwoodAnnouncementResolved = true
+        // Assigned directly rather than sending `.destination(.updateDestination(...))`: the
+        // two call sites below have several early-return paths of their own, and merging an
+        // effect into all of them would be invasive. The two things `updateDestination` adds
+        // over a direct assignment — the deeplink-warning guard and the deferred
+        // stale-wallet-healed alert hook — are both no-ops here: `canPresentIronwoodAnnouncement`
+        // already requires `destination == .home`, so the deeplink-warning screen can't be in
+        // play, and the heal hook only fires when the destination is moving TO `.home`, not away
+        // from it. There is precedent for a direct assignment in this same file — see
+        // `state.destinationState.destination = .home` in the `.phraseDisplay(.finishedTapped)` /
+        // `.onboarding(.newWalletSuccessfulyCreated)` arm above.
+        state.destinationState.destination = .ironwoodAnnouncement
     }
 }
