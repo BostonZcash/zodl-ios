@@ -63,6 +63,13 @@ struct Root {
         var exportLogsState: ExportLogs.State
         @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
         var homeState: Home.State = .initial
+        /// Single-flight latch for `.initialization(.initializeSDK)`. The SDK reports an
+        /// unprepared status until `prepare` fully returns, so `willEnterForeground` (and any
+        /// other re-entry into the initialization chain) would otherwise dispatch a second
+        /// concurrent `prepareWith`. Initialization must never run concurrently ([#1943]):
+        /// the first prepare wins and re-entries are dropped until the in-flight effect
+        /// signals completion on every terminal path.
+        var isInitializingSDK = false
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
         var isStaleWalletHealedAlertPending = false
