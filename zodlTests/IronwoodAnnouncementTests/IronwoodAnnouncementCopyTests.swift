@@ -71,6 +71,31 @@ import Foundation
         #expect(suffix.hasPrefix(" "), "guideSuffix must keep its leading space, or the sentence reads 'guideexplains'")
     }
 
+    // MARK: - Case 2b: the same guide sentence, in every shipped language
+
+    /// The significant-space trap above is not an English-only risk — it is *more* likely in a
+    /// translation, where the fragments are handed over individually and a trailing space looks
+    /// like an accident. This walks every localisation the app ships and asserts the two outer
+    /// fragments still carry their spaces, so a future language cannot land the "waitour guide"
+    /// bug unnoticed. Reads the compiled `.lproj` catalogues directly, since `String(localizable:)`
+    /// only ever resolves the test process's own locale.
+    @Test func guideFragmentsKeepTheirSignificantSpacesInEveryLanguage() throws {
+        let localizations = Bundle.main.localizations.filter { $0 != "Base" }
+        #expect(localizations.contains("es"), "expected the Spanish catalogue to ship")
+
+        for code in localizations {
+            let bundle = try #require(
+                Bundle.main.path(forResource: code, ofType: "lproj").flatMap { Bundle(path: $0) },
+                "no compiled catalogue for \(code)"
+            )
+            let prefix = bundle.localizedString(forKey: "ironwoodAnnouncement.guidePrefix", value: nil, table: "Localizable")
+            let suffix = bundle.localizedString(forKey: "ironwoodAnnouncement.guideSuffix", value: nil, table: "Localizable")
+
+            #expect(prefix.hasSuffix(" "), "[\(code)] guidePrefix lost its trailing space: \(prefix)")
+            #expect(suffix.hasPrefix(" "), "[\(code)] guideSuffix lost its leading space: \(suffix)")
+        }
+    }
+
     // MARK: - Case 3: the primary button's intentional mixed-case exception
 
     /// Elsewhere in the app the product name is always written all-uppercase "ZODL" (see this
