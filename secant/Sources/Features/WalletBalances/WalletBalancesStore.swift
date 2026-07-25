@@ -54,7 +54,7 @@ struct WalletBalances {
         }
 
         var currencyValue: String {
-            currencyConversion?.convert(totalBalance) ?? ""
+            fiatValue(totalBalance)
         }
 
         var isFiatAvailable: Bool {

@@ -67,15 +67,21 @@ extension HomeView {
                             .zFont(.semiBold, size: 16, style: Design.Text.tertiary)
                     }
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             } else {
                 ZatoshiText(balance, .expanded, tokenName)
                     .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
 
             if store.walletBalancesState.isFiatAvailable {
                 Text(store.walletBalancesState.fiatValue(balance))
                     .hiddenIfSet()
                     .zFont(size: 12, style: Design.Text.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -79,6 +79,7 @@ struct WalletBalancesView: View {
                 store.send(.balanceTapped)
             } label: {
                 balanceContent()
+                    .contentShape(Rectangle())
             }
             .accessibilityIdentifier(AccessibilityID.Home.totalBalanceButton)
         } else {
