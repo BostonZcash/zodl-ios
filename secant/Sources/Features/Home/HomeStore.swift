@@ -20,6 +20,7 @@ struct Home {
         var migratingDatabase = true
         var moreRequest = false
         var payRequest = false
+        var poolBalancesRequest = false
         var smartBannerState = SmartBanner.State.initial
         var walletConfig: WalletConfig
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -80,6 +81,7 @@ struct Home {
         case onDisappear
         case payTapped
         case payWithNearTapped
+        case poolBalancesDismissTapped
         case presentKeystoneWeb
         case rateTooltipTapped
         case receiveScreenRequested
@@ -287,6 +289,14 @@ struct Home {
                     return .none
                 }
                 state.isRateTooltipEnabled = state.walletBalancesState.isExchangeRateStale
+                return .none
+
+            case .walletBalances(.balanceTapped):
+                state.poolBalancesRequest = true
+                return .none
+
+            case .poolBalancesDismissTapped:
+                state.poolBalancesRequest = false
                 return .none
 
             case .alert(.presented(let action)):

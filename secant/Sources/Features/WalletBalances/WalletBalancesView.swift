@@ -15,23 +15,28 @@ struct WalletBalancesView: View {
     let tokenName: String
     let couldBeHidden: Bool
     let shortened: Bool
+    let balanceTappable: Bool
+
+    @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
 
     init(
         store: StoreOf<WalletBalances>,
         tokenName: String,
         couldBeHidden: Bool = false,
-        shortened: Bool = false
+        shortened: Bool = false,
+        balanceTappable: Bool = false
     ) {
         self.store = store
         self.tokenName = tokenName
         self.couldBeHidden = couldBeHidden
         self.shortened = shortened
+        self.balanceTappable = balanceTappable
     }
 
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
-                balanceContent()
+                tappableBalanceContent()
                     .padding(.top, 40)
                     .anchorPreference(
                         key: ExchangeRateFeaturePreferenceKey.self,
@@ -70,6 +75,19 @@ struct WalletBalancesView: View {
         }
     }
     
+    @ViewBuilder private func tappableBalanceContent() -> some View {
+        if balanceTappable && !isSensitiveContentHidden {
+            Button {
+                store.send(.balanceTapped)
+            } label: {
+                balanceContent()
+            }
+            .accessibilityIdentifier(AccessibilityID.Home.totalBalanceButton)
+        } else {
+            balanceContent()
+        }
+    }
+
     @ViewBuilder private func balanceContent() -> some View {
         HStack(spacing: 0) {
             ZcashSymbol()
