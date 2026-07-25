@@ -42,6 +42,18 @@ struct Root {
         var CancelResyncStateId = UUID()
         var CancelStateId = UUID()
         var CancelTransactionsStateId = UUID()
+        /// The `.fetchTransactionsForTheSelectedAccount` fetch effect's own cancel id. An account
+        /// switch (`RootCoordinator.swift`'s `accountSwitchedEffect`) explicitly `.cancel`s this id
+        /// before sending a fresh fetch for the newly-selected account, so a fetch still running for
+        /// the account just left can't land after the switch. This id is deliberately NOT combined
+        /// with `cancelInFlight` on the fetch effect itself: during a sync,
+        /// `sdkSynchronizer.eventStream()` is throttled to one event per 0.2s and every
+        /// `foundTransactions`/`minedTransaction` re-dispatches the same action, so on a wallet
+        /// where `getAllTransactions` takes longer than that 0.2s interval, `cancelInFlight` would
+        /// cancel every one of those fetches before any could complete, starving
+        /// `.fetchedTransactions` for the whole sync. The `.fetchedTransactions` provenance guard is
+        /// what actually keeps a stale or wrong-account payload from corrupting `state.transactions`.
+        var CancelTransactionsFetchId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()
@@ -285,7 +297,7 @@ struct Root {
         case foundTransactions([ZcashTransaction.Overview])
         case minedTransaction(ZcashTransaction.Overview)
         case fetchTransactionsForTheSelectedAccount
-        case fetchedTransactions(IdentifiedArrayOf<TransactionState>)
+        case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         case noChangeInTransactions
         
         // Address Book
