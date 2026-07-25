@@ -2,16 +2,9 @@
 //  KeystoneFirmwareUpdateView.swift
 //  Zashi
 //
-//  MOB-1510: Keystone minimum-firmware gate failure screen — mirrors `PreSendingFailureView`'s
-//  structure exactly (illustration, title, body, `applyFailureScreenBackground()`, `ZashiButton`).
-//  Presented as a coordinator path element from every send-side Keystone signing surface (the 4
-//  send `CoordFlowCoordinator`s) once `SendConfirmationStore.foundPCZT` detects firmware below
-//  `KeystoneFirmwareVersion.minimumSupported`, or no version stamp at all.
-//
-//  `KeystoneFirmwareUpdateContent` below carries the illustration/title/body only (no button, no
-//  screen-centering spacers), so any other presentation of the same gate — a sheet in a flow with
-//  no `SendConfirmation` of its own to scope a store from — can reuse the SAME copy and visual
-//  without depending on this feature's store or its full-screen layout.
+//  MOB-1510's firmware gate failure screen; mirrors `PreSendingFailureView`'s structure.
+//  `KeystoneFirmwareUpdateContent` below is split out (store-less) so a presentation without
+//  its own `SendConfirmation` store can still reuse the same copy.
 //
 
 import SwiftUI
@@ -29,11 +22,11 @@ struct KeystoneFirmwareUpdateView: View {
             VStack(spacing: 0) {
                 Spacer()
 
-                KeystoneFirmwareUpdateContent(detectedVersion: store.detectedKeystoneFirmware)
+                KeystoneFirmwareUpdateContent(illustration: store.failureIlustration, detectedVersion: store.detectedKeystoneFirmware)
 
                 Spacer()
 
-                ZashiButton(String(localizable: .keystoneFirmwareUpdateClose)) {
+                ZashiButton(String(localizable: .generalClose)) {
                     store.send(.keystoneFirmwareUpdateCloseTapped)
                 }
                 .padding(.bottom, 24)
@@ -46,20 +39,21 @@ struct KeystoneFirmwareUpdateView: View {
     }
 }
 
-/// Illustration + title + body for MOB-1510's firmware-update prompt. Used by the full-screen
-/// `KeystoneFirmwareUpdateView` above (the 4 send-side coordinators), and factored out so a
-/// store-less presentation of the same gate can reuse it — see this file's header comment.
+/// Illustration + title + body for the firmware-update prompt; store-less so other presentations
+/// of the gate can reuse it.
 struct KeystoneFirmwareUpdateContent: View {
+    let illustration: Image
     let detectedVersion: KeystoneFirmwareVersion?
 
     var body: some View {
         VStack(spacing: 0) {
-            Asset.Assets.Illustrations.failure3.image
+            illustration
                 .resizable()
                 .frame(width: 148, height: 148)
 
             Text(String(localizable: .keystoneFirmwareUpdateTitle))
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
                 .padding(.top, 16)
 
             Text(bodyText)
