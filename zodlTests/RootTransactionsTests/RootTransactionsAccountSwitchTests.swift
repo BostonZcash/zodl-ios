@@ -168,23 +168,47 @@ import ComposableArchitecture
         #expect(!aFetchCompleted.value)
     }
 
-    // MARK: - Repeated fetch dispatch during a sync must not starve every dispatch's result
+    // MARK: - A later fetch dispatch during a sync must not starve an earlier one
 
-    /// A FINITE burst of dispatches is not a valid regression guard here: whichever dispatch is
-    /// last has nothing after it to cancel it, so it always lands undisturbed under both the
-    /// shared-id `cancelInFlight: true` bug and the fix -- it would pass either way and prove
-    /// nothing (an earlier draft of this test did exactly that, and passed against the unfixed
-    /// code). The dispatch pressure must still be ONGOING at the moment of assertion, the same way
-    /// a still-syncing wallet keeps re-triggering the fetch: a background loop keeps re-dispatching
-    /// `.fetchTransactionsForTheSelectedAccount` every ~50ms -- faster than the mocked ~300ms
-    /// `getAllTransactions` -- for ~2s, far longer than the 1s window given to the assertion below.
-    /// Under the shared-id/`cancelInFlight` bug, no fetch can ever survive long enough to complete
-    /// while that pressure continues, so the wait times out; under the fix, the first fetch is
-    /// allowed to run to completion regardless of later dispatches and lands well inside the
-    /// window.
-    @Test func repeatedFetchDispatchesDuringSyncAllLandTheirResult() async {
+    /// Two traps an earlier draft of this test fell into -- both worth naming so they don't come
+    /// back:
+    ///
+    /// 1. A FINITE burst of dispatches is not a valid regression guard. Whichever dispatch is
+    ///    LAST has nothing after it to cancel it, so it always survives to completion under both
+    ///    the shared-id `cancelInFlight: true` bug and the fix -- asserting only that "a" result
+    ///    landed passes either way and proves nothing. The assertion has to be about a SPECIFIC
+    ///    earlier dispatch's own result landing, never about any result landing.
+    /// 2. A wall-clock window is not safe either. An earlier draft mocked `getAllTransactions` to
+    ///    sleep, kept re-dispatching faster than that sleep from a background loop, and asserted
+    ///    the result showed up within a fixed time budget. Swift Testing runs suites in parallel,
+    ///    and under the load of the full suite that budget can blow even with the fix in place --
+    ///    the test needs to tell "never" apart from "eventually", not "fast" apart from "slow".
+    ///
+    /// This version replaces both the burst and the clock with explicit gates:
+    ///  - the mocked `getAllTransactions` hands out a distinct call index per invocation (a
+    ///    `LockIsolated<Int>` counter) and returns a transaction identified by that index alone
+    ///    (`"fetch-1"`, `"fetch-2"`, ...), recording which indices have STARTED in a
+    ///    `LockIsolated<Set<Int>>`;
+    ///  - call #1 BLOCKS on a `LockIsolated<Bool>` release flag, polled with the THROWING form of
+    ///    `Task.sleep` -- never `try?` here, or a cancellation of this effect would be silently
+    ///    swallowed instead of propagating out as the dropped result it needs to be;
+    ///  - call #2 (and any later call) returns immediately.
+    ///
+    /// The sequence: dispatch A, wait for call #1 to start, dispatch B -- the exact moment the
+    /// shared-id bug would cancel A -- wait for call #2 to start, and only THEN release call #1.
+    /// Under the fix, A survives B untouched and, once released, lands `"fetch-1"`, overwriting
+    /// whatever B already wrote; the wait below finds it quickly regardless of machine load, so
+    /// giving it a generous budget costs nothing. Under the bug, A was cancelled the instant B was
+    /// dispatched, so `"fetch-1"` can NEVER land no matter how long the wait runs -- `"fetch-2"`
+    /// lands instead and stays there, which is exactly why the assertion names the id instead of
+    /// accepting any result. The pass/fail signal is never-versus-eventually: load can slow the
+    /// test down, but it can never flip the verdict.
+    @Test func earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult() async {
         let account = Self.walletAccount(idByte: 69)
-        let expectedTransaction = tx(id: "sync-landed-tx")
+
+        let callIndex = LockIsolated<Int>(0)
+        let callsStarted = LockIsolated<Set<Int>>([])
+        let releaseFirstCall = LockIsolated<Bool>(false)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -195,29 +219,47 @@ import ComposableArchitecture
         } withDependencies: {
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { _ in
-                try await Task.sleep(nanoseconds: 300_000_000)
-                return IdentifiedArrayOf<TransactionState>(uniqueElements: [expectedTransaction])
+                let index = callIndex.withValue { value -> Int in
+                    value += 1
+                    return value
+                }
+                callsStarted.withValue { $0.insert(index) }
+
+                if index == 1 {
+                    // Throwing sleep is load-bearing: if the shared-id bug cancels this effect
+                    // the moment dispatch B registers, that cancellation must propagate out of
+                    // this closure as a thrown error -- `try?` would swallow it and hang forever.
+                    while !releaseFirstCall.value {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                }
+
+                let transaction = TransactionState(
+                    fee: Zatoshi(10),
+                    id: "fetch-\(index)",
+                    status: .received,
+                    zecAmount: Zatoshi(100_000)
+                )
+                return IdentifiedArrayOf<TransactionState>(uniqueElements: [transaction])
             }
         }
 
-        // Mirrors a throttled, still-syncing event stream: keeps re-triggering the fetch faster
-        // than any one fetch can complete, for far longer than the assertion's own window below.
-        let dispatchTask = Task { @MainActor in
-            for _ in 0..<40 {
-                if Task.isCancelled { break }
-                store.send(.fetchTransactionsForTheSelectedAccount)
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
+        store.send(.fetchTransactionsForTheSelectedAccount)
+        await waitForRootStore(timeoutNanoseconds: 5_000_000_000) { callsStarted.value.contains(1) }
+
+        // The exact moment the shared-id/`cancelInFlight` bug would cancel call #1.
+        store.send(.fetchTransactionsForTheSelectedAccount)
+        await waitForRootStore(timeoutNanoseconds: 5_000_000_000) { callsStarted.value.contains(2) }
+
+        releaseFirstCall.setValue(true)
+
+        // Generous on purpose: under the fix this resolves almost immediately, and under the bug
+        // it can never resolve at all, so a wide budget only ever costs time in the broken case.
+        await waitForRootStore(timeoutNanoseconds: 10_000_000_000) {
+            store.state.transactions.contains { $0.id == "fetch-1" }
         }
 
-        await waitForRootStore(timeoutNanoseconds: 1_000_000_000) {
-            store.state.transactions.contains { $0.id == expectedTransaction.id }
-        }
-
-        #expect(store.state.transactions.contains { $0.id == expectedTransaction.id })
-
-        dispatchTask.cancel()
-        _ = await dispatchTask.value
+        #expect(store.state.transactions.contains { $0.id == "fetch-1" })
     }
 
     // MARK: - (c) Keystone-connect auto-select parity
