@@ -1,0 +1,62 @@
+//
+//  IronwoodAnnouncementTests.swift
+//  zodlTests
+//
+//  Created by Michal Fousek on 25.07.2026.
+//
+//  Covers Features/IronwoodAnnouncement/IronwoodAnnouncementStore.swift: showing the
+//  in-app browser for "Learn more", and that "Continue" persists the acknowledgement
+//  flag exactly once and never traps the user even if the keychain write fails.
+//
+
+import Testing
+import Foundation
+import ComposableArchitecture
+@testable import zodl_internal
+
+@Suite struct IronwoodAnnouncementTests {
+    private struct KeychainWriteFailure: Error { }
+
+    @MainActor @Test func learnMoreTappedShowsInAppBrowser() async {
+        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
+            IronwoodAnnouncement()
+        }
+
+        await store.send(.learnMoreTapped) {
+            $0.isInAppBrowserOn = true
+        }
+
+        await store.finish()
+    }
+
+    @MainActor @Test func continueTappedPersistsAcknowledgementFlagExactlyOnce() async {
+        let calls = LockIsolated<[Bool]>([])
+
+        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
+            IronwoodAnnouncement()
+        } withDependencies: {
+            $0.walletStorage.importIronwoodAnnouncementFlag = { flag in calls.withValue { $0.append(flag) } }
+        }
+
+        await store.send(.continueTapped)
+
+        #expect(calls.value == [true])
+
+        await store.finish()
+    }
+
+    /// A keychain write failure must not trap the user on this one-time announcement screen:
+    /// `continueTapped` swallows the error with `try?` instead of surfacing or retrying it, so
+    /// the action still completes cleanly with no state change and no effect.
+    @MainActor @Test func continueTappedSwallowsKeychainWriteFailure() async {
+        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
+            IronwoodAnnouncement()
+        } withDependencies: {
+            $0.walletStorage.importIronwoodAnnouncementFlag = { _ in throw KeychainWriteFailure() }
+        }
+
+        await store.send(.continueTapped)
+
+        await store.finish()
+    }
+}

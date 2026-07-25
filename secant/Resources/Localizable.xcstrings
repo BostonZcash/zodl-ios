@@ -8541,6 +8541,66 @@
         }
       }
     },
+    "ironwoodAnnouncement.body" : {
+      "comment" : "MARK: - Ironwood Announcement. Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL now supports Zcash's Ironwood network upgrade. Final copy pending."
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.continue" : {
+      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.debugReset" : {
+      "comment" : "Debug-only, compiled in behind #if !SECANT_DISTRIB. Never ships to users, so it needs no translation — not now, not later.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Ironwood announcement"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.learnMore" : {
+      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Learn more"
+          }
+        }
+      }
+    },
+    "ironwoodAnnouncement.title" : {
+      "comment" : "Placeholder copy — replace when the final Ironwood news copy arrives, and add the Spanish translation at the same time.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood is here"
+          }
+        }
+      }
+    },
     "keepScreenOnRestoring" : {
       "extractionState" : "manual",
       "localizations" : {
