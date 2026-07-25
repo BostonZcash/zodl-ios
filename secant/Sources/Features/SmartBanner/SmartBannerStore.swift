@@ -354,7 +354,16 @@ struct SmartBanner {
                     state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
                 }
 
-                if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {
+                // `SyncStatus.==` returns true for ANY two `.error` values (Synchronizer.swift), so a
+                // status comparison alone can never see one error replace another — the sheet would
+                // keep showing the first error's text, and its incompatible-server row would linger
+                // on an unrelated failure. Compare the rendered message as well for the error case.
+                var isDifferentError = false
+                if case .error = snapshot.syncStatus {
+                    isDifferentError = snapshot.message != state.lastKnownErrorMessage
+                }
+
+                if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus || isDifferentError {
                     state.synchronizerStatusSnapshot = snapshot
 
                     var isSyncing = false

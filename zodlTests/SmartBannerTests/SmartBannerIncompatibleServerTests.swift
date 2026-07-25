@@ -79,6 +79,22 @@ import Testing
         #expect(store.state.lastKnownErrorIsIncompatibleServer == false)
     }
 
+    /// Recovering from an incompatible server to an ordinary failure must clear the flag, otherwise
+    /// the row would linger on an unrelated error.
+    ///
+    /// Guards the `isDifferentError` check in the reducer: `SyncStatus.==` treats **any** two
+    /// `.error` values as equal (Synchronizer.swift), so a status comparison alone never sees one
+    /// error replace another and both this flag and `lastKnownErrorMessage` would go stale.
+    @Test func laterGenericErrorClearsTheFlag() async {
+        let store = makeStore()
+
+        await store.send(.synchronizerStateChanged(Self.syncState(.error(Self.incompatibleServerError))))
+        #expect(store.state.lastKnownErrorIsIncompatibleServer)
+
+        await store.send(.synchronizerStateChanged(Self.syncState(.error(ZcashError.compactBlockProcessorCritical))))
+        #expect(store.state.lastKnownErrorIsIncompatibleServer == false)
+    }
+
     /// #1948's second requirement is that the user can *relay* this to Application Support, which
     /// means the diagnostics have to survive into the report body — one hop past
     /// `lastKnownErrorMessage`, where `.reportPrepared` composes it with the generated support data.
