@@ -68,6 +68,26 @@ extension SmartBannerView {
                 .padding(.bottom, 32)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // A server-validation failure (ZCBPEO0011 & friends) can never resolve itself by
+            // retrying, so this is the one sync error where the sheet offers a way out. Mirrors the
+            // identical row in the sync-timeout sheet, down to the shared string.
+            if store.lastKnownErrorIsIncompatibleServer {
+                ActionRow(
+                    icon: Asset.Assets.Icons.server.image,
+                    title: String(localizable: .sheetSyncTimeoutServer),
+                    divider: false,
+                    horizontalPadding: Design.Spacing._xl
+                ) {
+                    store.send(.serverSwitchRequested)
+                }
+                .padding(.bottom, Design.Spacing._lg)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                }
+                .padding(.bottom, Design.Spacing._2xl)
+            }
+
             ZashiButton(
                 String(localizable: .sendReport),
                 type: .ghost
