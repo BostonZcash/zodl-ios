@@ -139,7 +139,28 @@ extension Root {
                     }
                     return .send(.home(.smartBanner(.evaluatePriority6)))
                 }
-                return .none
+                // The fetch still completed even though its result is identical to what's already in
+                // `state.transactions` -- most commonly when switching between two accounts that both
+                // have no transactions. The write above is skipped in that case, so nothing downstream
+                // of the shared `$transactions` publisher fires. Both transaction lists' own
+                // `transactionsUpdated` is what clears their `isInvalidated` flag (set by
+                // `accountSwitchedEffect` in `RootCoordinator.swift` on every switch), so without
+                // sending it here directly, an unchanged-but-completed fetch would leave them stuck
+                // showing their loading placeholder forever.
+                //
+                // Only worth sending while a list is actually still showing that placeholder. A
+                // steady sync re-dispatches this fetch every 0.2s and usually yields an unchanged
+                // list, and `transactionsUpdated` re-runs each store's derived-state recomputation
+                // -- which on the See All screen, with a search term active, includes an SDK memo
+                // query. Nothing is waiting on the signal once both flags are already clear.
+                guard state.homeState.transactionListState.isInvalidated
+                    || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
+                    return .none
+                }
+                return .merge(
+                    .send(.home(.transactionList(.transactionsUpdated))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                )
 
             default: return .none
             }

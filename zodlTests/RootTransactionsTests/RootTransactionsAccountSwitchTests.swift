@@ -402,6 +402,49 @@ import ComposableArchitecture
         #expect(store.state.selectedWalletAccount == accountB)
     }
 
+    // MARK: - (e) An unchanged fetch result must still clear the loading state
+
+    /// `.fetchedTransactions` (`RootTransactions.swift`) only writes `state.transactions` -- and
+    /// that write is the ONLY thing whose downstream `transactionsUpdated` clears `isInvalidated` on
+    /// either list -- when the freshly fetched payload differs from what's already there (`if
+    /// state.transactions != identifiedArray`). Switching between two accounts that BOTH have no
+    /// transactions is exactly the case where the fetch's result (`[]`) equals what's already
+    /// sitting in `state.transactions` (also `[]`, left over from account A): nothing gets written,
+    /// so without a completion signal on that unchanged branch too, both lists are stuck showing
+    /// their loading placeholder forever. This is the real Keystone-connect path: connecting a
+    /// Keystone whose wallet also happens to have no transactions yet, right after
+    /// `accountSwitchedEffect` has already flipped both flags to `true`.
+    @Test func switchingBetweenTwoEmptyAccountsClearsTheLoadingState() async {
+        let accountA = Self.walletAccount(idByte: 74)
+        let accountB = Self.walletAccount(idByte: 75)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = accountA }
+        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+        initialState.$transactions.withLock { $0 = [] }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.sdkSynchronizer.getAllTransactions = { _ in
+                []
+            }
+        }
+
+        store.send(.home(.walletAccountTapped(accountB)))
+
+        await waitForRootStore(timeoutNanoseconds: 3_000_000_000) {
+            !store.state.homeState.transactionListState.isInvalidated
+                && !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
+
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+        #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+    }
+
     // MARK: - No-op guard regression
 
     /// Re-selecting the already-selected account must remain a complete no-op -- no fetch, no
