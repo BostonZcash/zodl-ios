@@ -34,8 +34,6 @@ extension ZcashSDKEnvironment: DependencyKey {
                     // "Ironwood" testnet activation height). A Rust-sourced getter is the natural
                     // replacement once the SDK exposes NU6.3's activation height directly.
                     return 4_134_000
-                case .regtest:
-                    return network.customActivationHeights?.nu6_3 ?? BlockHeight.max
                 }
             },
             memoCharLimit: { MemoBytes.capacity },
