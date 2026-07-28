@@ -102,7 +102,16 @@ lane :release do |options|
       )
       report = Zodl::Preflight.check(ctx)
       print_summary(variant, cfg, ref, sha, ctx, report)
-      UI.user_error!("Preflight failed for #{variant} — aborting.") unless report.ok?
+      unless report.ok?
+        # The duplicate-build refusal is the one failure where submit-only mode
+        # is the likely intent — the binary is already on App Store Connect —
+        # so point at it here: the submit preflight that carries this hint
+        # runs after this loop and is never reached on a failed build preflight.
+        if submit_review && report.errors.any? { |e| e.include?("already exists") }
+          UI.important("With --submit-review you can drop --ref to submit the build already on App Store Connect instead of rebuilding.")
+        end
+        UI.user_error!("Preflight failed for #{variant} — aborting.")
+      end
     end
   end
 

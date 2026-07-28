@@ -169,7 +169,7 @@ Submitting to App Review:
 - Writes What's New for every enabled App Store localization from `secant/Resources/WhatsNew/whatsNew*.json` in your **current checkout** (the entry matching `--version` — run `/update-whatsnew` first and commit; note this uses your local working tree, not the ref being built)
 - Attaches the requested build, replacing a wrong one
 - Submits with manual release — you still press Release in App Store Connect after approval
-- Reads back promotional text and What's New per locale from App Store Connect and warns loudly if promotional text is empty where a copy was planned (this is **non-fatal and fixable in App Store Connect without a new review** — edit the missing text directly in ASC and resubmit)
+- Reads back promotional text and What's New per locale from App Store Connect and warns loudly if promotional text is empty where a copy was planned (this is **non-fatal and fixable in App Store Connect without a new review** — edit the missing text directly in ASC and save)
 
 The submission fails if: a version is already submitted/in review (cancel in App Store Connect first), a version is approved-awaiting-release (release it first), the requested version is already live, or any enabled App Store localization lacks a What's New entry for the version.
 
@@ -213,7 +213,7 @@ Scripts/bump.sh --version <X.Y.Z> --build <n>
 | Message | Fix |
 |---|---|
 | `version … does not match project MARKETING_VERSION …` | Run `bump` first, or pass the version the project is actually at. |
-| `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. |
+| `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. With `--submit-review`, you can instead drop `--ref` to submit that already-uploaded build. |
 | `ref is not on origin` | `git push` the branch or commit first. |
 | `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |
 | `PartnerKeys.plist is missing or invalid` | Place a valid plist at `secant/Resources/PartnerKeys.plist` (see `Scripts/validate-partner-keys.sh`). |
@@ -223,7 +223,6 @@ Scripts/bump.sh --version <X.Y.Z> --build <n>
 | TestFlight build stuck on *Missing Compliance* | Set `ITSAppUsesNonExemptEncryption` so the build clears export compliance automatically. |
 | `build … not found on App Store Connect — pass --ref` | The build was never uploaded: add `--ref` to build it, or fix `--build`. |
 | `build … is still processing` | App Store Connect is still processing the upload — retry in a few minutes. |
-| `build … already exists … drop --ref` | You asked to build a number that's already uploaded — drop `--ref` to submit it, or pick a new `--build`. |
 | `already submitted for review` | Cancel the submission in App Store Connect, or wait for the review to finish. |
 | `approved and awaiting release` | Release the approved version in App Store Connect first. |
 | `whatsNew….json has no entry for version …` | Run `/update-whatsnew` for this version and commit the result. |
