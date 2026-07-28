@@ -357,6 +357,21 @@ extension Root {
 
                 // MARK: - Scan Coord Flow
                 
+            // MOB-1581: a terminal send outcome that stored a transaction must refresh the shared
+            // transactions list immediately — an idle wallet emits no sync event until the next block
+            // (~75s), and not every flow exit passes a refetching Close arm (the View Transaction →
+            // detail-close exit did not). `sendFailed(_, false)` stored nothing, so it stays silent.
+            case .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendDone)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendPartial)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendFailed(_, true))))),
+                    .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendDone)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendPartial)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendFailed(_, true))))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                return .send(.fetchTransactionsForTheSelectedAccount)
+
             case .scanCoordFlow(.scan(.cancelTapped)):
                 state.path = nil
                 return .none
@@ -365,9 +380,10 @@ extension Root {
                 state.path = nil
                 return .none
 
+            // MOB-1581: this exit previously refreshed nothing — see the send-terminal arms above.
             case .scanCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.path = nil
-                return .none
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .scanCoordFlow(.path(.element(id: _, action: .sendResultSuccess(.closeTapped)))),
                     .scanCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
@@ -395,18 +411,43 @@ extension Root {
                 )
 
                 // MARK: - Send Coord Flow
-                
+
+            // MOB-1581: a terminal send outcome that stored a transaction must refresh the shared
+            // transactions list immediately — an idle wallet emits no sync event until the next block
+            // (~75s), and not every flow exit passes a refetching Close arm (the View Transaction →
+            // detail-close exit did not). `sendFailed(_, false)` stored nothing, so it stays silent.
+            case .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendDone)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendPartial)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.sendFailed(_, true))))),
+                    .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendDone)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendPartial)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendFailed(_, true))))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                return .send(.fetchTransactionsForTheSelectedAccount)
+
             case .sendCoordFlow(.path(.element(id: _, action: .sendResultSuccess(.closeTapped)))),
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
+            // MOB-1581: this exit previously refreshed nothing — see the send-terminal arms above.
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.path = nil
-                return .none
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
                 // MARK: - Sign with Keystone Coord Flow
+
+            // MOB-1581: a terminal send outcome that stored a transaction must refresh the shared
+            // transactions list immediately — an idle wallet emits no sync event until the next block
+            // (~75s), and not every flow exit passes a refetching Close arm (the View Transaction →
+            // detail-close exit did not). `sendFailed(_, false)` stored nothing, so it stays silent.
+            case .signWithKeystoneCoordFlow(.sendConfirmation(.sendDone)),
+                    .signWithKeystoneCoordFlow(.sendConfirmation(.sendPartial)),
+                    .signWithKeystoneCoordFlow(.sendConfirmation(.sendFailed(_, true))):
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultSuccess(.closeTapped)))),
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
@@ -414,9 +455,10 @@ extension Root {
                 state.signWithKeystoneCoordFlowBinding = false
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
+            // MOB-1581: this exit previously refreshed nothing — see the send-terminal arms above.
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
-                return .none
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
                 // MARK: - Tor Setup
                 
@@ -425,6 +467,18 @@ extension Root {
                 return .send(.home(.smartBanner(.closeAndCleanupBanner)))
 
                 // MARK: - Swap and Pay Coord Flow
+
+            // MOB-1581: a terminal send outcome that stored a transaction must refresh the shared
+            // transactions list immediately — an idle wallet emits no sync event until the next block
+            // (~75s), and not every flow exit passes a refetching Close arm (the View Transaction →
+            // detail-close exit did not). `sendFailed(_, false)` stored nothing, so it stays silent.
+            case .swapAndPayCoordFlow(.sendDone),
+                    .swapAndPayCoordFlow(.sendPartial),
+                    .swapAndPayCoordFlow(.sendFailed(_, true)),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .swapToZecSummary(.sentTheFundsButtonTapped)))):
                 state.path = nil
@@ -452,9 +506,10 @@ extension Root {
                 state.path = nil
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
+            // MOB-1581: this exit previously refreshed nothing — see the send-terminal arms above.
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.path = nil
-                return .none
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
                 // MARK: - Transactions Coord Flow
                 
