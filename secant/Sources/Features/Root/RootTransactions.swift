@@ -56,13 +56,35 @@ extension Root {
                 guard let accountUUID = state.selectedWalletAccount?.id else {
                     return .none
                 }
+                // This id exists so an account switch can cancel whatever fetch is still running
+                // for the account just left (see `accountSwitchedEffect` in `RootCoordinator.swift`,
+                // which explicitly `.cancel`s this id before sending a fresh fetch for the new
+                // account). `cancelInFlight` is deliberately NOT used here: during a sync,
+                // `sdkSynchronizer.eventStream()` is throttled to one event per 0.2s and every
+                // `foundTransactions`/`minedTransaction` re-dispatches this action (see above) -- on
+                // a wallet where `getAllTransactions` takes longer than that 0.2s interval,
+                // `cancelInFlight` would cancel every one of those fetches before it could complete,
+                // starving `.fetchedTransactions` for the whole sync. Letting concurrent fetches for
+                // the same account run to completion is harmless: the `.fetchedTransactions`
+                // provenance guard below still drops any payload for an account other than the one
+                // currently selected.
                 return .run { send in
                     if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
-                        await send(.fetchedTransactions(transactions))
+                        await send(.fetchedTransactions(accountUUID, transactions))
                     }
                 }
-                
-            case .fetchedTransactions(var transactions):
+                .cancellable(id: state.CancelTransactionsFetchId)
+
+            case .fetchedTransactions(let accountUUID, var transactions):
+                // Load-bearing provenance guard -- drop a payload that belongs to an account other
+                // than the one currently selected. Closes the race even when the cancel id above
+                // misses (the fetch's own effect completed anyway): during sync, BOTH accounts'
+                // wallet-wide `eventStream`/`stateStream` events can dispatch a fetch, and a slow one
+                // for the account that was JUST switched away from can still land after the switch.
+                // Never merge/reconcile a stale payload -- always drop it whole.
+                guard accountUUID == state.selectedWalletAccount?.id else {
+                    return .none
+                }
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
                 // Resolve Swaps
@@ -117,7 +139,28 @@ extension Root {
                     }
                     return .send(.home(.smartBanner(.evaluatePriority6)))
                 }
-                return .none
+                // The fetch still completed even though its result is identical to what's already in
+                // `state.transactions` -- most commonly when switching between two accounts that both
+                // have no transactions. The write above is skipped in that case, so nothing downstream
+                // of the shared `$transactions` publisher fires. Both transaction lists' own
+                // `transactionsUpdated` is what clears their `isInvalidated` flag (set by
+                // `accountSwitchedEffect` in `RootCoordinator.swift` on every switch), so without
+                // sending it here directly, an unchanged-but-completed fetch would leave them stuck
+                // showing their loading placeholder forever.
+                //
+                // Only worth sending while a list is actually still showing that placeholder. A
+                // steady sync re-dispatches this fetch every 0.2s and usually yields an unchanged
+                // list, and `transactionsUpdated` re-runs each store's derived-state recomputation
+                // -- which on the See All screen, with a search term active, includes an SDK memo
+                // query. Nothing is waiting on the signal once both flags are already clear.
+                guard state.homeState.transactionListState.isInvalidated
+                    || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
+                    return .none
+                }
+                return .merge(
+                    .send(.home(.transactionList(.transactionsUpdated))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                )
 
             default: return .none
             }

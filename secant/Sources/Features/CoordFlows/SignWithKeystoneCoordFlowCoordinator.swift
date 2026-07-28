@@ -79,7 +79,24 @@ extension SignWithKeystoneCoordFlow {
                     }
                 }
                 return .none
-                
+
+            // MOB-1510: root-level `.sendConfirmation` action, not `.path(...)`-wrapped — this
+            // coordinator has no `.confirmWithKeystone` path element; the root screen already is it.
+            // Clearing first drops the stale `.scan`/`.sending` pushed before the gate ran.
+            case .sendConfirmation(.keystoneFirmwareUpdateRequired):
+                state.path.removeAll()
+                state.path.append(.keystoneFirmwareUpdate(state.sendConfirmationState))
+                return .none
+
+            // No `.confirmWithKeystone` element to pop back to — clear the path and reset the root
+            // state directly so a fresh scan isn't dropped by the `isKeystoneCodeFound` guard.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                state.path.removeAll()
+                state.sendConfirmationState.detectedKeystoneFirmware = nil
+                state.sendConfirmationState.isKeystoneCodeFound = false
+                keystoneHandler.resetQRDecoder()
+                return .none
+
             default: return .none
             }
         }

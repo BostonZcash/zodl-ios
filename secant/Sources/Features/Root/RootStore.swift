@@ -42,6 +42,18 @@ struct Root {
         var CancelResyncStateId = UUID()
         var CancelStateId = UUID()
         var CancelTransactionsStateId = UUID()
+        /// The `.fetchTransactionsForTheSelectedAccount` fetch effect's own cancel id. An account
+        /// switch (`RootCoordinator.swift`'s `accountSwitchedEffect`) explicitly `.cancel`s this id
+        /// before sending a fresh fetch for the newly-selected account, so a fetch still running for
+        /// the account just left can't land after the switch. This id is deliberately NOT combined
+        /// with `cancelInFlight` on the fetch effect itself: during a sync,
+        /// `sdkSynchronizer.eventStream()` is throttled to one event per 0.2s and every
+        /// `foundTransactions`/`minedTransaction` re-dispatches the same action, so on a wallet
+        /// where `getAllTransactions` takes longer than that 0.2s interval, `cancelInFlight` would
+        /// cancel every one of those fetches before any could complete, starving
+        /// `.fetchedTransactions` for the whole sync. The `.fetchedTransactions` provenance guard is
+        /// what actually keeps a stale or wrong-account payload from corrupting `state.transactions`.
+        var CancelTransactionsFetchId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()
@@ -63,6 +75,16 @@ struct Root {
         var exportLogsState: ExportLogs.State
         @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
         var homeState: Home.State = .initial
+        /// In-memory, per-session latch set once the Ironwood announcement gate has "resolved"
+        /// this session — either the screen was presented, or the keychain flag was already
+        /// found `true` (acknowledged on a previous session). Its purpose is twofold: it keeps
+        /// the keychain read (`walletStorage.exportIronwoodAnnouncementFlag`) to at most once
+        /// per session on the already-acknowledged path, and it keeps the announcement from
+        /// presenting more than once per session. Deliberately NOT persisted: a user who
+        /// force-quits while the announcement is on screen without tapping Continue (so the
+        /// keychain flag was never written) should see it again next session, not have it
+        /// suppressed by a stale "resolved" flag surviving the relaunch.
+        var ironwoodAnnouncementResolved = false
         /// Single-flight latch for `.initialization(.initializeSDK)`. The SDK reports an
         /// unprepared status until `prepare` fully returns, so `willEnterForeground` (and any
         /// other re-entry into the initialization chain) would otherwise dispatch a second
@@ -112,6 +134,7 @@ struct Root {
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
+        var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
@@ -159,6 +182,31 @@ struct Root {
         /// Gate for applying an automatic server switch.
         var canApplyAutoServerSwitch: Bool {
             bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
+        }
+
+        /// Gate for taking the screen over with the one-time Ironwood announcement.
+        ///
+        /// `path == nil` alone already excludes every `Path` case — send, scan, swap, settings
+        /// (and voting, which lives under it since it has no `Path` case of its own),
+        /// transactions, receive, request-ZEC, currency conversion, Tor setup, server switch,
+        /// wallet backup, and the Keystone add flow — so the remaining terms only need to cover
+        /// the presentation states that are NOT `Path` cases: the Keystone signing popover, the
+        /// Server Setup full-screen cover, a background task in flight, and any alert already
+        /// on screen.
+        ///
+        /// Home's own informational sheets (e.g. the smart banner) are deliberately NOT gated
+        /// here: enumerating `Home.State`'s bindings would be brittle, and the cost of losing
+        /// that race is purely cosmetic — the sheet unmounts along with Home and re-presents on
+        /// return, since its binding lives in `homeState`, not here — whereas every term that IS
+        /// gated above protects a place where losing the race could lose in-progress user work.
+        var canPresentIronwoodAnnouncement: Bool {
+            destinationState.destination == .home
+                && path == nil
+                && !signWithKeystoneCoordFlowBinding
+                && !serverSetupViewBinding
+                && bgTask == nil
+                && alert == nil
+                && splashAppeared
         }
 
         init(
@@ -227,6 +275,7 @@ struct Root {
 
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
+        case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
         case scanCoordFlow(ScanCoordFlow.Action)
@@ -248,7 +297,7 @@ struct Root {
         case foundTransactions([ZcashTransaction.Overview])
         case minedTransaction(ZcashTransaction.Overview)
         case fetchTransactionsForTheSelectedAccount
-        case fetchedTransactions(IdentifiedArrayOf<TransactionState>)
+        case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         case noChangeInTransactions
         
         // Address Book
@@ -312,7 +361,9 @@ struct Root {
     @Dependency(\.userDefaults) var userDefaults
     @Dependency(\.userMetadataProvider) var userMetadataProvider
     @Dependency(\.userStoredPreferences) var userStoredPreferences
+    #if VOTING_ENABLED
     @Dependency(\.votingMetadata) var votingMetadata
+    #endif
     @Dependency(\.walletConfigProvider) var walletConfigProvider
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.readTransactionsStorage) var readTransactionsStorage
@@ -406,6 +457,10 @@ struct Root {
 
         Scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow) {
             SwapAndPayCoordFlow()
+        }
+
+        Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
+            IronwoodAnnouncement()
         }
 
         initializationReduce()
@@ -604,6 +659,7 @@ extension Root {
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)
         userDefaults.remove(Constants.udLeavesScreenOpen)
+        #if VOTING_ENABLED
         userDefaults.remove(.hasSeenHowToVote)
         userDefaults.remove(.hasSeenHowToVoteKeystone)
         // Drop the user-supplied voting chain override and the saved
@@ -632,6 +688,7 @@ extension Root {
             where key.hasPrefix("voting.voteRecord.") || key.hasPrefix("voting.draftVotes.") {
             standardDefaults.removeObject(forKey: key)
         }
+        #endif
         flexaHandler.signOut()
         userStoredPreferences.removeAll()
         try? readTransactionsStorage.resetZashi()

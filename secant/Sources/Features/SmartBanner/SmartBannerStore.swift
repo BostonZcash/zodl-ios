@@ -58,6 +58,11 @@ struct SmartBanner {
         var isWalletBackupAcknowledgedAtKeychain = false
         var lastKnownBlocksRemaining: BlockHeight = -1
         var lastKnownErrorMessage = ""
+        /// Whether `lastKnownErrorMessage` describes a server-validation failure
+        /// (`ZcashError.isIncompatibleServer`, e.g. `ZCBPEO0011`). Sync can never make progress in
+        /// that state, so the Syncing Error sheet offers a route to Server Setup — a generic sync
+        /// error gets no such row, since retrying is the right thing to do there.
+        var lastKnownErrorIsIncompatibleServer = false
         var lastKnownSyncPercentage = -1.0
         var messageToBeShared: String?
         var priorityContent: PriorityContent? = nil
@@ -346,12 +351,23 @@ struct SmartBanner {
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
                 
                 if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                    state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
+                    // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
+                    // shielded pool) instead of hand-summing individual pools.
+                    state.spendableBalance = accountBalance.shieldedSpendableValue
                 }
 
-                if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {
+                // `SyncStatus.==` returns true for ANY two `.error` values (Synchronizer.swift), so a
+                // status comparison alone can never see one error replace another — the sheet would
+                // keep showing the first error's text, and its incompatible-server row would linger
+                // on an unrelated failure. Compare the rendered message as well for the error case.
+                var isDifferentError = false
+                if case .error = snapshot.syncStatus {
+                    isDifferentError = snapshot.message != state.lastKnownErrorMessage
+                }
+
+                if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus || isDifferentError {
                     state.synchronizerStatusSnapshot = snapshot
-                    
+
                     var isSyncing = false
                     if case let .syncing(syncProgress, isScanProgressComplete) = snapshot.syncStatus {
                         state.lastKnownSyncPercentage = Double(syncProgress)
@@ -382,6 +398,11 @@ struct SmartBanner {
                     case .error, .unprepared:
                         if state.lastKnownErrorMessage != snapshot.message {
                             state.lastKnownErrorMessage = snapshot.message
+                            if case .error(let error) = snapshot.syncStatus {
+                                state.lastKnownErrorIsIncompatibleServer = error.toZcashError().isIncompatibleServer
+                            } else {
+                                state.lastKnownErrorIsIncompatibleServer = false
+                            }
                             return .send(.triggerPriority(.priority2))
                         }
                     default: break
@@ -519,11 +540,12 @@ struct SmartBanner {
             case .evaluatePriority8:
                 if let account = state.selectedWalletAccount {
                     if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        let orchard = accountBalance.orchardBalance.total().amount
-                        let sapling = accountBalance.saplingBalance.total().amount
+                        // Pool-agnostic accessor: sums sapling + orchard + ironwood (and any
+                        // future shielded pool) instead of hand-summing individual pools.
+                        let shielded = accountBalance.shieldedTotal().amount
                         let unshielded = accountBalance.unshielded.amount
-                        
-                        if orchard + sapling + unshielded == 0 {
+
+                        if shielded + unshielded == 0 {
                             return .send(.evaluatePriority9)
                         }
                     }
@@ -603,7 +625,11 @@ struct SmartBanner {
                 return .send(.smartBannerContentTapped)
 
             case .serverSwitchRequested:
+                // Reachable from two sheets now — the sync-timeout sheet and the Syncing Error
+                // sheet's incompatible-server row — and this navigates away from both, so dismiss
+                // whichever is up rather than assuming the origin.
                 state.isSyncTimedOutSheetPresented = false
+                state.isSmartBannerSheetPresented = false
                 return .none
 
             case .shieldFundsTapped:

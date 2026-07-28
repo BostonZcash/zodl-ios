@@ -6,7 +6,21 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
+- [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+- [Ironwood] Once ZODL sees that the Ironwood network upgrade is live on the network, it shows a short one-time screen introducing the change, with a link to a support article. It appears once per device — after you continue past it, it never comes back.
+- [MOB-1535] Tapping your balance on the home screen now opens a "Total Balance Across Pools" breakdown showing how much ZEC sits in each Zcash pool — Orchard, Sapling, Transparent and Ironwood — so you can see exactly where your funds are. When currency conversion is turned on, each pool also shows its value in your selected currency. Pools you hold nothing in are still listed, and with balances hidden every amount stays masked.
+
+### Changed
+- [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
+- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
+- [MOB-1535] The "Total Balance Across Pools" breakdown now shows each pool's balance to its full precision (up to 8 decimal places) instead of flooring to 0.001 ZEC, so small amounts are no longer hidden, and the pools now appear in the order Ironwood, Orchard, Sapling, Transparent.
+
 ### Fixed
+- [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
+- [MOB-140] On the Receive screen, the Zcash Sapling address (testnet debug builds only) now shows the same shield badge on its icon as the Zcash Shielded Address, instead of an incomplete badge that made the address look unshielded.
+- [#1948] The Syncing Error details now name the server ZODL is connected to and show both consensus branch IDs in hex (e.g. `0x37a5165b`) — the form used in ZIPs and other documentation — rather than unrecognizable decimal numbers, and the same information is included in the report sent to support. When the failure is a network-rules mismatch (ZCBPEO0011), where retrying can never succeed because either ZODL or the server is out of date, the sheet also offers a Switch server shortcut.
 - [#1943] Fixed a wallet initialization bug: initialization is now single-flight, so repeated startup triggers while the wallet is still initializing are ignored until it finishes.
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
 - [#1920] The "Connection Failed" sheet no longer appears on top of the success screen when connecting a Keystone device actually succeeds. Tapping the connect/OK button again while the import was still running started a duplicate import whose failure surfaced as a bogus error; the button now shows a progress indicator and extra taps are ignored.
@@ -14,6 +28,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1475] The refund address explainer no longer reads like "USDC on NEAR" is a fixed destination for every refund — it now says the refund returns in the source currency on the same network, since that's true for any swap, not just NEAR-based ones.
 - [MOB-1512] Setting up a wallet over leftover data from a different wallet (e.g. after restoring a device backup onto a new device) no longer shows the old wallet's unspendable balance and no longer fails shielding/spending with ZRUST0002; ZODL now detects the mismatch, removes the stale database, and re-syncs the correct wallet, informing the user with an alert. This also clears the previous wallet's voting configuration and history, session state, and cached preferences so none of it can leak into the current wallet.
 - [MOB-1512] The "Wallet data replaced" notice now stays on screen after the healed wallet opens, instead of disappearing during the transition to the home screen.
+- [Keystone] Switching between the ZODL and Keystone accounts now always shows the selected account's transaction history — a slow in-flight refresh for the previous account can no longer overwrite it — and connecting a Keystone hardware wallet refreshes the transaction list and balance immediately.
+- [Keystone] The transaction list no longer gets stuck showing its loading placeholder when switching to an account whose transaction list turns out identical to the previous one — in practice, switching between two accounts that both have no transactions, such as right after connecting a Keystone.
 
 ## 3.7.3 build 1 (20026-07-12)
 

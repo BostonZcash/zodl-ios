@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.8.0",
+            "date": "25-07-2026",
+            "timestamp": 1784981874,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added support for Zcash's Ironwood network upgrade (NU6.3), keeping your wallet fully compatible with the latest network changes. Support for moving funds to the new Ironwood pool will arrive in a future update.",
+                        "Tap your balance on the home screen to see how your ZEC is split across Zcash pools, including the new Ironwood pool."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where some wallets showed an incorrect balance or couldn't shield funds. The app now detects and repairs this automatically when you open it."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.4",
             "date": "22-07-2026",
             "timestamp": 1784719803,
