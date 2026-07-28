@@ -30,6 +30,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Keystone] Switching between the ZODL and Keystone accounts now always shows the selected account's transaction history — a slow in-flight refresh for the previous account can no longer overwrite it — and connecting a Keystone hardware wallet refreshes the transaction list and balance immediately.
 - [Keystone] The transaction list no longer gets stuck showing its loading placeholder when switching to an account whose transaction list turns out identical to the previous one — in practice, switching between two accounts that both have no transactions, such as right after connecting a Keystone.
 - [MOB-1581] The Activity list now shows a sent transaction immediately after sending, regardless of how the send flow is closed, instead of waiting for the next sync cycle.
+- [MOB-1593] Transaction detail no longer shows an extra, empty message bubble on sent transactions, and "Send again" prefills the actual message text again.
 
 ## 3.7.3 build 1 (20026-07-12)
 
