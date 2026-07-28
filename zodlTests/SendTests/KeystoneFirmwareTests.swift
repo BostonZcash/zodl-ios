@@ -145,8 +145,8 @@ import ComposableArchitecture
         #expect(KeystoneFirmwareVersion(displayMajor: 2, minor: 9, build: 9) < KeystoneFirmwareVersion.minimumSupported)
     }
 
-    @Test func minimumIsExactlyThreeZeroThree() {
-        #expect(KeystoneFirmwareVersion.minimumSupported == KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 3))
+    @Test func minimumIsExactlyThreeZeroOne() {
+        #expect(KeystoneFirmwareVersion.minimumSupported == KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
     }
 
     @Test func minimumIsNotBelowItself() {
@@ -154,7 +154,7 @@ import ComposableArchitecture
     }
 
     @Test func higherBuildIsAboveMinimum() {
-        #expect(KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 4) > KeystoneFirmwareVersion.minimumSupported)
+        #expect(KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 2) > KeystoneFirmwareVersion.minimumSupported)
     }
 
     @Test func comparisonIsLexicographicOnMajorThenMinorThenBuild() {
@@ -211,11 +211,12 @@ import ComposableArchitecture
         return Pczt(data)
     }
 
-    // Below-minimum firmware in four shapes — a clearly-old device (2.4.6), the device that
-    // exposed this defect (3.0.1), the boundary case one build below the 3.0.3 minimum (3.0.2),
-    // and a raw stamp below the offset — all must be blocked and must never schedule
-    // `createTransactionFromPCZT`.
-    @Test(arguments: [(12, 4, 6), (13, 0, 1), (13, 0, 2), (2, 4, 6)])
+    // Below-minimum firmware in four shapes — a clearly-old device (2.4.6), the boundary case one
+    // build below the 3.0.1 minimum (3.0.0), the highest 2.x there can be (2.9.9, blocked on the
+    // major alone), and a raw stamp below the offset — all must be blocked and must never schedule
+    // `createTransactionFromPCZT`. The three stamps in the 12.x/13.x range are also what proves the
+    // normalization is load-bearing: unnormalized they would each read as far *above* the minimum.
+    @Test(arguments: [(12, 4, 6), (13, 0, 0), (12, 9, 9), (2, 4, 6)])
     func belowMinimumFirmwarePresentsUpdateScreen(major: Int, minor: Int, build: Int) async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -263,8 +264,8 @@ import ComposableArchitecture
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             let store = makeStore()
-            // Device displaying 3.0.3 — exactly the minimum.
-            let pczt = signedPczt(stamp: (13, 0, 3))
+            // Device displaying 3.0.1 — exactly the minimum.
+            let pczt = signedPczt(stamp: (13, 0, 1))
 
             await store.send(.foundPCZT(pczt)) {
                 $0.isKeystoneCodeFound = true

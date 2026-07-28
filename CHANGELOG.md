@@ -14,8 +14,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Changed
 - [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
-- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.3 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
-- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast.
+- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
 - [MOB-1535] The "Total Balance Across Pools" breakdown now shows each pool's balance to its full precision (up to 8 decimal places) instead of flooring to 0.001 ZEC, so small amounts are no longer hidden, and the pools now appear in the order Ironwood, Orchard, Sapling, Transparent.
 
 ### Fixed
