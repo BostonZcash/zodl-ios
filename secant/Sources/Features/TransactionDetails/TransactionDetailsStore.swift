@@ -420,7 +420,7 @@ struct TransactionDetails {
             case .memosLoaded(let memos):
                 state.areMessagesResolved = true
                 state.$transactionMemos.withLock {
-                    $0[state.transaction.id] = memos.compactMap { $0.toString() }
+                    $0[state.transaction.id] = memos.compactMap { $0.toString() }.filter { !$0.isEmpty }
                 }
                 state.messageStates = state.memos.map {
                     $0.count < State.Constants.messageExpandThreshold ? .short : .longCollapsed
