@@ -2,13 +2,15 @@
 //  TransactionStateTests.swift
 //  zodlTests
 //
-//  Covers the migration self-send display fallback on TransactionState.netValue
-//  (Models/TransactionState.swift). An Orchard -> Ironwood turnstile transfer is a self-send:
-//  its net value collapses to just the fee, so without the fallback the transaction list and
-//  detail screen would show a fee-sized amount instead of the amount that actually crossed the
-//  turnstile. When the SDK reports no counted sent or received notes, netValue falls back to
-//  totalReceived (the real crossing amount), mirroring Android's TransactionRepository. Pure
-//  model logic, no shared/global state -> no `.serialized`.
+//  Covers `TransactionState.netValue` (Models/TransactionState.swift) for self-transfers - a
+//  transaction whose sender and recipient are the same wallet. A self-transfer's SDK-reported
+//  `value` (the account's balance delta) is exactly `-fee`: the amount sent out and the amount
+//  that returns as change cancel each other out, leaving only the fee behind. `netValue`'s
+//  default path (`zecAmount`, which is just `-value` for a sent transaction) therefore already
+//  displays the fee correctly, with no special-casing required. There is deliberately no
+//  note-count-based (or otherwise conditional) fallback to a larger "amount that actually moved" -
+//  none exists, and these tests guard against one being reintroduced. Pure model logic, no
+//  shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -48,30 +50,63 @@ import Foundation
         )
     }
 
-    /// The SDK-backed init must carry the transaction's note counts onto the state rather than
-    /// leaving them at their struct defaults. `sentNoteCount` and `receivedNoteCount` are given
-    /// distinct, non-default values here, so deleting either wiring line in
-    /// `TransactionState.init(transaction:)` (`sentNoteCount = transaction.sentNoteCount` /
-    /// `receivedNoteCount = transaction.receivedNoteCount`) makes the corresponding property fall
-    /// back to 0 and fails this test - unlike asserting against 0, which those defaults would
-    /// satisfy whether or not the wiring exists.
-    @Test func noteCountsAreWiredFromSDKTransaction() {
+    /// A self-transfer just after it's created: the SDK already counts a sent note (the payment
+    /// output) and a received note (the change), so `sentNoteCount`/`receivedNoteCount` are both
+    /// 1. The balance delta (`value`) is `-10_000`, exactly `-fee`, so `zecAmount` is `10_000` and
+    /// `netValue` must show that fee - not `totalReceived`, which stands in here for an unrelated,
+    /// much larger figure that must NOT leak into the display.
+    @Test func selfSendDisplaysTheFee() {
         let state = TransactionState(
             transaction: overview(
-                sentNoteCount: 3,
-                receivedNoteCount: 2,
-                value: Zatoshi(25_000_000)
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-10_000),
+                totalReceived: Zatoshi(16_464_726)
             )
         )
 
-        #expect(state.sentNoteCount == 3)
-        #expect(state.receivedNoteCount == 2)
+        #expect(state.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue != Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
     }
 
-    /// The migration shape: a self-send whose net value collapses to the fee, with no counted
-    /// sent or received notes but a real `totalReceived`. netValue must show the crossing amount
-    /// (`totalReceived`), not the misleading fee-collapsed net (`zecAmount`).
-    @Test func migrationSelfSendWithNoNotesDisplaysTotalReceived() {
+    /// Guards the reported "value grew after confirmation" symptom: before the device scans the
+    /// block that mines a self-transfer, the SDK counts a sent and a received note
+    /// (`sentNoteCount`/`receivedNoteCount` = 1/1); once scanned, it reclassifies the payment
+    /// output as change and reports no counted notes at all (0/0). Both states share the same
+    /// `value` (`-10_000`, i.e. `-fee`) and the same `totalReceived`. Since `netValue` no longer
+    /// branches on note counts, both states must show the identical fee-sized amount - the display
+    /// must never change (let alone grow to `totalReceived`) as the transaction gets confirmed.
+    @Test func selfSendDisplaysTheSameFeeBeforeAndAfterScanning() {
+        let beforeScanning = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-10_000),
+                totalReceived: Zatoshi(16_464_726)
+            )
+        )
+        let afterScanning = TransactionState(
+            transaction: overview(
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
+                value: Zatoshi(-10_000),
+                totalReceived: Zatoshi(16_464_726)
+            )
+        )
+
+        #expect(beforeScanning.netValue == afterScanning.netValue)
+        #expect(beforeScanning.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(afterScanning.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(beforeScanning.netValue != Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
+        #expect(afterScanning.netValue != Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// The Orchard -> Ironwood turnstile migration shape: a self-transfer with no counted sent or
+    /// received notes (0/0) and a large `totalReceived` left over from the now-deleted fallback.
+    /// `netValue` must still show only the fee (`10_000`), since a migration crossing is a
+    /// self-transfer like any other - its balance delta is `-fee`, and no fallback remains to
+    /// substitute `totalReceived` for it.
+    @Test func ironwoodMigrationDisplaysTheFee() {
         let state = TransactionState(
             transaction: overview(
                 sentNoteCount: 0,
@@ -81,14 +116,31 @@ import Foundation
             )
         )
 
-        #expect(state.netValue == Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue != Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
     }
 
-    /// A shielding transaction keeps the `totalSpent` path even with 0/0 note counts: that
-    /// branch has priority and must be checked before the note-count fallback. `totalReceived`
-    /// is deliberately a different value, so an ordering bug (fallback checked first) would be
-    /// caught by the assertion below.
-    @Test func shieldingTransactionKeepsTotalSpentPathEvenWithNoNotes() {
+    /// An ordinary send to someone else: the balance delta is the sent amount plus the fee
+    /// (`-25_010_000`), so `netValue` must show the full `25_010_000` - the amount the recipient
+    /// gets plus the fee the sender paid - regardless of the unrelated `totalReceived` (change)
+    /// also present on the transaction.
+    @Test func ordinarySendDisplaysAmountPlusFee() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 0,
+                value: Zatoshi(-25_010_000),
+                totalReceived: Zatoshi(5_000)
+            )
+        )
+
+        #expect(state.netValue == Zatoshi(25_010_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// A shielding transaction (transparent -> shielded) keeps its own `totalSpent`-based display
+    /// even with no counted sent or received notes: the `isShieldingTransaction` branch is checked
+    /// before the default path in `netValue`, so it must win regardless of note counts.
+    @Test func shieldingTransactionDisplaysTotalSpent() {
         let state = TransactionState(
             transaction: overview(
                 isShielding: true,
@@ -104,67 +156,10 @@ import Foundation
         #expect(state.netValue == Zatoshi(1_000_000).atLeastThreeDecimalsZashiFormatted())
     }
 
-    /// Guard hardening: a note-less (0/0) shape whose `totalReceived` is `.zero` — the same shape
-    /// the swap-deposit initialiser produces — must stay on the `zecAmount` path rather than
-    /// misreport a zero crossing amount. `zecAmount` is deliberately non-zero here, so a guard
-    /// that checks presence alone (not `> 0`) would return the zero `totalReceived` instead and
-    /// be caught by the assertion below.
-    @Test func noteslessStateWithZeroTotalReceivedKeepsZecAmountPath() {
-        let state = TransactionState(
-            transaction: overview(
-                sentNoteCount: 0,
-                receivedNoteCount: 0,
-                value: Zatoshi(-10_000),
-                totalReceived: .zero
-            )
-        )
-
-        #expect(state.netValue == state.zecAmount.atLeastThreeDecimalsZashiFormatted())
-    }
-
-    /// The non-SDK initialisers (a pending send, a swap deposit) never touch the note-count
-    /// fields, so they must default to 0 and keep compiling unchanged. Both produce a 0/0
-    /// "note-less" shape too; the pending send has no `totalReceived` at all and the swap deposit
-    /// sets it to `.zero`, so both correctly stay on the `zecAmount` path.
-    @Test func nonSDKInitsDefaultNoteCountsToZeroAndKeepZecAmountPath() {
-        let pendingSend = TransactionState(pendingSendId: "pending-send", zecAmount: Zatoshi(15_000_000))
-        #expect(pendingSend.sentNoteCount == 0)
-        #expect(pendingSend.receivedNoteCount == 0)
-        #expect(pendingSend.netValue == Zatoshi(15_000_000).atLeastThreeDecimalsZashiFormatted())
-
-        let swapDeposit = TransactionState(
-            depositAddress: "t1SwapDepositAddress",
-            timestamp: 1_699_290_621,
-            swapStatus: .pending
-        )
-        #expect(swapDeposit.sentNoteCount == 0)
-        #expect(swapDeposit.receivedNoteCount == 0)
-        #expect(swapDeposit.totalReceived == .zero)
-        #expect(swapDeposit.netValue == Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
-    }
-
-    /// An ordinary send keeps at least one sent note, so the fallback must not apply, even when
-    /// `totalReceived` (change) is present — the display stays the fee-collapsed net
-    /// (`zecAmount`). `totalReceived` is deliberately different from `zecAmount`, so a broken
-    /// `sentNoteCount` wiring (SDK -> TransactionState) would be caught here.
-    @Test func ordinarySendWithNotesIsUnchanged() {
-        let state = TransactionState(
-            transaction: overview(
-                sentNoteCount: 1,
-                receivedNoteCount: 0,
-                value: Zatoshi(-25_010_000),
-                totalReceived: Zatoshi(5_000)
-            )
-        )
-
-        #expect(state.sentNoteCount == 1)
-        #expect(state.netValue == Zatoshi(25_010_000).atLeastThreeDecimalsZashiFormatted())
-    }
-
-    /// Mirror case: an ordinary receive keeps at least one received note, so the fallback must
-    /// not apply either. `totalReceived` is deliberately different from `zecAmount`, so a broken
-    /// `receivedNoteCount` wiring would be caught here.
-    @Test func ordinaryReceiveWithNotesIsUnchanged() {
+    /// An ordinary receive: the balance delta is the full amount received (`25_000_000`), so
+    /// `netValue` must show that amount, not the unrelated `totalReceived` figure also present on
+    /// the transaction.
+    @Test func ordinaryReceiveIsUnchanged() {
         let state = TransactionState(
             transaction: overview(
                 sentNoteCount: 0,
@@ -174,7 +169,23 @@ import Foundation
             )
         )
 
-        #expect(state.receivedNoteCount == 1)
         #expect(state.netValue == Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// The non-SDK initialisers - a pending send and a swap deposit - never go through
+    /// `init(transaction:)`, so they're unaffected by this change. A pending send's `netValue` is
+    /// simply its `zecAmount`. A swap deposit has no funds attributed to it yet (`totalReceived`
+    /// is `.zero`), so its `netValue` is `Zatoshi.zero`, formatted like any other amount.
+    @Test func nonSDKInitsAreUnchanged() {
+        let pendingSend = TransactionState(pendingSendId: "pending-send", zecAmount: Zatoshi(15_000_000))
+        #expect(pendingSend.netValue == Zatoshi(15_000_000).atLeastThreeDecimalsZashiFormatted())
+
+        let swapDeposit = TransactionState(
+            depositAddress: "t1SwapDepositAddress",
+            timestamp: 1_699_290_621,
+            swapStatus: .pending
+        )
+        #expect(swapDeposit.totalReceived == .zero)
+        #expect(swapDeposit.netValue == Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
     }
 }
