@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.8.1",
+            "date": "28-07-2026",
+            "timestamp": 1785268466,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios problemas que afectaban a la visualización del saldo y los detalles de las transacciones. Tus fondos están seguros: esto solo corrige cómo la billetera muestra los valores."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.8.0",
             "date": "25-07-2026",
             "timestamp": 1784981874,
