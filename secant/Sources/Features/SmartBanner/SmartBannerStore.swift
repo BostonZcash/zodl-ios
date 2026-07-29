@@ -35,10 +35,18 @@ struct SmartBanner {
             case priority75 // tor
             case priority8 // currency conversion
             case priority9 // auto-shielding
+            case priorityMigration = -1 // ironwood migration
 
             func next() -> PriorityContent {
-                PriorityContent.init(rawValue: self.rawValue - 1) ?? .priority9
+                // `priorityMigration` (-1) sits outside the walk-down chain — it is only ever
+                // triggered explicitly, so walking below `priority1` wraps to `priority9` as before.
+                guard rawValue > 0 else { return .priority9 }
+                return PriorityContent(rawValue: rawValue - 1) ?? .priority9
             }
+
+            /// Display rank — lower wins. `priorityMigration` slots between `priority2` (sync error)
+            /// and `priority3` (restoring): operational alerts outrank migration; migration outranks the rest.
+            var rank: Double { self == .priorityMigration ? 1.5 : Double(rawValue) }
         }
         
         var CancelNetworkMonitorId = UUID()
@@ -65,10 +73,12 @@ struct SmartBanner {
         var lastKnownErrorIsIncompatibleServer = false
         var lastKnownSyncPercentage = -1.0
         var messageToBeShared: String?
+        var migrationBannerVariant = MigrationBannerVariant.required
         var priorityContent: PriorityContent? = nil
         var priorityContentRequested: PriorityContent? = nil
         var remindMeShieldedPhaseCounter = 0
         var remindMeWalletBackupPhaseCounter = 0
+        @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var spendableBalance = Zatoshi(0)
         var supportData: SupportData?
@@ -118,6 +128,8 @@ struct SmartBanner {
         case onDisappear
         case evaluatePriority1
         case evaluatePriority2
+        case evaluatePriorityMigration
+        case migrationVariantLoaded(MigrationBannerVariant?)
         case evaluatePriority3
         case evaluatePriority4
         case evaluatePriority45
@@ -154,6 +166,7 @@ struct SmartBanner {
         case walletBackupTapped
     }
 
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.networkMonitor) var networkMonitor
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -447,7 +460,23 @@ struct SmartBanner {
 
                 // syncing error
             case .evaluatePriority2:
-                return .send(.evaluatePriority3)
+                return .send(.evaluatePriorityMigration)
+
+                // ironwood migration
+            case .evaluatePriorityMigration:
+                guard state.featureFlags.migration else {
+                    return .send(.evaluatePriority3)
+                }
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.migrationVariantLoaded(migrationManager.bannerVariant(accountUUID)))
+                }
+
+            case let .migrationVariantLoaded(variant):
+                guard let variant else {
+                    return .send(.evaluatePriority3)
+                }
+                state.migrationBannerVariant = variant
+                return .send(.triggerPriority(.priorityMigration))
 
                 // restoring
             case .evaluatePriority3:

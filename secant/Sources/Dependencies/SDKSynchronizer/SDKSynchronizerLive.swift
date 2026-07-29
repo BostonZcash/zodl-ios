@@ -84,6 +84,9 @@ extension SDKSynchronizerClient: DependencyKey {
             deleteAccount: { accountUUID in
                 try await synchronizer.deleteAccount(accountUUID)
             },
+            getMigrationState: { accountUUID in
+                try await synchronizer.migrationState(accountUUID: accountUUID)
+            },
             rescanFrom: { blockHeight in
                 try await synchronizer.rescanFrom(height: blockHeight)
             },

@@ -47,6 +47,13 @@ struct SDKSynchronizerClient: Sendable {
     let importAccount: @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID?
     var deleteAccount: @Sendable (AccountUUID) async throws -> Void
 
+    // MARK: - Migration (Orchard -> Ironwood)
+    //
+    // The SDK's migration group lives on `Synchronizer` and needs no `prepare()`. Phase 1 binds only
+    // the state read the banner derives from; later phases bind the rest of the 32-member group.
+
+    let getMigrationState: @Sendable (AccountUUID) async throws -> MigrationState
+
     let rescanFrom: @Sendable (BlockHeight) async throws -> Void
 
     let rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error>
