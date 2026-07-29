@@ -31,6 +31,58 @@ import ComposableArchitecture
 
 @Reducer
 struct MigrationCoordFlow {
+    /// PHASE 7 (Keystone): which signing source is awaiting/mid QR round-trip, so the scan
+    /// completion knows which chain to resume once the applied signatures come back.
+    ///
+    /// #1930 also carries `.recoveryRefresh(schedule:)` — the expired-transfer recovery's lane. That
+    /// screen is Phase 5; adding the case then makes the compiler point at
+    /// `resumeCommittedMigrationChain` and `pendingKeystoneSchedule`, which is exactly where its
+    /// behaviour differs. The MACHINE below is complete either way — Phase 5 adds a caller, not a
+    /// mechanism.
+    enum KeystoneSigningContext: Equatable {
+        /// The scheduled lane's plan commit (`MigrationTransferPlan`'s `.keystone` confirm intent) —
+        /// a BATCH ceremony over the run's preparation + transfer PCZTs.
+        case planCommit
+        /// The manual lane's immediate sweep (`MigrationReviewTransfer.requestKeystoneSignature`) —
+        /// a SINGLE-PCZT ceremony over one ordinary, engine-external `ImmediateMigrationProposal`.
+        case immediateReview
+    }
+
+    /// PHASE 7: the batch ceremony's multi-round bookkeeping.
+    ///
+    /// A batch beyond `KeystoneBatchChunking.maxItemsPerRound` signs across several QR round trips:
+    /// each round is a full, self-contained ceremony (own request id, own build → scan → decode →
+    /// apply), and the rounds' applied signatures accumulate HERE — nothing stores until the last
+    /// round lands, preserving the all-or-nothing invariant (an abandon mid-sequence discards
+    /// everything, and the engine re-serves the still-unsigned batch on re-entry).
+    ///
+    /// Set by `beginKeystoneCeremony` for every batch ceremony, single-round included (`roundIndex`
+    /// 0 is then also the last round); `nil` for the immediate lane's single-PCZT ceremony, which
+    /// never chunks. Cleared at the last round's store handoff and by every ceremony-ending route.
+    struct KeystoneBatchRounds: Equatable {
+        /// The ceremony's FULL ordered batch — preparation PCZTs first, then the schedule's
+        /// transfers: the order both the stores and `preparationCount` depend on. Rounds slice this
+        /// via `KeystoneBatchChunking.roundSlice`.
+        var allPczts: [MigrationUnsignedTransferPczt]
+        /// How many leading entries of `allPczts` are preparation transactions — carried over from
+        /// `MigrationKeystoneBatch` so the signed result splits the same way. See
+        /// `MigrationCoordFlow.splitKeystoneBatch`.
+        var preparationCount: Int
+        /// The 0-based round currently showing/being scanned.
+        var roundIndex = 0
+        /// Applied signatures of the COMPLETED rounds, in original batch order.
+        var accumulatedSigned: [MigrationSignedTransferPczt] = []
+    }
+
+    /// PHASE 7: the ALREADY-SIGNED schedule payload a Keystone-with-preparations commit must store
+    /// only after a preparation broadcast succeeds — see `storeKeystoneSignedBatch`'s doc for the
+    /// engine phase-machine trace behind that ordering.
+    struct PendingScheduleStore: Equatable {
+        let accountUUID: AccountUUID
+        let scheduleEntries: [MigrationSignedTransferPczt]
+        let schedule: MigrationSchedule?
+    }
+
     /// Which destination the coordinator stashed while the Tor bottom sheet is presented — resumed
     /// once the user confirms ("Got it") or swipes the sheet away (identical outcome, using
     /// whatever toggle state is showing at that moment).
@@ -48,8 +100,10 @@ struct MigrationCoordFlow {
     @Reducer(state: .equatable)
     enum Path {
         case howItWorks(MigrationHowItWorks)
+        case keystoneSign(MigrationKeystoneSign)
         case notifications(MigrationNotifications)
         case reviewTransfer(MigrationReviewTransfer)
+        case scan(Scan)
         case scheduled(MigrationScheduled)
         case sending(MigrationSending)
         case status(MigrationStatus)
@@ -73,6 +127,52 @@ struct MigrationCoordFlow {
         var isTorSheetPresented = false
         /// Non-nil exactly while `isTorSheetPresented` is true — see `PendingTorDestination`.
         var pendingTorDestination: PendingTorDestination?
+
+        // PHASE 7 — the Keystone ceremony's own state.
+
+        /// Set when a `.keystoneSignRequested` delegate pushes `keystoneSign`; cleared once the QR
+        /// round-trip resolves (resumed, rejected, or abandoned). Doubles as the TOMBSTONE every
+        /// late completion checks before touching the path — a ceremony torn down mid-flight (the
+        /// user swipe-backs off `scan` and taps Reject while proving runs) clears this first.
+        var pendingKeystoneSigning: KeystoneSigningContext?
+        /// The account that OWNS the pending ceremony — recorded beside `pendingKeystoneSigning` and
+        /// cleared with it, so a teardown that runs AFTER an account switch still cancels the
+        /// stranded run on the account that built it, not the newly selected one.
+        var pendingKeystoneSigningAccountUUID: AccountUUID?
+        /// One-shot guard making the BATCH round-trip's completion single-delivery. `ScanUIView`
+        /// forwards every camera metadata callback regardless of ceremony state, and `Scan`'s own
+        /// intake gate (`isAnythingFound`) only flips once the async apply effect's result lands —
+        /// so a late frame in that window can re-decode a single-part response standalone and reach
+        /// the coordinator as a SECOND completion with a legitimately-matching request id. Set right
+        /// before the apply effect dispatches; a duplicate is DROPPED, never abandoned.
+        var keystoneBatchApplyInFlight = false
+        /// The SINGLE-PCZT (immediate-lane) ceremony's own one-shot guard — the twin of
+        /// `keystoneBatchApplyInFlight` for the production `.scan(.foundPCZT)` round-trip. That
+        /// checker decodes SYNCHRONOUSLY inside `Scan`'s reducer, but two camera frames can both
+        /// pass `isAnythingFound` before the first `.foundPCZT` is processed. Armed for the WHOLE
+        /// post-scan leg (set before the proofs+submit effect dispatches — a duplicate mid-proving
+        /// would otherwise DOUBLE-BROADCAST).
+        var keystoneImmediateSubmitInFlight = false
+        /// The batch ceremony's multi-round bookkeeping — non-`nil` exactly while a batch ceremony
+        /// is in flight; `nil` for the immediate lane. See `KeystoneBatchRounds`.
+        var keystoneBatchRounds: KeystoneBatchRounds?
+        /// The already-signed schedule entries held back from `storeSignedMigrationTransactions`
+        /// until a preparation broadcast lands — see `storeKeystoneSignedBatch`'s doc. Consumed by
+        /// the post-confirm first-delivery kick.
+        var pendingKeystoneScheduleStore: PendingScheduleStore?
+        /// The dotted `major.minor.build` firmware version the decode envelope (or PCZT stamp)
+        /// reported for a ceremony that failed the minimum-firmware gate; `nil` when none was
+        /// reported at all. A formatted `String` deliberately, not a `KeystoneFirmwareVersion`: the
+        /// SDK's `ZcashLightClientKit.KeystoneFirmwareVersion` and this app's own
+        /// `Features/SendConfirmation/KeystoneFirmwareVersion.swift` share a bare name, and
+        /// formatting once at detection time keeps this field trivially Equatable/Sendable.
+        var detectedKeystoneFirmwareVersion: String?
+        var isKeystoneFirmwareGatePresented = false
+        /// The dotted minimum-firmware floor the FAILED gate was checked against — the two lanes
+        /// gate on DIFFERENT floors (the immediate lane on the PCZT stamp floor, the batch lane on
+        /// the batch-protocol floor), and the sheet's copy must echo whichever actually applied.
+        var keystoneFirmwareGateMinimumVersion: String?
+
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init() { }
@@ -102,8 +202,55 @@ struct MigrationCoordFlow {
         /// the choice surface), so presentation is a two-step: resolve, then present with the
         /// destination to resume once the user confirms.
         case torSheetStateReady(MigrationTorSheet.State, destination: PendingTorDestination)
+
+        // PHASE 7 — the Keystone ceremony.
+
+        /// Internal: the batch ceremony's store step finished — pops `scan` + `keystoneSign` and
+        /// resumes whichever chain `context` represents. `pendingScheduleStore` is non-nil only when
+        /// preparations rode the batch (their schedule half is deferred); `nil` for a no-prep batch,
+        /// whose schedule already stored inline.
+        case keystoneSigningSubmitted(
+            context: KeystoneSigningContext,
+            pendingScheduleStore: PendingScheduleStore?
+        )
+        /// Internal: `applyKeystoneBatchSignatures` returned. `unsignedPczts` is the ORIGINAL array
+        /// handed to `buildKeystoneSignBatchQRParts`; `signed` is the returned, positionally-paired
+        /// result. Dispatched from a `.run` effect (apply is `async throws`) rather than handled
+        /// inline, so the path is still exactly `[..., keystoneSign, scan]` when this lands — the
+        /// `depthBelowTop: 2` schedule read depends on that.
+        case keystoneBatchSignaturesApplied(
+            context: KeystoneSigningContext,
+            accountUUID: AccountUUID,
+            unsignedPczts: [MigrationUnsignedTransferPczt],
+            signed: [MigrationSignedTransferPczt]
+        )
+        /// Internal: the immediate lane's Keystone post-signing submit succeeded — pops back like a
+        /// resume would, then pushes `MigrationSending.State` ALREADY in `.success` with the real
+        /// txid (the broadcast happened here, not on that screen's `onAppear`).
+        case keystoneImmediateSubmitted(txId: String)
+        /// Internal: the immediate lane's post-signing proofs+submit FAILED. Pops exactly like an
+        /// abandon, but the failure is VISIBLE and retryable — the retained Review element comes back
+        /// with its commit-failure sheet armed. Deliberately skips the abandon's stray-run cancel:
+        /// the immediate proposal is engine-external, so no engine run exists to cancel.
+        case keystoneImmediateSubmitFailed
+        /// Internal: `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up self-action
+        /// because popping the element inline would race `.forEach(\.path, action:)`'s delivery of
+        /// that same action to the (then-missing) element.
+        case keystoneSignRejected
+        /// Internal: the shared sink for EVERY terminal failure of the signing session — a build
+        /// failure, a decode failure, a firmware-gate rejection, an apply failure, or a store
+        /// failure. Pops back to the initiating screen, clears the context, and cancels the stray
+        /// engine run the ceremony's own PCZT build created.
+        case keystoneScanAbandoned
+        /// `zashiSheet`'s `isPresented` binding for the minimum-firmware gate — mirrors
+        /// `torSheetPresentationChanged`'s contract. `false` clears the detected/minimum versions.
+        case keystoneFirmwareGatePresentationChanged(Bool)
     }
 
+    // PHASE 7: the immediate single-PCZT ceremony resets the shared BC-UR fountain decoder before
+    // pushing its scan session (`SendConfirmation.getSignatureTapped` precedent), so a retry
+    // ceremony never inherits a previous session's accumulated frames.
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage

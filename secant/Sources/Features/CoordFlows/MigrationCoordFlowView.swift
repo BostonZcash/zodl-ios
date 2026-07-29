@@ -34,10 +34,14 @@ struct MigrationCoordFlowView: View {
                 switch store.case {
                 case let .howItWorks(store):
                     MigrationHowItWorksView(store: store)
+                case let .keystoneSign(store):
+                    MigrationKeystoneSignView(store: store)
                 case let .notifications(store):
                     MigrationNotificationsView(store: store)
                 case let .reviewTransfer(store):
                     MigrationReviewTransferView(store: store)
+                case let .scan(store):
+                    ScanView(store: store)
                 case let .scheduled(store):
                     MigrationScheduledView(store: store)
                 case let .sending(store):
@@ -56,11 +60,62 @@ struct MigrationCoordFlowView: View {
             ) {
                 MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
+            // PHASE 7: the migration Keystone minimum-firmware gate. Mirrors
+            // `KeystoneFirmwareUpdateContent`'s illustration/title/body/button structure (the
+            // single-transaction flow's own firmware gate) but with its OWN copy and PER-CEREMONY
+            // floor: the batch ceremony trips on the decode envelope's version against 3.0.2, the
+            // immediate single-PCZT ceremony on the PCZT stamp against the production floor.
+            // `keystoneFirmwareGateMinimumVersion` records whichever applied, so the copy always
+            // reports the right required version. Presented directly here rather than scoped from a
+            // `SendConfirmation` store (there is none in this flow), mirroring the Tor sheet's
+            // coordinator-owned-sheet idiom above.
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.isKeystoneFirmwareGatePresented },
+                    set: { store.send(.keystoneFirmwareGatePresentationChanged($0)) }
+                )
+            ) {
+                VStack(spacing: 0) {
+                    Asset.Assets.Illustrations.failure3.image
+                        .resizable()
+                        .frame(width: 148, height: 148)
+                        .padding(.top, 24)
+
+                    Text(String(localizable: .migrationKeystoneFirmwareTitle))
+                        .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                        .padding(.top, 16)
+
+                    Text(keystoneFirmwareGateBody)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(1.5)
+                        .screenHorizontalPadding()
+
+                    ZashiButton(String(localizable: .migrationKeystoneFirmwareClose)) {
+                        store.send(.keystoneFirmwareGatePresentationChanged(false))
+                    }
+                    .padding(.top, 32)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
+                }
+            }
         }
         .applyScreenBackground()
         .onAppear {
             store.send(.onAppear)
         }
+    }
+
+    /// Mirrors `KeystoneFirmwareUpdateContent.bodyText`'s specific/legacy split: a
+    /// detected-but-too-low version interpolates both figures, an undetected one (the envelope or
+    /// stamp reported none at all) falls back to the floor-only variant. The interpolated minimum is
+    /// the floor the FAILED gate actually checked; the batch constant is only a defensive fallback.
+    private var keystoneFirmwareGateBody: String {
+        let minimumVersion = store.keystoneFirmwareGateMinimumVersion
+            ?? MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
+        if let detected = store.detectedKeystoneFirmwareVersion {
+            return String(localizable: .migrationKeystoneFirmwareBody(detected, minimumVersion))
+        }
+        return String(localizable: .migrationKeystoneFirmwareLegacyBody(minimumVersion))
     }
 }
 

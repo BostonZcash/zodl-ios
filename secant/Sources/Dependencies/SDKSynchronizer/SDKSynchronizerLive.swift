@@ -155,6 +155,41 @@ extension SDKSynchronizerClient: DependencyKey {
             lockMigrationResidual: { accountUUID in
                 try await synchronizer.lockMigrationResidual(accountUUID: accountUUID)
             },
+            // PHASE 7 — the Keystone lane. Thin forwards, exactly like the migration closures above;
+            // see `SDKSynchronizerInterface` for why none of these takes `transactionGuard`.
+            proposeNoteSplitPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID, for: schedule)
+            },
+            storeSignedNoteSplits: { accountUUID, signed in
+                // The returned `PreparedMigrationTransfer` is a storage receipt with a zeroed txid —
+                // the broadcastable value comes from `executeNextPendingMigrationTransfer`.
+                _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
+            },
+            proposeMigrationPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedMigrationTransferPCZTs(accountUUID: accountUUID, for: schedule)
+            },
+            storeSignedMigrationTransactions: { accountUUID, signed in
+                try await synchronizer.storeSignedMigrationSchedulePCZTs(accountUUID: accountUUID, signed)
+            },
+            buildKeystoneSignBatchQRParts: { requestId, pczts, maxFragmentLen in
+                try await synchronizer.buildKeystoneSignBatchQRParts(
+                    requestId: requestId,
+                    pczts: pczts,
+                    maxFragmentLen: maxFragmentLen
+                )
+            },
+            resetKeystoneSignBatchDecoder: {
+                await synchronizer.resetKeystoneSignBatchDecoder()
+            },
+            decodeKeystoneSignBatchPart: { part, expectedRequestId in
+                try await synchronizer.decodeKeystoneSignBatchPart(part, expectedRequestId: expectedRequestId)
+            },
+            applyKeystoneBatchSignatures: { pczts, batchSignResponse in
+                try await synchronizer.applyKeystoneBatchSignatures(pczts: pczts, batchSignResponse: batchSignResponse)
+            },
+            refreshStaleMigrationTransfers: { accountUUID, usk in
+                try await synchronizer.refreshStaleMigrationTransfers(accountUUID: accountUUID, usk: usk)
+            },
             rescanFrom: { blockHeight in
                 try await synchronizer.rescanFrom(height: blockHeight)
             },

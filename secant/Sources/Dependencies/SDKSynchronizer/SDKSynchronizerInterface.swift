@@ -120,6 +120,61 @@ struct SDKSynchronizerClient: Sendable {
     /// it, and a live binding is safer than a stub that silently no-ops a real lock.
     let lockMigrationResidual: @Sendable (AccountUUID) async throws -> Zatoshi
 
+    // PHASE 7 — the Keystone lane (REBUILD_PLAN D15). Two groups: the PCZT serve/store pair that
+    // creates and completes a hardware-signed run, and the batch-signing bridge that carries one
+    // ceremony's PCZTs to the device and its signatures back. None of the six is broadcast-bearing
+    // (the actual broadcast still rides `executeNextPendingMigrationTransfer` for the scheduled lane
+    // and `createAndSubmitTransactionFromPCZT` for the immediate one), so none takes the transaction
+    // guard in the LiveKey.
+
+    /// Builds the account's whole previewed Keystone migration commit UNSIGNED and returns the
+    /// preparation (note-split) subset for the signing ceremony — empty when no preps are needed.
+    ///
+    /// ⚠️ THIS IS THE RUN-CREATING CALL. The engine commits the previewed plan (every transaction in
+    /// the run — preps AND the schedule's own transfers, not just the subset returned here) the
+    /// moment it is called, and thereafter always resumes that stored non-terminal run, ignoring any
+    /// newer preview. A ceremony abandoned after this call MUST explicitly cancel the run it just
+    /// created (`restartCurrentMigrationStep`) or a later re-entry silently resumes signing these
+    /// same, by-then-stale PCZTs. That is why every abandon path in `MigrationCoordFlowCoordinator`
+    /// is mandatory, not best-effort.
+    let proposeNoteSplitPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
+    /// Stores Keystone-signed note-split preparation PCZTs. All-or-nothing: every signed PCZT in the
+    /// array is applied together. Order-independent with `storeSignedMigrationTransactions` — both
+    /// are per-transaction signature applications over the SAME already-created run (see
+    /// `proposeNoteSplitPCZTs`). The returned storage receipt is discarded; the broadcastable value
+    /// comes from the next-due lane, `executeNextPendingMigrationTransfer`.
+    let storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
+    /// Serves the run's TRANSFER PCZTs unsigned. Handle-free: it resumes the run
+    /// `proposeNoteSplitPCZTs` created rather than committing a new one.
+    let proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
+    /// Stores the Keystone-signed transfer PCZTs, completing the run's signing. All-or-nothing.
+    let storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
+
+    /// Builds the animated QR frame strings for a Keystone batch-signing request over `pczts` (which
+    /// MUST be preparation-then-transfer, schedule order — see the SDK doc). The SAME array, in the
+    /// SAME order, must be passed to `applyKeystoneBatchSignatures` once the device responds: the
+    /// signatures come back positionally, with no PCZT echoed.
+    let buildKeystoneSignBatchQRParts: @Sendable (Data, [MigrationUnsignedTransferPczt], Int) async throws -> [String]
+    /// Discards any in-flight batch-response decode session — call on scan-screen entry, retry and
+    /// exit (one decode session exists process-wide). Infallible.
+    let resetKeystoneSignBatchDecoder: @Sendable () async -> Void
+    /// Feeds one scanned QR frame into the active decode session. The second argument is the
+    /// ceremony's `requestId`, round-tripped by the device: a mismatch rejects a stale or unrelated
+    /// scan rather than decoding it.
+    let decodeKeystoneSignBatchPart: @Sendable (String, Data) async throws -> KeystoneBatchDecodeResult
+    /// Applies the ceremony's batch signatures to `pczts` POSITIONALLY — must be the same array and
+    /// order passed to `buildKeystoneSignBatchQRParts`, including its unredacted bytes.
+    let applyKeystoneBatchSignatures: @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt]
+    /// Rebuilds every EXPIRED transfer of the stored run in place and returns the run's full
+    /// post-refresh schedule. `usk: nil` is the external-signer (Keystone) lane — rebuilt rows are
+    /// left UNSIGNED (same funding note, recovered by nullifier identity; fresh scheduled height,
+    /// expiry and drawn boundary) and flow back through the ceremony. NEVER pass `nil` for a
+    /// software account: its rows would strand awaiting a ceremony that never comes.
+    ///
+    /// The returned schedule is the persisted truth — a later consent echo that replays a
+    /// pre-refresh copy fails with `migrationPlanStale` from then on.
+    let refreshStaleMigrationTransfers: @Sendable (AccountUUID, UnifiedSpendingKey?) async throws -> MigrationSchedule
+
     let rescanFrom: @Sendable (BlockHeight) async throws -> Void
 
     let rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error>

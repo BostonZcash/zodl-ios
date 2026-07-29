@@ -78,6 +78,23 @@ enum MigrationCommitError: Error, Equatable {
     case immediateSubmitNotSuccessful
 }
 
+/// PHASE 7: one Keystone signing ceremony's full, ordered PCZT batch plus the count that tells its
+/// two halves apart.
+///
+/// The engine numbers every preparation (note-split) transaction before the transfers, and
+/// `proposeKeystoneBatch` builds the array in exactly that order, so `pczts[..<preparationCount]`
+/// are the preps and `pczts[preparationCount...]` are the schedule's transfers. Because
+/// `applyKeystoneBatchSignatures` echoes the batch back positionally, the SAME split applies to the
+/// signed result — see `MigrationCoordFlow.splitKeystoneBatch`.
+struct MigrationKeystoneBatch: Equatable {
+    /// Preparation PCZTs first, then the schedule's own transfers — the order both the QR build and
+    /// the two store calls expect.
+    let pczts: [MigrationUnsignedTransferPczt]
+    /// How many leading entries of `pczts` are preparation (note-split) transactions. `0` when the
+    /// run needs no preparation layer.
+    let preparationCount: Int
+}
+
 /// Shared commit-lane pipelines for the migration flow's software- and Keystone-signing paths (see
 /// this file's header for the extraction rationale).
 enum MigrationCommitPipeline {
@@ -158,15 +175,76 @@ enum MigrationCommitPipeline {
         return displayTxId
     }
 
-    // PHASE 7 (docs/slipstream/migration/REBUILD_PLAN.md, D15): the two KEYSTONE arms —
-    // `commitImmediateKeystone` (post-signing add-proofs + submit for the manual lane) and
-    // `proposeKeystoneBatch` (the scheduled lane's unsigned-PCZT batch) — are deleted here, not
-    // rewritten. They are two of the four callers of #1930's single Keystone ceremony machine and
-    // land together with it in one batch, never per-phase. They need SDK members this build has not
-    // bound (`proposeNoteSplitPCZTs`, `proposeMigrationPCZTs`) and the coordinator's
-    // `keystoneNoteSplitSentinelPrefix` — restore all three with them.
+    /// The immediate lane's Keystone post-signing submit — called once the QR round-trip returns a
+    /// signature for the single PCZT `MigrationReviewTransferStore`'s Keystone fork proposed via
+    /// `createPCZTFromProposal(accountUUID:proposal:)`. That is an ORDINARY, unproven PCZT — unlike
+    /// the engine's own migration PCZTs, which arrive proven-but-unsigned already — so it still needs
+    /// `addProofsToPCZT` before it can be combined with the externally-obtained signature.
+    ///
+    /// Unlike the software lane, this cannot defer to the Sending screen's `onAppear`: a Keystone
+    /// PCZT can only be finalized ONCE, right here, immediately after the signature comes back —
+    /// there is no engine-held "signed and stored, broadcast whenever" state for a proposal the
+    /// engine never held in the first place. `createAndSubmitTransactionFromPCZT` is already
+    /// transaction-guarded in `SDKSynchronizerLive`. Same throw/record semantics as
+    /// `commitImmediateSoftware`.
+    static func commitImmediateKeystone(
+        unsignedPczt: Data,
+        signedPczt: Data,
+        accountUUID: AccountUUID,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async throws -> String {
+        let provenPczt = try await sdkSynchronizer.addProofsToPCZT(unsignedPczt)
+        let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(provenPczt, signedPczt)
+        guard case let .success(txIds) = result, let displayTxId = txIds.first else {
+            throw MigrationCommitError.immediateSubmitNotSuccessful
+        }
+        await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
+        return displayTxId
+    }
 
-    /// Used by the immediate submit path above (and, from Phase 7, by the Keystone one too): the broadcast already landed by the time this
+    /// Proposes the Keystone-signing PCZT batch for `schedule`, external-signer path: proposes the
+    /// engine's preparation (note-split) PCZTs first — the engine builds N preparation transactions,
+    /// not one split transaction, and returns the (possibly empty) prep subset from that same call —
+    /// then appends the schedule's own transfer PCZTs behind them.
+    ///
+    /// ⚠️ `proposeNoteSplitPCZTs` is the RUN-CREATING call — see its doc on `SDKSynchronizerClient`.
+    /// Every abandon path downstream of this function must cancel the run it just created.
+    ///
+    /// **Prep/transfer discrimination is POSITIONAL, and that is a deliberate simplification over
+    /// #1930.** There, `MigrationUnsignedTransferPczt.id` was a `String` and preps rode the batch
+    /// under a `"note-split#"` sentinel prefix so they could be told apart after the round trip —
+    /// which then had to be stripped before `applyKeystoneBatchSignatures` (whose FFI numeric-parsed
+    /// every id) and re-attached afterwards, three helpers in all. In this SDK `id` is a `UInt32`
+    /// engine id, `applyKeystoneBatchSignatures` echoes ids back POSITIONALLY, and the engine numbers
+    /// every preparation transaction before the transfers. So the prep COUNT alone is a complete and
+    /// exact discriminator, it travels with the batch in `MigrationKeystoneBatch`, and no id is ever
+    /// rewritten. Do not reintroduce a sentinel: it would break the store calls, which look
+    /// transactions up by the id the engine issued.
+    ///
+    /// Every SDK member here throws through (no `try?` swallowing), and an empty resulting batch is
+    /// ALSO a failure — this never hands the coordinator a silently empty or partial batch that would
+    /// stage a dead-end signing session.
+    ///
+    /// - Throws: `MigrationCommitError.emptyPcztBatch` when the proposed batch has nothing in it;
+    ///   otherwise whatever the underlying SDK calls throw. Callers map ANY throw to their existing
+    ///   commit-failure surface (Retry re-runs this same propose).
+    static func proposeKeystoneBatch(
+        schedule: MigrationSchedule,
+        account: WalletAccount,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async throws -> MigrationKeystoneBatch {
+        let preps = try await sdkSynchronizer.proposeNoteSplitPCZTs(account.id, schedule)
+        let transfers = try await sdkSynchronizer.proposeMigrationPCZTs(account.id, schedule)
+
+        let pczts = preps + transfers
+        guard !pczts.isEmpty else {
+            throw MigrationCommitError.emptyPcztBatch
+        }
+
+        return MigrationKeystoneBatch(pczts: pczts, preparationCount: preps.count)
+    }
+
+    /// Used by the immediate submit path above (and by the Keystone one): the broadcast already landed by the time this
     /// runs (a `displayTxId` in hand), so a `recordImmediateMigration` failure here is bookkeeping
     /// only — logged, never thrown, never turning an already-successful broadcast into a reported
     /// failure (same "landed but unrecorded is still success" precedent this file's header

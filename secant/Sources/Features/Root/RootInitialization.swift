@@ -96,9 +96,7 @@ extension Root {
                 // account is selected, which is the same account in every single-account case.
                 _ = accountUUID
                 guard state.featureFlags.migration else { return .none }
-                state.migrationCoordFlowState = .initial
-                state.path = .migrationCoordFlow
-                return .none
+                return openMigrationCoordFlow(state: &state)
 
             case .initialization(.appDelegate(.didEnterBackground)):
                 sdkSynchronizer.stop()
@@ -1005,5 +1003,52 @@ extension Root {
         // `state.destinationState.destination = .home` in the `.phraseDisplay(.finishedTapped)` /
         // `.onboarding(.newWalletSuccessfulyCreated)` arm above.
         state.destinationState.destination = .ironwoodAnnouncement
+    }
+
+    // MARK: - PHASE 7: opening the migration flow from OUTSIDE it
+
+    /// The single entry point for every Root-side site that opens (or re-opens) the migration flow:
+    /// the banner tap and the notification tap. Both replace `migrationCoordFlowState` wholesale, so
+    /// both must run the same defensive teardown first — hence one helper rather than two inline
+    /// resets that can drift.
+    func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
+        let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+        state.migrationCoordFlowState = MigrationCoordFlow.State.initial
+        state.path = Root.State.Path.migrationCoordFlow
+        return cancelEffect
+    }
+
+    /// Cancels the engine run a Keystone BATCH ceremony created, when the flow is being torn down
+    /// from OUTSIDE while that ceremony is still live.
+    ///
+    /// The engine creates a Keystone commit's ENTIRE run — preparations and the schedule's transfers
+    /// alike — the moment its PCZTs are built (`proposeNoteSplitPCZTs`, called by
+    /// `MigrationCommitPipeline.proposeKeystoneBatch`), and always resumes a stored non-terminal run
+    /// on the next attempt, ignoring any newer preview. Wiping `migrationCoordFlowState` while
+    /// `pendingKeystoneSigning` is live would strand that run: a later re-entry would silently resume
+    /// signing the same, by-then-stale PCZTs instead of proposing a fresh preview.
+    ///
+    /// `pendingKeystoneSigning` is only ever set once the ceremony actually started, so its presence
+    /// here means exactly "a ceremony was begun and never resolved". Cancel via
+    /// `restartCurrentMigrationStep`, discarding the fresh schedule it returns — the user re-runs the
+    /// ceremony from a fresh preview, the same v1 semantics as the in-flow
+    /// `.keystoneScanAbandoned` twin.
+    ///
+    /// Restricted to `.planCommit`: the immediate lane's `createPCZTFromProposal` is engine-external
+    /// and created no run, so cancelling for it would at best be a no-op and at worst restart an
+    /// unrelated committed run. Read BEFORE the caller resets the state, and cancelled on the run's
+    /// RECORDED owner (`pendingKeystoneSigningAccountUUID`) rather than the currently-selected
+    /// account, which can have moved on by the time this runs. Fire-and-forget: a failure just leaves
+    /// the stray run for the next attempt to encounter and cancel itself.
+    func cancelAbandonedKeystoneMigrationRun(state: Root.State) -> Effect<Root.Action> {
+        guard case .planCommit? = state.migrationCoordFlowState.pendingKeystoneSigning,
+              let accountUUID = state.migrationCoordFlowState.pendingKeystoneSigningAccountUUID
+                ?? state.selectedWalletAccount?.id else {
+            return .none
+        }
+
+        return .run { [sdkSynchronizer] _ in
+            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
+        }
     }
 }

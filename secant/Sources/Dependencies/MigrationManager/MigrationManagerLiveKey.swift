@@ -360,25 +360,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// actually consulted (the `.invalidTransfer` case is decided purely from `state`'s own
     /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
     /// uses.
-    /// PHASE 7 SCOPE FENCE (docs/slipstream/migration/REBUILD_PLAN.md, D15) — not a product rule.
-    ///
-    /// Keystone signing is one machine with four callers and lands as a single Phase 7 batch. Until
-    /// it does, a hardware account cannot COMPLETE any migration lane: the software commit derives a
-    /// USK, which a Keystone account has no seed for. An entry point into a lane that always fails is
-    /// worse than no entry point, so the two surfaces that can start one — the banner and the
-    /// re-entry route — are fenced here rather than in `MigrationDerivations`, which stays byte-
-    /// identical to #1930 so Phase 7 has nothing to unpick in the pure table.
-    ///
-    /// DELETE this method and its two call sites with Phase 7.
-    private func isSeedBacked(_ accountUUID: AccountUUID) -> Bool {
-        guard let account = walletAccounts.first(where: { $0.id == accountUUID }) else {
-            // Unknown account: fail CLOSED. An account we cannot classify must not be offered a
-            // lane that may not complete for it.
-            return false
-        }
-        return account.vendor != WalletAccount.Vendor.keystone
-    }
-
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         // MOB-1513 (B2 fix wave): pre-activation there is no migration banner to derive — the pure
@@ -389,7 +370,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // work and the return value is unchanged. Callers consume the returned variant only, never a
         // side effect of those reads.
         guard isIronwoodActivated() else { return nil }
-        guard isSeedBacked(resolvedAccountUUID) else { return nil }
         guard let rawState = await migrationState(accountUUID: resolvedAccountUUID) else { return nil }
 
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
@@ -462,7 +442,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// branches on it (row 1, `.recovery`).
     func reentryRoute() async -> MigrationReentryRoute {
         guard let accountUUID = selectedWalletAccount?.id else { return MigrationReentryRoute.entry }
-        guard isSeedBacked(accountUUID) else { return MigrationReentryRoute.entry }
 
         async let rawStateTask = migrationState(accountUUID: accountUUID)
         async let progressTask = migrationProgress(accountUUID: accountUUID)

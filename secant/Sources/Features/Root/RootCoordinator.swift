@@ -262,12 +262,7 @@ extension Root {
                 return .none
 
             case .home(.migrationTapped):
-                // PHASE 2: #1930 routes this through `openMigrationCoordFlow`, which additionally
-                // releases a send-wait hold and cancels an abandoned Keystone ceremony before
-                // resetting. Neither exists yet (Phase 3 / Phase 7), so this is the reset alone.
-                state.migrationCoordFlowState = .initial
-                state.path = .migrationCoordFlow
-                return .none
+                return openMigrationCoordFlow(state: &state)
 
             case .migrationCoordFlow(.switchServerRequested):
                 // N6: the Tor sheet's custom-server escape. Tear the flow down (which discards the

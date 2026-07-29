@@ -151,12 +151,9 @@ struct MigrationTransferPlan {
             /// The software lane: sign + store `schedule` with a USK derived for `account` at
             /// `zip32AccountIndex`.
             case software(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex)
-            // PHASE 7 (REBUILD_PLAN D15): `case keystone(schedule:account:)` and its
-            // `requestKeystoneSignature` effect are deleted, not rewritten. They are one of the four
-            // callers of #1930's single Keystone ceremony machine, which lands as ONE batch. The
-            // `confirmIntent` fork below returns nil for a Keystone account instead, which cannot be
-            // reached anyway while `bannerVariant`/`reentryRoute` fence the surface to seed-backed
-            // accounts.
+            /// The Keystone lane: propose `schedule`'s PCZTs (plus any preparation PCZTs) for a
+            /// batched QR-signing session against `account`.
+            case keystone(schedule: MigrationSchedule, account: WalletAccount)
         }
 
         var variant = Variant.scheduled
@@ -283,10 +280,9 @@ struct MigrationTransferPlan {
             // one either way.
             guard let schedule, !schedule.transfers.isEmpty else { return nil }
             guard let account = selectedWalletAccount else { return nil }
-            // PHASE 7: #1930 forked to `.keystone(...)` here. Until the ceremony batch lands, a
-            // hardware account gets NO confirm intent at all — a disabled Confirm is honest, where a
-            // fork into a lane that cannot complete would not be.
-            guard account.vendor != WalletAccount.Vendor.keystone else { return nil }
+            guard account.vendor != WalletAccount.Vendor.keystone else {
+                return .keystone(schedule: schedule, account: account)
+            }
             guard let zip32AccountIndex = account.zip32AccountIndex else { return nil }
             return .software(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
         }
@@ -377,12 +373,11 @@ struct MigrationTransferPlan {
 
         enum Delegate: Equatable {
             case confirmed
-            /// MOB-1468 (Keystone): the schedule's PCZTs (ALL N transfers, plus the note-split PCZT
-            /// first when needed — MOB-1478 W4) were proposed and need QR signing in ONE batched
-            /// session — the shared shape across the Keystone signing sources so the coordinator can
-            /// treat them symmetrically. MOB-1496: the note-split PCZT (raw `Data`) rides along
-            /// wrapped under a `"note-split"` sentinel id — see `requestKeystoneSignature`'s doc.
-            case keystoneSignRequested([MigrationUnsignedTransferPczt])
+            /// PHASE 7 (Keystone): the run's PCZTs — any preparation transactions first, then all N
+            /// of the schedule's transfers — were proposed and need QR signing in ONE batched
+            /// session. The `MigrationKeystoneBatch` wrapper carries the preparation count, which is
+            /// what tells the two halves apart on the way back (see its doc).
+            case keystoneSignRequested(MigrationKeystoneBatch)
         }
     }
 
@@ -524,6 +519,10 @@ struct MigrationTransferPlan {
                     // routing once `.delegate(.confirmed)` lands; this reducer needs no awareness
                     // of it (see `State.isExpiredRecoveryReview`'s own doc).
                     return .send(.delegate(.confirmed))
+
+                case .keystone(let schedule, let account):
+                    state.isConfirming = true
+                    return requestKeystoneSignature(for: schedule, account: account)
 
                 case .software(let schedule, let account, let zip32AccountIndex):
                     state.isConfirming = true
@@ -687,10 +686,40 @@ struct MigrationTransferPlan {
         }
     }
 
-    // PHASE 7 (REBUILD_PLAN D15): `requestKeystoneSignature(for:account:)` deleted with the
-    // `.keystone` confirm intent above — it called `MigrationCommitPipeline.proposeKeystoneBatch`,
-    // itself removed from that file for the same reason. Restore all three together, plus the
-    // coordinator's `keystoneNoteSplitSentinelPrefix` and the two SDK PCZT-batch members.
+    /// The Keystone `confirmTapped` fork: proposes ALL of the schedule's PCZTs — led by any
+    /// preparation (note-split) PCZTs the engine still needs — and hands the whole batch to the
+    /// coordinator for ONE batched QR-signing session (rounds are the coordinator's business; see
+    /// `KeystoneBatchChunking`).
+    ///
+    /// Delegates a `MigrationKeystoneBatch`, not a bare array: the prep/transfer boundary is
+    /// positional in this SDK and the count has to survive the round trip so the two store calls can
+    /// be told apart afterwards — see `MigrationCommitPipeline.proposeKeystoneBatch`'s doc for why
+    /// that replaces #1930's id-sentinel entirely.
+    ///
+    /// Every SDK member throws through, and an empty batch is also a failure, so this never delegates
+    /// a silently empty or partial batch. Failures route to the SAME sheet the software fork uses,
+    /// and Retry re-runs this same propose.
+    ///
+    /// `ZcashError.migrationPlanStale` is caught SPECIFICALLY ahead of the generic catch, and — unlike
+    /// the software lane — recovers via RESTART, not re-propose: `proposeKeystoneBatch`'s
+    /// `proposeNoteSplitPCZTs` is the run-creating call, so a re-propose can never converge on the
+    /// already-committed run (it would toast-loop forever). See `restartAfterPlanStale`.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
+        .run { send in
+            do {
+                let batch = try await MigrationCommitPipeline.proposeKeystoneBatch(
+                    schedule: schedule,
+                    account: account,
+                    sdkSynchronizer: sdkSynchronizer
+                )
+                await send(.delegate(.keystoneSignRequested(batch)))
+            } catch ZcashError.migrationPlanStale {
+                await restartAfterPlanStale(accountUUID: account.id, send: send)
+            } catch {
+                await send(.noteSplitFailed)
+            }
+        }
+    }
 
     /// MOB-1496 (R8-T1, S3): proposes a fresh schedule via `proposeMigrationTransfers` —
     /// `retryTapped`'s SINGLE-attempt re-proposal after a propose failure (an explicit user tap, not

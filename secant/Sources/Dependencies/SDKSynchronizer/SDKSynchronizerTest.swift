@@ -55,6 +55,21 @@ extension SDKSynchronizerClient: TestDependencyKey {
         hasInvalidMigrationTransfers: unimplemented("\(Self.self).hasInvalidMigrationTransfers", placeholder: false),
         residualAfterMigration: unimplemented("\(Self.self).residualAfterMigration", placeholder: nil),
         lockMigrationResidual: unimplemented("\(Self.self).lockMigrationResidual", placeholder: .zero),
+        proposeNoteSplitPCZTs: unimplemented("\(Self.self).proposeNoteSplitPCZTs", placeholder: []),
+        storeSignedNoteSplits: unimplemented("\(Self.self).storeSignedNoteSplits"),
+        proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
+        storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions"),
+        buildKeystoneSignBatchQRParts: unimplemented("\(Self.self).buildKeystoneSignBatchQRParts", placeholder: []),
+        resetKeystoneSignBatchDecoder: unimplemented("\(Self.self).resetKeystoneSignBatchDecoder"),
+        decodeKeystoneSignBatchPart: unimplemented(
+            "\(Self.self).decodeKeystoneSignBatchPart",
+            placeholder: KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil)
+        ),
+        applyKeystoneBatchSignatures: unimplemented("\(Self.self).applyKeystoneBatchSignatures", placeholder: []),
+        refreshStaleMigrationTransfers: unimplemented(
+            "\(Self.self).refreshStaleMigrationTransfers",
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+        ),
         rescanFrom: unimplemented("\(Self.self).rescanFrom"),
         rewind: unimplemented("\(Self.self).rewind", placeholder: Fail(error: "Error").eraseToAnyPublisher()),
         getAllTransactions: unimplemented("\(Self.self).getAllTransactions", placeholder: []),
@@ -132,6 +147,19 @@ extension SDKSynchronizerClient {
         hasInvalidMigrationTransfers: { _ in false },
         residualAfterMigration: { _ in nil },
         lockMigrationResidual: { _ in .zero },
+        proposeNoteSplitPCZTs: { _, _ in [] },
+        storeSignedNoteSplits: { _, _ in },
+        proposeMigrationPCZTs: { _, _ in [] },
+        storeSignedMigrationTransactions: { _, _ in },
+        buildKeystoneSignBatchQRParts: { _, _, _ in [] },
+        resetKeystoneSignBatchDecoder: { },
+        decodeKeystoneSignBatchPart: { _, _ in
+            KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil)
+        },
+        applyKeystoneBatchSignatures: { _, _ in [] },
+        refreshStaleMigrationTransfers: { _, _ in
+            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+        },
         rescanFrom: { _ in },
         rewind: { _ in Empty<Void, Error>().eraseToAnyPublisher() },
         getAllTransactions: { _ in [] },
@@ -213,6 +241,19 @@ extension SDKSynchronizerClient {
         hasInvalidMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         residualAfterMigration: @escaping @Sendable (AccountUUID) async throws -> Zatoshi? = { _ in nil },
         lockMigrationResidual: @escaping @Sendable (AccountUUID) async throws -> Zatoshi = { _ in .zero },
+        proposeNoteSplitPCZTs: @escaping @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt] = { _, _ in [] },
+        storeSignedNoteSplits: @escaping @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void = { _, _ in },
+        proposeMigrationPCZTs: @escaping @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt] = { _, _ in [] },
+        storeSignedMigrationTransactions: @escaping @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void = { _, _ in },
+        buildKeystoneSignBatchQRParts: @escaping @Sendable (Data, [MigrationUnsignedTransferPczt], Int) async throws -> [String] = { _, _, _ in [] },
+        resetKeystoneSignBatchDecoder: @escaping @Sendable () async -> Void = { },
+        decodeKeystoneSignBatchPart: @escaping @Sendable (String, Data) async throws -> KeystoneBatchDecodeResult = { _, _ in
+            KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil)
+        },
+        applyKeystoneBatchSignatures: @escaping @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt] = { _, _ in [] },
+        refreshStaleMigrationTransfers: @escaping @Sendable (AccountUUID, UnifiedSpendingKey?) async throws -> MigrationSchedule = { _, _ in
+            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+        },
         rescanFrom: @escaping @Sendable (BlockHeight) async throws -> Void = { _ in },
         rewind: @escaping @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
         getAllTransactions: @escaping @Sendable (AccountUUID?) -> IdentifiedArrayOf<TransactionState> = { _ in
@@ -354,6 +395,15 @@ extension SDKSynchronizerClient {
             hasInvalidMigrationTransfers: hasInvalidMigrationTransfers,
             residualAfterMigration: residualAfterMigration,
             lockMigrationResidual: lockMigrationResidual,
+            proposeNoteSplitPCZTs: proposeNoteSplitPCZTs,
+            storeSignedNoteSplits: storeSignedNoteSplits,
+            proposeMigrationPCZTs: proposeMigrationPCZTs,
+            storeSignedMigrationTransactions: storeSignedMigrationTransactions,
+            buildKeystoneSignBatchQRParts: buildKeystoneSignBatchQRParts,
+            resetKeystoneSignBatchDecoder: resetKeystoneSignBatchDecoder,
+            decodeKeystoneSignBatchPart: decodeKeystoneSignBatchPart,
+            applyKeystoneBatchSignatures: applyKeystoneBatchSignatures,
+            refreshStaleMigrationTransfers: refreshStaleMigrationTransfers,
             rescanFrom: rescanFrom,
             rewind: rewind,
             getAllTransactions: getAllTransactions,

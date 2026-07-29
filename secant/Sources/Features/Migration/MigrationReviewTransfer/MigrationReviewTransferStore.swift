@@ -269,13 +269,16 @@ struct MigrationReviewTransfer {
         }
     }
 
-    /// MOB-1513: the sentinel id the immediate lane's single Keystone-signing PCZT rides under in
-    /// `MigrationKeystoneSign.State.pczts` — it carries no engine-issued id, since
-    /// `createPCZTFromProposal` is the ordinary-send PCZT builder, not an engine call. MOB-1513
-    /// (R8): STATE-ONLY now — it never reaches the SDK (the immediate ceremony's single-PCZT
-    /// reroute bypasses the batch bridge, whose apply FFI numeric-parses ids and would reject this
-    /// string); the coordinator's post-signing step reads the entry positionally (`.first`).
-    static let immediateKeystonePcztId = "immediate"
+    /// PHASE 7: the placeholder id the immediate lane's single Keystone-signing PCZT rides under in
+    /// `MigrationKeystoneSign.State.pczts`. It carries no engine-issued id — `createPCZTFromProposal`
+    /// is the ordinary-send PCZT builder, not an engine call — and it is STATE-ONLY: this lane runs
+    /// the production single-PCZT ceremony (`urEncoderForPCZT` QR, `keystonePCZTScanChecker` scan),
+    /// never the batch bridge, so the id never reaches the SDK and the coordinator's post-signing
+    /// step reads the entry positionally (`.first`).
+    ///
+    /// `0` rather than #1930's `"immediate"` string: `MigrationUnsignedTransferPczt.id` is a `UInt32`
+    /// engine id in this SDK. The value is arbitrary precisely because nothing ever reads it.
+    static let immediateKeystonePcztId: UInt32 = 0
 
     /// MOB-1513 (E2-FIX): single-flight + dismiss-cancellation id for the bounded entry-retry loop
     /// (`proposeWithRetryEffect`). `cancelInFlight` restarts the window on a re-appearance; TCA's
