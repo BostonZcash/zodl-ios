@@ -65,6 +65,10 @@ struct MigrationTransferPlanView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT.
+                // With the padding on the whole screen instead (as #1930 had it), the scroll
+                // indicator is inset by the same 24pt as the content and draws directly over the
+                // timeline's right-aligned ZEC amounts. See `MigrationEntryView` for the full note.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(title)
@@ -91,34 +95,37 @@ struct MigrationTransferPlanView: View {
                             splitRow: store.splitRow
                         )
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
                 // MOB-1513 (B4): disabled+spinner while the commit is in flight (the established
                 // button-loading idiom — mirrors `SendConfirmationView`'s `isSending` button).
-                if store.isConfirming {
-                    ZashiButton(
-                        String(localizable: .generalConfirm),
-                        accessoryView:
-                            ProgressView()
-                            .progressViewStyle(
-                                CircularProgressViewStyle(
-                                    tint: Asset.Colors.secondary.color
+                Group {
+                    if store.isConfirming {
+                        ZashiButton(
+                            String(localizable: .generalConfirm),
+                            accessoryView:
+                                ProgressView()
+                                .progressViewStyle(
+                                    CircularProgressViewStyle(
+                                        tint: Asset.Colors.secondary.color
+                                    )
                                 )
-                            )
-                    ) { }
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
-                    .disabled(store.isConfirming)
-                } else {
-                    ZashiButton(String(localizable: .generalConfirm)) {
-                        store.send(.confirmTapped)
+                        ) { }
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
+                        .disabled(store.isConfirming)
+                    } else {
+                        ZashiButton(String(localizable: .generalConfirm)) {
+                            store.send(.confirmTapped)
+                        }
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
                     }
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
                 }
+                .screenHorizontalPadding()
             }
-            .screenHorizontalPadding()
             .zashiBack()
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent

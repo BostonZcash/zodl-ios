@@ -29,6 +29,13 @@ struct MigrationEntryView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE (all four migration screens): the ScrollView spans the full screen
+                // width and its CONTENT carries `screenHorizontalPadding()`, rather than the whole
+                // screen being padded and the scroller living inside that column. Otherwise the
+                // scroll indicator is inset by the same 24pt as the content and draws ON TOP of it —
+                // over the ZEC amounts on Transfer Plan, over the card edges here. Same shape the
+                // Activity list has always used (`TransactionsManagerView`: full-bleed list, padded
+                // rows). The footer below is pinned outside the scroller, so it pads itself.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         MigrationPairedIcons(vendor: store.selectedWalletAccount?.vendor ?? .zcash)
@@ -52,25 +59,33 @@ struct MigrationEntryView: View {
 
                         optionCards
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
-                if store.isDisclaimerVisible {
-                    disclaimer
-                        .padding(.top, 16)
-                } else {
-                    footerNote
-                        .padding(.top, 16)
-                }
+                VStack(spacing: 0) {
+                    if store.isDisclaimerVisible {
+                        disclaimer
+                            .padding(.top, 16)
+                    } else {
+                        footerNote
+                            .padding(.top, 16)
+                    }
 
-                ZashiButton(String(localizable: .generalNext)) {
-                    store.send(.nextTapped)
+                    ZashiButton(String(localizable: .generalNext)) {
+                        store.send(.nextTapped)
+                    }
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.top, 16)
-                .padding(.bottom, 24)
+                .screenHorizontalPadding()
             }
-            .screenHorizontalPadding()
             .zashiBack() { store.send(.dismissRequired) }
+            .sheet(isPresented: $store.isInAppBrowserOn) {
+                if let url = URL(string: MigrationEntry.findOutMoreURLString) {
+                    InAppBrowserView(url: url)
+                }
+            }
         }
         .applyScreenBackground()
         .onAppear {

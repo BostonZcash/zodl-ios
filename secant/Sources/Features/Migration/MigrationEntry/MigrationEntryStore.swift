@@ -16,6 +16,7 @@ import Foundation
 struct MigrationEntry {
     @ObservableState
     struct State: Equatable {
+        var isInAppBrowserOn = false
         var selectedMode = MigrationMode.privateScheduled
         var orchardBalance = Zatoshi.zero
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
@@ -41,16 +42,17 @@ struct MigrationEntry {
         }
     }
 
-    enum Action: Equatable {
+    enum Action: BindableAction, Equatable {
         /// The orchard balance to migrate for the selected account, loaded on `onAppear`.
         case balanceLoaded(Zatoshi)
+        case binding(BindingAction<MigrationEntry.State>)
         case delegate(Delegate)
         /// The nav-bar back button. Entry is the flow's root screen, so SwiftUI `dismiss()` is a
         /// no-op here — the coordinator consumes this and exits the flow via `flowFinished`
         /// (mirrors `SendForm.dismissRequired`).
         case dismissRequired
         /// Opens the Ironwood migration support article (O-7 destination, MOB-1508) in the
-        /// system browser.
+        /// IN-APP browser.
         case findOutMoreTapped
         case modeTapped(MigrationMode)
         case nextTapped
@@ -61,18 +63,24 @@ struct MigrationEntry {
         }
     }
 
+    /// The same support article `IronwoodAnnouncementView.ironwoodAnnouncementFAQURL` points at —
+    /// it is the "moving your funds" guide, which is what both surfaces link to.
     static let findOutMoreURLString = "https://support.zodl.com/article/42-moving-your-funds-to-ironwood"
 
     @Dependency(\.migrationManager) var migrationManager
-    @Dependency(\.openURL) var openURL
 
     init() { }
 
     var body: some Reducer<State, Action> {
+        BindingReducer()
+
         Reduce { state, action in
             switch action {
             case .balanceLoaded(let balance):
                 state.orchardBalance = balance
+                return .none
+
+            case .binding:
                 return .none
 
             case .delegate:
@@ -82,8 +90,16 @@ struct MigrationEntry {
                 return .none
 
             case .findOutMoreTapped:
-                guard let url = URL(string: MigrationEntry.findOutMoreURLString) else { return .none }
-                return .run { _ in await openURL(url) }
+                // FIELD FIX (not a Phase-2 gap): #1930 opened this through `@Dependency(\.openURL)`,
+                // which kicks the user out to Safari. Every other article link in the app — About's
+                // policy/terms, the Keystone advert, the Ironwood announcement's own "Learn more" —
+                // presents `InAppBrowserView` in a sheet, so migration was the odd one out. Fixed
+                // HERE rather than left as an intentional divergence, because Phase 7's Keystone
+                // firmware link and any later article link would have copied the wrong idiom from
+                // this screen. #1930's `findOutMoreOpensSupportArticle` test asserts the openURL
+                // effect; when tests are ported, that assertion changes with it.
+                state.isInAppBrowserOn = true
+                return .none
 
             case .modeTapped(let mode):
                 state.selectedMode = mode

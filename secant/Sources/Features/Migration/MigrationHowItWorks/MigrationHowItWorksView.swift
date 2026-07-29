@@ -20,6 +20,9 @@ struct MigrationHowItWorksView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT,
+                // so the scroll indicator rides the screen edge rather than the content column's.
+                // See `MigrationEntryView` for the full note.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(localizable: .migrationHowItWorksTitle)
@@ -33,20 +36,23 @@ struct MigrationHowItWorksView: View {
 
                         bulletRows
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
                 Spacer(minLength: 16)
 
-                footerNote
-                    .padding(.bottom, 16)
+                VStack(spacing: 0) {
+                    footerNote
+                        .padding(.bottom, 16)
 
-                ZashiButton(String(localizable: .migrationHowItWorksContinue)) {
-                    store.send(.continueTapped)
+                    ZashiButton(String(localizable: .migrationHowItWorksContinue)) {
+                        store.send(.continueTapped)
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
+                .screenHorizontalPadding()
             }
-            .screenHorizontalPadding()
             .zashiBack()
         }
         .applyScreenBackground()
