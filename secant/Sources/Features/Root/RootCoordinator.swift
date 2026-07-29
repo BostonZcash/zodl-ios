@@ -269,6 +269,18 @@ extension Root {
                 state.path = .migrationCoordFlow
                 return .none
 
+            case .migrationCoordFlow(.switchServerRequested):
+                // N6: the Tor sheet's custom-server escape. Tear the flow down (which discards the
+                // still-PROVISIONAL network snapshot — nothing was committed) and open Server Setup.
+                // A re-entry afterwards re-forms and re-rolls the endpoint.
+                // Reuse the smart banner's own Server Setup entry (the one existing precedent),
+                // rather than a second route to the same screen.
+                state.serverSetupState = .initial
+                state.path = .serverSwitch
+                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                    await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                }
+
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil
                 // A finished run has usually changed what there is to migrate — after the manual

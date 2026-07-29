@@ -63,6 +63,16 @@ struct Root {
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
         var staleWalletHealedAlertCancelId = UUID()
+        var migrationSyncGateCancelId = UUID()
+        /// The last value `.migrationSyncGateChanged` saw, for dedupe — a genuine transition is what
+        /// triggers a migration reconcile.
+        var lastMigrationSyncGateBlocked = false
+        /// Set when a `.retryStart` ran WHILE the migration privacy gate was blocking, so the gate's
+        /// clearing edge knows to replay that deferred start.
+        var syncDeferredByMigrationGate = false
+        /// Edge detector for the sync-completion hooks below — reconcile and the send-gate re-key
+        /// run ONCE per completed sync, not on every tick while already at the tip.
+        var wasSyncUpToDateForMigration = false
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -273,6 +283,9 @@ struct Root {
         case serverSetupBindingUpdated(Bool)
         case splashFinished
         case splashRemovalRequested
+        /// The SDK's migration privacy gate flipped (or was re-pushed by the app-side feed). The
+        /// clearing edge is what RESUMES a sync a migration broadcast stopped — see the handler.
+        case migrationSyncGateChanged(Bool)
         case synchronizerStateChanged(RedactableSynchronizerState)
         case transactionDetailsOpen(String)
         case updateStateAfterConfigUpdate(WalletConfig)
@@ -357,6 +370,7 @@ struct Root {
     @Dependency(\.flexaHandler) var flexaHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.pasteboard) var pasteboard

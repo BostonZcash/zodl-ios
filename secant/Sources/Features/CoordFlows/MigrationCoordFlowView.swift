@@ -36,11 +36,23 @@ struct MigrationCoordFlowView: View {
                     MigrationHowItWorksView(store: store)
                 case let .reviewTransfer(store):
                     MigrationReviewTransferView(store: store)
+                case let .scheduled(store):
+                    MigrationScheduledView(store: store)
                 case let .sending(store):
                     MigrationSendingView(store: store)
+                case let .status(store):
+                    MigrationStatusView(store: store)
                 case let .transferPlan(store):
                     MigrationTransferPlanView(store: store)
                 }
+            }
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.isTorSheetPresented },
+                    set: { store.send(.torSheetPresentationChanged($0)) }
+                )
+            ) {
+                MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
         }
         .applyScreenBackground()

@@ -58,6 +58,7 @@ struct SmartBanner {
         var CancelStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
         var CancelMigrationRepollId = UUID()
+        let CancelMigrationStateStreamId = UUID()
 
         var isScanProgressComplete = false
         var delay = 1.5
@@ -140,10 +141,14 @@ struct SmartBanner {
         case evaluatePriority2
         case evaluatePriorityMigration
         case migrationVariantLoaded(MigrationBannerVariant?)
+        /// The manager's per-account migration-state stream ticked. It reports THAT the state
+        /// changed, not what it resolved to, so this re-reads the variant through the same funnel.
+        /// Restored in Phase 3 along with the manager's `reconcile()`, which is what feeds it.
+        case migrationStateChanged(MigrationState)
         /// Re-read the variant now, from OUTSIDE the banner — sent by `Root` when the migration
-        /// flow closes. The new SDK publishes no migration-state stream (#1930 subscribed
-        /// `migrationManager.stateEvents`, an app-side subject it fed itself), so a run that
-        /// changes the wallet has to say so explicitly or the banner keeps showing a stale variant.
+        /// flow closes. Complements the stream above rather than duplicating it: `stateEvents`
+        /// publishes `MigrationState`, so a pure BALANCE change (funds arriving, or a manual sweep
+        /// completing while the state stays `.notStarted`) emits nothing at all.
         case migrationReevaluationRequested
         case migrationVariantUpdated(MigrationBannerVariant?)
         case reevaluateMigrationOnActivationFlip
@@ -231,7 +236,11 @@ struct SmartBanner {
                         shieldingProcessor.observe()
                             .map(Action.shieldingProcessorStateChanged)
                     }
-                    .cancellable(id: state.CancelShieldingProcessorId, cancelInFlight: true)
+                    .cancellable(id: state.CancelShieldingProcessorId, cancelInFlight: true),
+                    migrationStateStreamEffect(
+                        accountUUID: state.selectedWalletAccount?.id,
+                        cancelID: state.CancelMigrationStateStreamId
+                    )
                 )
                 
             case .onDisappear:
@@ -245,7 +254,8 @@ struct SmartBanner {
                     // up to 120s after the screen is gone, and — with `CancelStateStreamId` also
                     // torn down above — no later sync transition could end it early either; only
                     // success or the attempt cap could, absent this.
-                    .cancel(id: state.CancelMigrationRepollId)
+                    .cancel(id: state.CancelMigrationRepollId),
+                    .cancel(id: state.CancelMigrationStateStreamId)
                 )
 
             case .binding(\.isShieldingAcknowledged):
@@ -287,6 +297,13 @@ struct SmartBanner {
                     // OLD account outright — the decision belongs to whichever account armed it, and
                     // the walk below (`.evaluatePriority1`) restarts fresh for the newly selected one.
                     .cancel(id: state.CancelMigrationRepollId),
+                    // The migration-state subscription is keyed to the ACCOUNT: the old account's
+                    // subject never emits again after a switch, so re-subscribe rather than leaving
+                    // the banner listening to a dead feed.
+                    migrationStateStreamEffect(
+                        accountUUID: state.selectedWalletAccount?.id,
+                        cancelID: state.CancelMigrationStateStreamId
+                    ),
                     .run { send in
                         await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
                         try? await mainQueue.sleep(for: .seconds(1))
@@ -441,7 +458,7 @@ struct SmartBanner {
                 }
                 return .none
 
-            case .reevaluateMigrationOnActivationFlip, .migrationReevaluationRequested:
+            case .migrationStateChanged, .reevaluateMigrationOnActivationFlip, .migrationReevaluationRequested:
                 // Route an activation-day crossing (or a reorg back below the activation height),
                 // and a just-closed migration flow, through the same variant-fetch +
                 // `.migrationVariantUpdated` path the sync transitions use, so there is exactly one
@@ -727,6 +744,17 @@ struct SmartBanner {
     /// `.walletAccountChanged` cancels it on an account switch, `.onDisappear` on leaving Home, and
     /// `.synchronizerStateChanged` ahead of EVERY subsequent sync-status transition — so either a
     /// fresh arm supersedes the stale one, or a transition that doesn't re-arm still tears it down.
+    /// The per-account migration-state subscription. Keyed to the ACCOUNT, so an account switch
+    /// must re-subscribe (a still-subscribed old account's subject never emits again post-switch).
+    private func migrationStateStreamEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
+        .publisher {
+            migrationManager.stateEvents(accountUUID)
+                .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
+                .map(Action.migrationStateChanged)
+        }
+        .cancellable(id: cancelID, cancelInFlight: true)
+    }
+
     private func postRestoreMigrationRecheckEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
         let isIronwoodActivated = migrationManager.isIronwoodActivated()
         return .run { send in

@@ -123,8 +123,23 @@ extension Root {
 
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
+                // Reconcile migration state on the EDGE into `.upToDate` — never on every tick while
+                // already synced, which would storm `reconcile()` at the tip. Piggybacks on this
+                // existing `stateStream()` subscription rather than opening a second one.
+                // `recordSyncCompleted()` re-keys the app's SEND gate off the same edge: a
+                // just-completed sync briefly disables migration sends, which is the app-direction
+                // half of the privacy gate (the SDK owns the other direction).
+                let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
+                state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
+                let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
+                    ? .run { [migrationManager] _ in
+                        migrationManager.recordSyncCompleted()
+                        await migrationManager.reconcile()
+                    }
+                    : .none
+
                 guard let account = state.selectedWalletAccount else {
-                    return .none
+                    return migrationReconcileEffect
                 }
                 
                 // update flexa balance
@@ -196,6 +211,39 @@ extension Root {
             case .initialization(.synchronizerStartFailed):
                 return .none
                 
+            // THE OTHER HALF of `SDKSynchronizerClient.stopSyncBeforeMigrationBroadcast()`
+            // (matrix B12). A migration broadcast stops sync so the two are not correlated; without
+            // this handler that sync never restarts and the wallet sits dead for the session.
+            //
+            // Resuming is checked INDEPENDENT of `isGenuineChange`, deliberately. Two edges need it:
+            //  - a foreground broadcast stopped sync while no `.retryStart` happened to be running,
+            //    so `syncDeferredByMigrationGate` was never set;
+            //  - a broadcast that failed PRE-FLIGHT (a Tor bootstrap error, say) never reached the
+            //    SDK's gate-setting code at all, so no `true -> false` transition will EVER arrive.
+            // `migrationStoppedSyncForBroadcast` covers both: it stays set until the next
+            // `.migrationSyncGateChanged(false)` from ANY source, which this resumes on rather than
+            // letting the dedupe swallow it as "no change".
+            //
+            // `reconcile()` stays gated on a genuine change — it drives banner/re-entry derivation,
+            // an unrelated concern that should not re-run on every re-push.
+            case .migrationSyncGateChanged(let isBlocked):
+                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+
+                let isGenuineChange = isBlocked != state.lastMigrationSyncGateBlocked
+                let shouldResume = !isBlocked && (state.syncDeferredByMigrationGate || migrationStoppedSyncForBroadcast)
+                guard isGenuineChange || shouldResume else { return .none }
+
+                state.lastMigrationSyncGateBlocked = isBlocked
+                let reconcileEffect: Effect<Action> = isGenuineChange
+                    ? .run { [migrationManager] _ in await migrationManager.reconcile() }
+                    : .none
+
+                guard shouldResume else { return reconcileEffect }
+
+                state.syncDeferredByMigrationGate = false
+                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+                return .merge(reconcileEffect, .send(.initialization(.retryStart)))
+
             case .initialization(.retryStart):
                 if !diskSpaceChecker.hasEnoughFreeSpaceForSync() {
                     state.destinationState.preNotEnoughFreeSpaceDestination = state.destinationState.internalDestination
@@ -232,11 +280,38 @@ extension Root {
                         .map(Root.Action.synchronizerStateChanged)
                 }
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
+
+                // Both migration gate feeds funnel into the SAME action under the SAME cancel id, so
+                // they start and stop together. The SDK's own stream only transitions on a
+                // SUCCESSFUL broadcast and dedupes internally; the app-side feed is what a
+                // broadcast-failure site nudges when it stopped sync for a broadcast that never
+                // reached a successful outcome. The seed read ahead of the stream is what makes a
+                // cold start resume a sync stopped by a broadcast in a previous session.
+                let migrationSyncGateEffect = Effect.merge(
+                    Effect.concatenate(
+                        .run { [sdkSynchronizer] send in
+                            await send(.migrationSyncGateChanged(await sdkSynchronizer.isMigrationSyncBlocked()))
+                        },
+                        Effect.publisher {
+                            sdkSynchronizer.migrationSyncBlockedStream()
+                                .dropFirst()
+                                .map(Root.Action.migrationSyncGateChanged)
+                        }
+                    ),
+                    .run { [migrationManager] send in
+                        for await isBlocked in migrationManager.migrationSyncGateFeed() {
+                            await send(.migrationSyncGateChanged(isBlocked))
+                        }
+                    }
+                )
+                .cancellable(id: state.migrationSyncGateCancelId, cancelInFlight: true)
+
                 if state.bgTask != nil {
-                    return stateStreamEffect
+                    return .merge(stateStreamEffect, migrationSyncGateEffect)
                 } else {
                     return .merge(
                         stateStreamEffect,
+                        migrationSyncGateEffect,
                         .send(.home(.smartBanner(.evaluatePriority1)))
                     )
                 }
