@@ -71,6 +71,55 @@ struct SDKSynchronizerClient: Sendable {
     /// Orchard balance will take. `nil` when the estimate is unavailable or has no runs.
     let estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int?
 
+    // PHASE 3 — the scheduler. Commit, the broadcast loop, and the reads the loop reconciles from.
+
+    /// The account's LIVE per-transaction migration statuses — one row per committed migration
+    /// transaction (preparation AND transfer kinds), mined-reconciled at every read; `[]` when no
+    /// run is stored. Preferred over the persisted schedule's own app-derived state/heights by
+    /// `MigrationDerivations.transferRows` for every row it can join by id.
+    let migrationTransactionStatuses: @Sendable (AccountUUID) async throws -> [MigrationTransactionStatus]
+    /// Pre-signs and persists every transfer of `schedule` in the migration engine (needs the
+    /// account's USK). THE commit — one call signs the whole run, preparation layers included,
+    /// straight from the plan cache the schedule's own propose already wrote.
+    let signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
+    /// Broadcasts the next height-due migration transfer, or `nil` when nothing is currently due.
+    /// A `nil` return is the SOLE authority on "nothing due" — never second-guess it app-side.
+    /// Broadcast-bearing: guarded by the transaction guard in the LiveKey.
+    let executeNextPendingMigrationTransfer: @Sendable (
+        AccountUUID, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult?
+    /// Whether the account has a scheduled transfer past its send height but not yet broadcast.
+    let hasOverdueMigrationTransfers: @Sendable (AccountUUID) async throws -> Bool
+    /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
+    let rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
+    /// DEBUG/QA ONLY — rewrites the committed schedule's transfer heights onto short strides so a
+    /// real broadcast run can be exercised without waiting out ZIP 318's privacy delay. Returns the
+    /// number of transfers rescheduled. Gate 3 runs on this.
+    let debugRescheduleMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
+    /// Wallet-scope: whether ordinary sync should currently be paused for a migration privacy gate.
+    /// Non-throwing (degrades open on internal failure).
+    var isMigrationSyncBlocked: @Sendable () async -> Bool = { false }
+    /// Wallet-scope stream of `isMigrationSyncBlocked()`. Root subscribes this to drive the
+    /// stop/resume pair — see `stopSyncBeforeMigrationBroadcast()` below.
+    var migrationSyncBlockedStream: @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() }
+    /// The post-broadcast privacy buffer duration (the SDK's own 600 s gate), mirrored app-side by
+    /// `MigrationSendGate` on the send side.
+    var migrationPrivacySyncBufferDuration: @Sendable () -> TimeInterval = { 0 }
+    /// The run's live progress (completed/total transfers), or `nil` when no run is stored. Feeds
+    /// the in-progress banner variant and the re-entry route.
+    let getMigrationProgress: @Sendable (AccountUUID) async throws -> MigrationProgress?
+    /// Whether the account's migration is in an invalid state (spendable Orchard remains but no
+    /// scheduled transfer covers it). Read by `reentryRoute`; its recovery SCREEN is Phase 5.
+    let hasInvalidMigrationTransfers: @Sendable (AccountUUID) async throws -> Bool
+    /// The leftover Orchard balance a migration would not cross, when worth offering a choice
+    /// about; `nil` when there is none. Feeds `migrationSummary.dust`.
+    let residualAfterMigration: @Sendable (AccountUUID) async throws -> Zatoshi?
+    /// Locks every currently-spendable legacy-Orchard note until explicit unlock and returns the
+    /// total just locked — the "Lock balance" choice at migration Complete. The SCREEN that offers
+    /// it is Phase 6; the member is bound here because the manager (copied whole from #1930) calls
+    /// it, and a live binding is safer than a stub that silently no-ops a real lock.
+    let lockMigrationResidual: @Sendable (AccountUUID) async throws -> Zatoshi
+
     let rescanFrom: @Sendable (BlockHeight) async throws -> Void
 
     let rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error>
@@ -140,5 +189,24 @@ struct SDKSynchronizerClient: Sendable {
     var enhanceTransactionBy: @Sendable (String) async throws -> Void
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
+}
+
+extension SDKSynchronizerClient {
+    /// Stops an in-flight sync ahead of a migration broadcast, so the broadcast is not correlated
+    /// with the wallet's ordinary sync traffic. EVERY broadcast-performing call site in the app
+    /// calls this first — the SDK's own during-sync throw is an advisory backstop, not the guard.
+    ///
+    /// The `migrationStoppedSyncForBroadcast` flag is the OTHER half of the pair and the reason
+    /// this must never ship alone (matrix B12): `RootInitialization`'s `.migrationSyncGateChanged`
+    /// handler consumes it to guarantee sync resumes once the SDK's post-broadcast privacy gate
+    /// clears — including the edge where the broadcast fails pre-flight and the gate never blocks
+    /// at all. Set only when this call ACTUALLY stopped something; never when already idle, or the
+    /// resume half would fire against a sync nobody paused.
+    func stopSyncBeforeMigrationBroadcast() async {
+        guard isSyncing() else { return }
+        stop()
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+    }
 }
 

@@ -116,6 +116,45 @@ extension SDKSynchronizerClient: DependencyKey {
             estimateMigrationRunCount: { accountUUID in
                 try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.count
             },
+            migrationTransactionStatuses: { accountUUID in
+                try await synchronizer.migrationTransactionStatuses(accountUUID: accountUUID)
+            },
+            signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
+                try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
+            },
+            executeNextPendingMigrationTransfer: { accountUUID, options in
+                try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
+            },
+            hasOverdueMigrationTransfers: { accountUUID in
+                try await synchronizer.hasOverdueMigrationTransfers(accountUUID: accountUUID)
+            },
+            rescheduleOverdueMigrationTransfer: { accountUUID in
+                try await synchronizer.rescheduleOverdueMigrationTransfer(accountUUID: accountUUID)
+            },
+            debugRescheduleMigrationTransfers: { accountUUID in
+                try await synchronizer.debugRescheduleMigrationTransfers(accountUUID: accountUUID)
+            },
+            isMigrationSyncBlocked: {
+                await synchronizer.isMigrationSyncBlocked()
+            },
+            migrationSyncBlockedStream: {
+                synchronizer.migrationSyncBlockedStream
+            },
+            migrationPrivacySyncBufferDuration: {
+                synchronizer.migrationPrivacySyncBufferDuration
+            },
+            getMigrationProgress: { accountUUID in
+                try await synchronizer.migrationProgress(accountUUID: accountUUID)
+            },
+            hasInvalidMigrationTransfers: { accountUUID in
+                try await synchronizer.hasInvalidMigrationTransfers(accountUUID: accountUUID)
+            },
+            residualAfterMigration: { accountUUID in
+                try await synchronizer.residualAfterMigration(accountUUID: accountUUID)
+            },
+            lockMigrationResidual: { accountUUID in
+                try await synchronizer.lockMigrationResidual(accountUUID: accountUUID)
+            },
             rescanFrom: { blockHeight in
                 try await synchronizer.rescanFrom(height: blockHeight)
             },
