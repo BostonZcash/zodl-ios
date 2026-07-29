@@ -271,7 +271,13 @@ extension Root {
 
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil
-                return .none
+                // A finished run has usually changed what there is to migrate — after the manual
+                // lane, to nothing at all. Poke the banner to re-derive rather than waiting for a
+                // sync transition to do it: on an already-`.upToDate` wallet no transition is
+                // coming, which is exactly how a completed manual migration was left advertising
+                // itself on the Home screen (field-caught 2026-07-29). Harmless when nothing
+                // changed — the re-read returns the same variant and re-renders in place.
+                return .send(.home(.smartBanner(.migrationReevaluationRequested)))
 
             case .home(.torSetupTapped(let settingsView)):
                 state.torSetupState = .initial

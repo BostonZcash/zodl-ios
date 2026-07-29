@@ -140,6 +140,11 @@ struct SmartBanner {
         case evaluatePriority2
         case evaluatePriorityMigration
         case migrationVariantLoaded(MigrationBannerVariant?)
+        /// Re-read the variant now, from OUTSIDE the banner — sent by `Root` when the migration
+        /// flow closes. The new SDK publishes no migration-state stream (#1930 subscribed
+        /// `migrationManager.stateEvents`, an app-side subject it fed itself), so a run that
+        /// changes the wallet has to say so explicitly or the banner keeps showing a stale variant.
+        case migrationReevaluationRequested
         case migrationVariantUpdated(MigrationBannerVariant?)
         case reevaluateMigrationOnActivationFlip
         case evaluatePriority3
@@ -436,10 +441,13 @@ struct SmartBanner {
                 }
                 return .none
 
-            case .reevaluateMigrationOnActivationFlip:
-                // Route an activation-day crossing (or a reorg back below the activation height)
-                // through the same variant-fetch + `.migrationVariantUpdated` path the sync
-                // transitions use, so there is exactly one funnel that raises/lowers the banner.
+            case .reevaluateMigrationOnActivationFlip, .migrationReevaluationRequested:
+                // Route an activation-day crossing (or a reorg back below the activation height),
+                // and a just-closed migration flow, through the same variant-fetch +
+                // `.migrationVariantUpdated` path the sync transitions use, so there is exactly one
+                // funnel that raises/lowers the banner. A nil variant closes it (see
+                // `.migrationVariantUpdated`) — which is what retires the banner after a manual
+                // migration, because a swept account has no unlocked Orchard value left.
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     await send(.migrationVariantUpdated(migrationManager.bannerVariant(accountUUID)))
                 }
@@ -803,6 +811,16 @@ struct SmartBanner {
                             accountUUID: state.selectedWalletAccount?.id,
                             cancelID: state.CancelMigrationRepollId
                         )
+                    }
+                    // The migration banner is the one currently showing: re-read it on this
+                    // transition so it lowers itself once the wallet no longer has anything to
+                    // migrate — whether that is a completed manual migration or an ordinary spend
+                    // of the last Orchard funds. Deliberately NOT the close-then-re-read shape used
+                    // below: `.migrationVariantUpdated` re-renders an unchanged variant in place,
+                    // so skipping the close is what keeps a still-`.required` banner from flickering
+                    // shut and open again on every sync completion.
+                    if state.priorityContent == .priorityMigration {
+                        return .send(.migrationReevaluationRequested)
                     }
                     // Plain sync completion, or sync completing on an empty slot: one deterministic
                     // re-check on THIS transition. Closing here used to leave the slot empty with NO
