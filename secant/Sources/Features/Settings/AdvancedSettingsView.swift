@@ -99,9 +99,20 @@ struct AdvancedSettingsView: View {
                         ActionRow(
                             icon: Asset.Assets.Icons.refreshSingleCCW.image,
                             title: String(localizable: .ironwoodAnnouncementDebugReset),
-                            divider: false
+                            divider: true
                         ) {
                             store.send(.debugResetIronwoodAnnouncementTapped)
+                        }
+
+                        // Gate 3 affordance: production send windows are a ~6 h exponential mean,
+                        // so a committed run cannot be exercised in one sitting. This rewrites the
+                        // committed schedule's heights onto ~2-then-4-block strides.
+                        ActionRow(
+                            icon: Asset.Assets.Icons.clockCheck.image,
+                            title: "Migration: reschedule onto short strides",
+                            divider: false
+                        ) {
+                            store.send(.debugMigrationRescheduleTapped)
                         }
                         #endif
                     }
@@ -146,6 +157,9 @@ struct AdvancedSettingsView: View {
             }
         }
         .applyScreenBackground()
+        #if !SECANT_DISTRIB
+        .alert($store.scope(state: \.alert, action: \.alert))
+        #endif
         .listStyle(.plain)
         .navigationBarTitleDisplayMode(.inline)
         .zashiBack()
