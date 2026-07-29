@@ -225,6 +225,8 @@ public enum Asset {
       public static let alertCircleOutline = ImageAsset(name: "alertCircleOutline")
       public static let alertOutline = ImageAsset(name: "alertOutline")
       public static let alertTriangle = ImageAsset(name: "alertTriangle")
+      public static let annotationCheck = ImageAsset(name: "annotationCheck")
+      public static let announcement = ImageAsset(name: "announcement")
       public static let archive = ImageAsset(name: "archive")
       public static let arrowDown = ImageAsset(name: "arrowDown")
       public static let arrowNarrowLeft = ImageAsset(name: "arrowNarrowLeft")

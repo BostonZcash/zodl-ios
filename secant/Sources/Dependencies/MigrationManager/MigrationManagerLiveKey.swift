@@ -185,6 +185,7 @@ extension MigrationManagerClient: DependencyKey {
             recordSyncCompleted: { impl.recordSyncCompleted() },
             migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
             refreshMigrationSyncGate: { await impl.refreshMigrationSyncGate() },
+            armNextWindowNotifications: { await impl.armNextWindowNotifications(accountUUID: $0) },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
             resetPersistedFlags: { impl.resetPersistedFlags() }
@@ -266,6 +267,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+    @Dependency(\.userNotifications) var userNotifications
+
+    enum Constants {
+        /// PHASE 4 (D9): how far AHEAD of a send window the `timeToSync` poke fires. Long enough
+        /// that a cold wallet can reach the tip before due-ness is computed against it, short
+        /// enough that the ask still reads as related to the window it precedes.
+        static let timeToSyncLead: TimeInterval = 2 * 60 * 60
+    }
 
     let gateStorage: MigrationGateStorage
     /// MOB-1496 (W2): per-account persisted committed schedule — see `MigrationScheduleStorage`.
@@ -1246,6 +1255,48 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// method's doc for why this must not run on every pass. Leaving `.complete` clears the verdict
     /// (`clearRemainderPending`, right beside the existing acknowledge-clear below) so the NEXT
     /// completion of a later run gets its own fresh evaluation.
+    /// PHASE 4 (D9): arm the next window's pokes. NEW code, not #1930's — its arming lived in the
+    /// BG scheduler's session outcomes, which D2 deleted.
+    ///
+    /// Height -> date is an ESTIMATE (`MigrationETA.minutesFromNow`), and that is fine here: these
+    /// are advisory pokes, and every broadcast decision is still made against the engine's own
+    /// height-based due-ness at open (`executeNextPendingMigrationTransfer`'s nil return is the
+    /// sole authority — matrix D7). An early poke therefore causes no broadcast, only a calm
+    /// "not yet".
+    func armNextWindowNotifications(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+
+        let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
+        // The next thing the user must be present for: the first row not yet sent.
+        guard let next = rows.first(where: { $0.status != MigrationTransferRow.Status.sent }) else {
+            // Nothing pending — retire both pokes rather than leaving a stale one armed.
+            await userNotifications.cancelMigrationNotifications()
+            return
+        }
+
+        let accountKey = Data(resolvedAccountUUID.id).hexEncodedString()
+        let number = next.index + 1
+        let windowDate = Date().addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60)
+
+        // The sync poke leads the window so a cold wallet has time to reach the tip before
+        // due-ness is computed against it (matrix D10). A window already inside the lead gets no
+        // sync poke at all — posting one for a moment already past would fire immediately and read
+        // as noise.
+        let syncDate = windowDate.addingTimeInterval(-Constants.timeToSyncLead)
+        if syncDate.timeIntervalSinceNow > 0 {
+            await userNotifications.scheduleMigrationNotification(
+                MigrationNotification.timeToSync(number: number),
+                syncDate,
+                accountKey
+            )
+        }
+        await userNotifications.scheduleMigrationNotification(
+            MigrationNotification.manualTransferReady(number: number),
+            windowDate,
+            accountKey
+        )
+    }
+
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 

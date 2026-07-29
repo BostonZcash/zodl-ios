@@ -34,6 +34,8 @@ struct MigrationCoordFlowView: View {
                 switch store.case {
                 case let .howItWorks(store):
                     MigrationHowItWorksView(store: store)
+                case let .notifications(store):
+                    MigrationNotificationsView(store: store)
                 case let .reviewTransfer(store):
                     MigrationReviewTransferView(store: store)
                 case let .scheduled(store):

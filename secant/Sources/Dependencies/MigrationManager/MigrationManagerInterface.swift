@@ -310,6 +310,15 @@ struct MigrationManagerClient: Sendable {
     // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in
     // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
     // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).
+    /// PHASE 4 (plan D9): arms the NEXT window's two local notifications for `accountUUID` — a
+    /// `timeToSync` at (window - lead) and a `manualTransferReady` at the window itself — and
+    /// cancels them once nothing is pending. Called at COMMIT and on every reconcile, which is
+    /// what replaces #1930's background-session arming: plan D2 removed the BG lane, so a window
+    /// can only ever be announced ahead of time, never acted on in the background.
+    ///
+    /// Re-arming is idempotent by construction: the ids are stable per (case, account), so a
+    /// re-arm REPLACES the account's own prior pending request rather than stacking a second one.
+    var armNextWindowNotifications: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     var reconcile: @Sendable () async -> Void = { }
     // R8-T3 (#9): clears `accountUUID`'s (`nil` resolves the selected account) network snapshot iff
     // its engine state is fresh `.notStarted` with no stored schedule payload — i.e. a confirm lane

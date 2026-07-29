@@ -82,6 +82,24 @@ extension Root {
                     return .send(.initialization(.retryStart))
                 }
                 
+            case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID, let isTorFailure))):
+                // PHASE 4: a poke was tapped. Open the migration flow — the coordinator's own
+                // `onAppear` re-entry routing then lands on whatever screen the run is actually on
+                // (status/resume/review), so this does NOT need to know the run's shape.
+                //
+                // The Tor-failure route has no surface yet (Phase 5) — it falls through to the same
+                // flow rather than nowhere, which is the honest degradation: the user still reaches
+                // their run, just without the dedicated explanation sheet.
+                _ = isTorFailure
+                // `accountUUID` names the account the notification was COMPOSED for. Selecting it
+                // is Phase 5's cross-account routing; for now a tap opens the flow for whichever
+                // account is selected, which is the same account in every single-account case.
+                _ = accountUUID
+                guard state.featureFlags.migration else { return .none }
+                state.migrationCoordFlowState = .initial
+                state.path = .migrationCoordFlow
+                return .none
+
             case .initialization(.appDelegate(.didEnterBackground)):
                 sdkSynchronizer.stop()
                 state.bgTask?.setTaskCompleted(success: false)
@@ -132,9 +150,13 @@ extension Root {
                 let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
                 state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
-                    ? .run { [migrationManager] _ in
+                    ? .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         migrationManager.recordSyncCompleted()
                         await migrationManager.reconcile()
+                        // PHASE 4: re-arm AFTER reconcile, so the pokes are computed from the rows
+                        // reconcile just refreshed. Idempotent — stable per-(case, account) ids mean
+                        // a re-arm replaces this account's own pending request, never stacks one.
+                        await migrationManager.armNextWindowNotifications(accountUUID)
                     }
                     : .none
 
@@ -242,7 +264,14 @@ extension Root {
 
                 state.syncDeferredByMigrationGate = false
                 $migrationStoppedSyncForBroadcast.withLock { $0 = false }
-                return .merge(reconcileEffect, .send(.initialization(.retryStart)))
+                return .merge(
+                    reconcileEffect,
+                    // A broadcast just landed (or failed) — the next window moved either way.
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        await migrationManager.armNextWindowNotifications(accountUUID)
+                    },
+                    .send(.initialization(.retryStart))
+                )
 
             case .initialization(.retryStart):
                 if !diskSpaceChecker.hasEnoughFreeSpaceForSync() {

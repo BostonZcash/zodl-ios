@@ -124,6 +124,13 @@ extension MigrationCoordFlow {
                 }
                 return confirmTorSheet(state: &state)
 
+                // MARK: - Notifications permission (#1930 :613)
+
+            case .path(.element(id: _, action: .notifications(.delegate(.continued)))):
+                // Allowed or skipped, both land here — the plan is next either way.
+                state.path.append(.transferPlan(MigrationTransferPlan.State()))
+                return .none
+
                 // MARK: - TransferPlan (#1930 :620)
 
             case .path(.element(id: _, action: .transferPlan(.delegate(.confirmed)))):
@@ -322,8 +329,11 @@ extension MigrationCoordFlow {
         case .reviewTransfer:
             return .reviewTransfer(MigrationReviewTransfer.State(mode: .immediate))
         case .transferPlan:
-            // PHASE 4 inserts the notification-permission chain ahead of this push.
-            return .transferPlan(MigrationTransferPlan.State())
+            // PHASE 4: the permission ask sits BETWEEN the Tor choice and the plan, exactly where
+            // #1930 ran `nextPermissionStepResult()`. Either outcome continues — permission is a
+            // nice-to-have, never a blocker: without it the flow still works entirely via the
+            // app-open reconcile (matrix D2), the user just gets no reminders.
+            return .notifications(MigrationNotifications.State(variant: .scheduled))
         }
     }
 
@@ -343,18 +353,21 @@ extension MigrationCoordFlow {
         let accountUUID = state.selectedWalletAccount?.id
         switch variant {
         case .scheduled, .recreated:
-            // PHASE 3: #1930 also runs `migrationBGScheduler.scheduleFirstWindow()` and the
-            // first-delivery kick here. The BG scheduler does not exist (D2); the notification arm
-            // of that pair is Phase 4 and lands in exactly this position.
-            return .run { send in
+            // PHASE 4 lands the notification arm exactly where #1930 ran
+            // `migrationBGScheduler.scheduleFirstWindow()`. The BG half stays gone (D2): a window
+            // can be ANNOUNCED ahead of time, never acted on in the background.
+            return .run { [migrationManager] send in
                 let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
                 await send(.pushHydratedPathState(.scheduled(scheduled)))
+                await migrationManager.armNextWindowNotifications(accountUUID)
             }
         case .manual:
             // The manual-delivery run's FIRST transfer — same "sent" wording as every subsequent
             // manual-step confirm.
             state.path.append(.sending(MigrationSending.State(totalCount: 1, isManualStepLane: true)))
-            return .none
+            return .run { [migrationManager] _ in
+                await migrationManager.armNextWindowNotifications(accountUUID)
+            }
         }
     }
 

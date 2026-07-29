@@ -48,6 +48,7 @@ struct MigrationCoordFlow {
     @Reducer(state: .equatable)
     enum Path {
         case howItWorks(MigrationHowItWorks)
+        case notifications(MigrationNotifications)
         case reviewTransfer(MigrationReviewTransfer)
         case scheduled(MigrationScheduled)
         case sending(MigrationSending)

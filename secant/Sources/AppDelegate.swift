@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     private let workerQueue = DispatchQueue(label: "Monitor")
     private let isConnectedToWifi = ManagedAtomic(false)
 
+    private let migrationNotificationDelegate = MigrationNotificationCenterDelegate()
+
     let rootStore = StoreOf<Root>(
         initialState: .initial
     ) {
@@ -39,6 +41,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         walletLogger = OSLogger(logLevel: .debug, category: LoggerConstants.walletLogs)
 #endif
         handleBackgroundTask()
+
+        // PHASE 4: migration notifications are the app's only local notifications, and their taps
+        // must reach Root. Set synchronously here — a tap that COLD-STARTS the app is delivered as
+        // soon as the delegate exists, so a later assignment would drop it.
+        migrationNotificationDelegate.rootStore = rootStore
+        UNUserNotificationCenter.current().delegate = migrationNotificationDelegate
 
         // set the default behavior for the NSDecimalNumber
         NSDecimalNumber.defaultBehavior = Zatoshi.decimalHandler
@@ -180,6 +188,55 @@ extension AppDelegate {
             LoggerProxy.event("BGTask scheduleSchedulerBackgroundTask succeeded to submit")
         } catch {
             LoggerProxy.event("BGTask scheduleSchedulerBackgroundTask failed to submit, error: \(error)")
+        }
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate (PHASE 4)
+
+/// Routes migration notification taps into the app and controls foreground presentation.
+/// `rootStore` is injected by `AppDelegate` rather than held at construction: this delegate is set
+/// on `UNUserNotificationCenter.current()` synchronously in `didFinishLaunching`, before the store
+/// would otherwise be considered ready.
+final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCenterDelegate {
+    var rootStore: StoreOf<Root>?
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
+            let rootStore = self.rootStore
+            // The account this notification was composed FOR, so a tap opens that account's run
+            // rather than whichever is selected now. `nil` = legacy payload, falls back to selected.
+            let accountUUID = response.notification.request.content.userInfo["accountUUID"] as? String
+            // `hasPrefix`, not `==`: the delivered identifier carries the per-account suffix
+            // (`requestIdentifier(accountUUID:)`), so an exact match against the bare case id would
+            // never hit. Still an exact CASE match — no case's bare id is a prefix of another's.
+            let isTorFailure = response.notification.request.identifier
+                .hasPrefix(MigrationNotification.migrationTorFailure.identifier)
+            DispatchQueue.main.async {
+                rootStore?.send(
+                    .initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountUUID, isTorFailure: isTorFailure)))
+                )
+            }
+        }
+
+        completionHandler()
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        if notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
+            // D9 foreground policy: the SmartBanner already carries live migration state on screen,
+            // so a migration notification presents NOTHING while the app is foregrounded.
+            completionHandler([])
+        } else {
+            completionHandler([.banner, .list, .sound])
         }
     }
 }
