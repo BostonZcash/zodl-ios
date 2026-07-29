@@ -361,8 +361,9 @@ extension Root {
                             do {
                                 result = try await sdkSynchronizer.prepareWith(
                                     seedBytes,
-                                    birthday,
-                                    walletMode,
+                                    // The SDK derives the init flow itself now; a nil birthday tells it
+                                    // "brand-new wallet, pick a reorg-safe recent height" (see WalletInitMode).
+                                    walletMode == .newWallet ? nil : birthday,
                                     String(localizable: .accountsZashi),
                                     String(localizable: .accountsZashi).lowercased()
                                 )
@@ -414,7 +415,6 @@ extension Root {
                                         let reprepareResult = try await sdkSynchronizer.prepareWith(
                                             seedBytes,
                                             birthday,
-                                            .restoreWallet,
                                             String(localizable: .accountsZashi),
                                             String(localizable: .accountsZashi).lowercased()
                                         )

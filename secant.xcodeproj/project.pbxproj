@@ -427,7 +427,8 @@
 				34AA77B52F85848A00D244E2 /* XCRemoteSwiftPackageReference "xcstrings-tool-plugin" */,
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
-				3433F5213018893100EA4002 /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */,
+				3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */,
+				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -1298,13 +1299,20 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../zcash-swift-wallet-sdk";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
-		3433F5213018893100EA4002 /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */ = {
+		34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/zcash/zcash-swift-wallet-sdk.git";
+			repositoryURL = "https://github.com/apple/swift-collections";
 			requirement = {
 				kind = exactVersion;
-				version = "2.8.0-rc.1";
+				version = 1.1.4;
 			};
 		};
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
@@ -1418,12 +1426,12 @@
 /* Begin XCSwiftPackageProductDependency section */
 		3433F5223018893100EA4002 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3433F5213018893100EA4002 /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
+			package = 3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 		3433F5243018894000EA4002 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3433F5213018893100EA4002 /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
+			package = 3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
