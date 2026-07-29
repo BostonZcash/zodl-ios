@@ -35,6 +35,14 @@ struct MigrationManagerClient: Sendable {
     /// fallback: fail-closed is also the right answer for an unknown chain tip.
     var isIronwoodActivated: @Sendable () -> Bool = { false }
 
+    /// The multi-round labels' context — the CURRENT round and the engine's estimated TOTAL
+    /// rounds, `nil` when the SDK's estimate is unavailable or has no runs.
+    ///
+    /// PHASE 2: `round` is hard-wired to 1. #1930 derived it from an app-persisted completed-run
+    /// count (`MigrationGateStorage.completedRounds`); that persistence arrives with rounds/residual
+    /// in Phase 6, and until a run can be COMMITTED there is no second round to be in.
+    var migrationRoundContext: @Sendable (_ accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) = { _ in (1, nil) }
+
     /// The Orchard balance actually available to migrate — every component of the pool balance
     /// EXCEPT `lockedValue`. See ``PoolBalance/unlockedForMigration``.
     var orchardBalanceToMigrate: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }

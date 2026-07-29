@@ -169,6 +169,8 @@ struct SmartBanner {
         // Action buttons
         case autoShieldingTapped
         case currencyConversionScreenRequested
+        /// The migration banner was tapped — Home forwards it to Root, which opens the flow.
+        case migrationScreenRequested
         case currencyConversionTapped
         case serverSwitchRequested
         case shieldFundsTapped
@@ -336,6 +338,8 @@ struct SmartBanner {
                     }
                 } else if state.priorityContent == .priority75 {
                     return .send(.torSetupScreenRequested)
+                } else if state.priorityContent == .priorityMigration {
+                    return .send(.migrationScreenRequested)
                 } else if state.priorityContent == .priority8 {
                     return .send(.currencyConversionScreenRequested)
                 } else if state.isSyncTimedOut {
@@ -624,6 +628,9 @@ struct SmartBanner {
                 return .none
                 
             case .currencyConversionScreenRequested:
+                return .none
+
+            case .migrationScreenRequested:
                 return .none
                 
             case .currencyConversionTapped:

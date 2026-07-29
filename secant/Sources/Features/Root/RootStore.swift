@@ -16,6 +16,7 @@ struct Root {
         enum Path {
             case addKeystoneHWWalletCoordFlow
             case currencyConversionSetup
+            case migrationCoordFlow
             case receive
             case requestZecCoordFlow
             case scanCoordFlow
@@ -138,6 +139,7 @@ struct Root {
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
+        var migrationCoordFlowState = MigrationCoordFlow.State.initial
         var sendCoordFlowState = SendCoordFlow.State.initial
         var settingsState = Settings.State.initial
         var signWithKeystoneCoordFlowState = SignWithKeystoneCoordFlow.State.initial
@@ -171,7 +173,11 @@ struct Root {
             // it; if voting ever gets its own `Path` case, move the sensitivity there.
             case .settings:
                 return true
-            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
+            // `.migrationCoordFlow` classifies SENSITIVE for the same reason as `.sendCoordFlow`:
+            // the manual lane broadcasts a real send-max transaction from inside it, and an
+            // automatic server switch mid-broadcast is exactly what must not happen. #1930
+            // classifies it identically.
+            case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
@@ -280,6 +286,7 @@ struct Root {
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
         case scanCoordFlow(ScanCoordFlow.Action)
         case sendAgainRequested(TransactionState)
+        case migrationCoordFlow(MigrationCoordFlow.Action)
         case sendCoordFlow(SendCoordFlow.Action)
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
@@ -423,6 +430,10 @@ struct Root {
             RequestZecCoordFlow()
         }
         
+        Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
+            MigrationCoordFlow()
+        }
+
         Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
             SendCoordFlow()
         }

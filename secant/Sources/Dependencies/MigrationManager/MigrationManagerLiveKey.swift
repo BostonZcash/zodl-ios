@@ -32,12 +32,19 @@ enum MigrationDerivations {
     /// `MigrationState` arms land with the phases that make them reachable (progress in Phase 3,
     /// attention in Phase 5, completion/rounds in Phase 6) — until then a run in flight shows no
     /// banner, which is correct for a build that cannot yet create one.
+    /// - Parameter isSeedBacked: PHASE 2 (docs/slipstream/migration/REBUILD_PLAN.md) — `false` for a
+    ///   Keystone (hardware) account. The migration surface is gated to seed-backed accounts until
+    ///   Phase 7 adds the Keystone batch-signing ceremony: without it the manual lane's software
+    ///   commit (`MigrationCommitPipeline.commitImmediateSoftware`, which derives a USK) cannot
+    ///   complete, and an entry point into a lane that always fails is worse than no entry point.
+    ///   DELETE this parameter with Phase 7 — it is a scope fence, not a product rule.
     static func bannerVariant(
         isIronwoodActivated: Bool,
+        isSeedBacked: Bool,
         state: MigrationState,
         orchardBalance: Zatoshi
     ) -> MigrationBannerVariant? {
-        guard isIronwoodActivated else { return nil }
+        guard isIronwoodActivated, isSeedBacked else { return nil }
 
         switch state {
         case .notStarted:
@@ -57,12 +64,14 @@ extension MigrationManagerClient: DependencyKey {
         return Self(
             bannerVariant: { await impl.bannerVariant(accountUUID: $0) },
             isIronwoodActivated: { impl.isIronwoodActivated() },
+            migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             orchardBalanceToMigrate: { await impl.orchardBalanceToMigrate(accountUUID: $0) }
         )
     }
 }
 
 private struct MigrationManagerImpl: Sendable {
+    @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
@@ -72,6 +81,12 @@ private struct MigrationManagerImpl: Sendable {
     func isIronwoodActivated() -> Bool {
         let tip = sdkSynchronizer.latestState().latestBlockHeight
         return tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
+    }
+
+    func migrationRoundContext(accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) {
+        guard let accountUUID else { return (1, nil) }
+        let totalRounds = (try? await sdkSynchronizer.estimateMigrationRunCount(accountUUID)) ?? nil
+        return (1, totalRounds)
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {
@@ -87,6 +102,10 @@ private struct MigrationManagerImpl: Sendable {
 
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let accountUUID else { return nil }
+        // PHASE 2 scope fence — see `MigrationDerivations.bannerVariant`'s `isSeedBacked` doc.
+        // Fail-closed on an unresolvable account: no account, no migration surface.
+        guard let account = selectedWalletAccount, account.id == accountUUID,
+              account.vendor != WalletAccount.Vendor.keystone else { return nil }
         // Short-circuit BEFORE the async reads: pre-activation there is no banner to derive, and
         // both reads are pure, so exiting early only saves work.
         guard isIronwoodActivated() else { return nil }
@@ -96,6 +115,7 @@ private struct MigrationManagerImpl: Sendable {
 
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
+            isSeedBacked: true,
             state: state,
             orchardBalance: balance
         )

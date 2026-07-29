@@ -202,6 +202,18 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .migrationCoordFlow {
+                                // `MigrationCoordFlowView` owns its own `NavigationStack` (Entry is
+                                // its root), so it is presented bare — same shape as the other
+                                // CoordFlows above, not wrapped like the single-screen destinations.
+                                MigrationCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.migrationCoordFlowState,
+                                            action: \.migrationCoordFlow)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .currencyConversionSetup {
                                 NavigationStack {
                                     CurrencyConversionSetupView(

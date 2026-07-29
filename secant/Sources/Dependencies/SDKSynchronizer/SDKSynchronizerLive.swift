@@ -101,6 +101,21 @@ extension SDKSynchronizerClient: DependencyKey {
             getMigrationState: { accountUUID in
                 try await synchronizer.migrationState(accountUUID: accountUUID)
             },
+            proposeMigrationTransfers: { accountUUID in
+                try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID)
+            },
+            proposeImmediateMigration: { accountUUID in
+                try await synchronizer.proposeImmediateMigration(accountUUID: accountUUID)
+            },
+            recordImmediateMigration: { accountUUID, txid in
+                try await synchronizer.recordImmediateMigration(accountUUID: accountUUID, txid: txid)
+            },
+            restartCurrentMigrationStep: { accountUUID in
+                try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID)
+            },
+            estimateMigrationRunCount: { accountUUID in
+                try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.count
+            },
             rescanFrom: { blockHeight in
                 try await synchronizer.rescanFrom(height: blockHeight)
             },

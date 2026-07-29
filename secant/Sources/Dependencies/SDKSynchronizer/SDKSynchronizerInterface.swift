@@ -49,10 +49,27 @@ struct SDKSynchronizerClient: Sendable {
 
     // MARK: - Migration (Orchard -> Ironwood)
     //
-    // The SDK's migration group lives on `Synchronizer` and needs no `prepare()`. Phase 1 binds only
-    // the state read the banner derives from; later phases bind the rest of the 32-member group.
+    // The SDK's migration group lives on `Synchronizer` and needs no `prepare()`. Declarations are
+    // #1930's verbatim (map §4.1a: already 1:1 with the new SDK); each phase binds the subset it
+    // needs — Phase 1 the banner state read, Phase 2 the two propose lanes below.
 
+    /// The account's current migration state — also the reconciliation hub.
     let getMigrationState: @Sendable (AccountUUID) async throws -> MigrationState
+    /// The full scheduled-migration schedule for the account's spendable Orchard balance.
+    let proposeMigrationTransfers: @Sendable (AccountUUID) async throws -> MigrationSchedule
+    /// Proposes the immediate (single-transaction) migration — an ordinary send-max proposal,
+    /// engine-external: submit it through the ordinary transfer pipeline, then call
+    /// `recordImmediateMigration` after a successful broadcast.
+    let proposeImmediateMigration: @Sendable (AccountUUID) async throws -> ImmediateMigrationProposal
+    /// Records a broadcast immediate-migration sweep so the platform migration state machine
+    /// reports it. Takes the RAW/internal-order txid, not the display-hex form — see
+    /// `MigrationCommitPipeline.rawTxId(fromDisplayHex:)`.
+    let recordImmediateMigration: @Sendable (AccountUUID, Data) async throws -> Void
+    /// Restarts the current migration step, returning the re-created schedule.
+    let restartCurrentMigrationStep: @Sendable (AccountUUID) async throws -> MigrationSchedule
+    /// The engine's estimate of how many migration runs ("rounds") migrating the account's whole
+    /// Orchard balance will take. `nil` when the estimate is unavailable or has no runs.
+    let estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int?
 
     let rescanFrom: @Sendable (BlockHeight) async throws -> Void
 
