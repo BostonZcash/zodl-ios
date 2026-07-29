@@ -12,6 +12,9 @@ enum FeatureFlag: String, CaseIterable, Codable {
     case onboardingFlow
     case testBackupPhraseFlow
     case showFiatConversion
+    /// [#1755] slipstream: chooses the sync engine at synchronizer construction. ON by default —
+    /// slipstream is the engine Zodl ships and therefore the one migration must be validated on.
+    case useSlipstreamSynchronizer
 
     var enabledByDefault: Bool {
         switch self {
@@ -19,6 +22,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
         case .onboardingFlow: return false
         case .testBackupPhraseFlow: return false
         case .showFiatConversion: return false
+        case .useSlipstreamSynchronizer: return true
         }
     }
 }
