@@ -48,17 +48,14 @@ struct MigrationSendingView: View {
             content
                 .navigationBarBackButtonHidden()
                 .zashiSheet(isPresented: $store.isFailurePresented) {
-                    // PHASE 2: always the GENERIC (`nil`) arm — #1930's R14-R17 classified routes
-                    // (`store.failureKind`, "Proceed without Tor", "Broadcast via sync server") and
-                    // their Tor off-warning alert arrive with the failure routing in Phase 5. The
-                    // sheet itself is #1930's, unchanged; only these inputs are stubbed.
                     MigrationBroadcastFailureSheetView(
-                        failureKind: nil,
+                        failureKind: store.failureKind,
                         cancelTapped: { store.send(.cancelTapped) },
-                        proceedWithoutTorTapped: { },
+                        proceedWithoutTorTapped: { store.send(.proceedWithoutTorTapped) },
                         retryTapped: { store.send(.retryTapped) },
-                        useSyncServerTapped: { }
+                        useSyncServerTapped: { store.send(.useSyncServerTapped) }
                     )
+                    .alert($store.scope(state: \.alert, action: \.alert))
                 }
         }
         .onAppear {
@@ -72,6 +69,11 @@ struct MigrationSendingView: View {
         switch store.phase {
         case .sending:
             sendingContent
+                .screenHorizontalPadding()
+                .applyScreenBackground()
+
+        case .waiting(let target):
+            waitingContent(target: target)
                 .screenHorizontalPadding()
                 .applyScreenBackground()
 
@@ -105,8 +107,50 @@ struct MigrationSendingView: View {
         }
     }
 
-    // PHASE 2: #1930's `.waiting` silence-window content is removed with the send-now lane it
-    // belongs to (Phase 3). Restore it together with `MigrationSending.State.Phase.waiting`.
+    // MARK: - Waiting (R8-T6)
+
+    /// Reuses `sendingContent`'s layout shape (same Lottie, title-then-subtitle) with the
+    /// silence-window copy, a live countdown, and a Cancel affordance. `Text(timerInterval:)` is
+    /// native SwiftUI — it live-updates on its own, so no store-side per-second ticking is needed;
+    /// the store only needs to know WHEN to fire (`MigrationSending`'s clock-driven wait effect).
+    @ViewBuilder private func waitingContent(target: Date) -> some View {
+        VStack(spacing: 0) {
+            LottieView(
+                animation:
+                    .named(colorScheme == .light ? Constants.lottieNameLight : Constants.lottieNameDark)
+            )
+            .resizable()
+            .looping()
+            .frame(width: 170, height: 170)
+
+            Text(localizable: .migrationSendingWaitingTitle)
+                .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 16)
+
+            Text(localizable: .migrationSendingWaitingBody)
+                .zFont(size: 14, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+
+            // R8-T6 fix-wave (Minor-2, folded): `now` bound ONCE and reused for both bounds —
+            // reading `Date()` a second time for the range's upper bound (the original shape) is a
+            // TOCTOU: if `target` fell in the gap between the two reads, `now...target` would have
+            // `lowerBound > upperBound` and trap. `now...max(now, target)` is always a valid range;
+            // a stale/past `target` just renders 0:00 — `.waitFired`'s own fresh gate re-check
+            // (fired immediately when `remaining <= 0`) remains the sole authority on what happens
+            // next, so a momentary 0:00 here is harmless.
+            let now = Date()
+            Text(timerInterval: now...max(now, target), countsDown: true)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .monospacedDigit()
+                .padding(.top, 16)
+
+            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
+                store.send(.waitCancelTapped)
+            }
+            .padding(.top, 24)
+        }
+    }
 
     // MARK: - Success
 
@@ -154,6 +198,21 @@ struct MigrationSendingView: View {
         MigrationSendingView(
             store: StoreOf<MigrationSending>(
                 initialState: MigrationSending.State(phase: .sending)
+            ) {
+                MigrationSending()
+            }
+        )
+    }
+}
+
+#Preview("Waiting (R8-T6)") {
+    NavigationView {
+        MigrationSendingView(
+            store: StoreOf<MigrationSending>(
+                initialState: MigrationSending.State(
+                    phase: .waiting(target: Date().addingTimeInterval(582)),
+                    entersViaSendNow: true
+                )
             ) {
                 MigrationSending()
             }

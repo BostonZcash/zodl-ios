@@ -73,15 +73,7 @@
 //  still keyed to the actual submit outcome exactly like every other lane, never to `migrationMode`.
 //
 
-import Foundation//
-//  PHASE 2 SCOPE (docs/slipstream/migration/REBUILD_PLAN.md): copied from #1930 and pruned to the
-//  IMMEDIATE (manual) lane only — the one Phase 2 ships. Removed, each marked inline where it stood:
-//  the engine/scheduled broadcast branch, the send-now gate-check + `.waiting` silence window, the
-//  R14-R17 broadcast-failure routing, the Tor off-warning alert, and the BG scheduler (dead by D2).
-//  Phase 3 restores them from #1930 together with Root's sync-gate machinery they depend on.
-//  Everything retained is verbatim.
-//
-
+import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -91,12 +83,24 @@ struct MigrationSending {
     struct State: Equatable {
         enum Phase: Equatable {
             case sending
+            /// R8-T6 (send-now lane only): the app-side privacy gate isn't clear yet — counting down
+            /// to `target` (the gate's `waitUntil` date, or a buffer-duration fallback when the gate
+            /// read back a residual `.syncRequired`), sync held stopped, nothing broadcast yet.
+            case waiting(target: Date)
             case success
         }
 
         var phase = Phase.sending
         /// Failure sheet presented over the sending phase.
         var isFailurePresented = false
+        /// R7-T3 (MOB-1497): the classified/routed variant of the presented failure sheet — `nil`
+        /// keeps the existing generic copy (an unclassified failure, or R16's `.retryRotated`/
+        /// `.plainRetry`, both of which reuse the existing sheet verbatim since the rotation itself
+        /// is silent). Set by `.broadcastFailureRouted`, which always arrives (when it arrives at
+        /// all) immediately before the `.transferResult` that flips `isFailurePresented` — see
+        /// `executeNextTransfer`'s doc.
+        var failureKind: MigrationBroadcastFailureRoute?
+        @Presents var alert: AlertState<Action>?
         /// The most recently broadcast transfer's tx id (wires up View Transaction).
         var txId = ""
         /// MOB-1496 (W5, ZIP-0318): informational only — `onAppear` always executes AT MOST ONE
@@ -106,6 +110,12 @@ struct MigrationSending {
         var totalCount = 1
         /// 0 before a send, 1 after — this screen never executes more than one transfer (MOB-1496 W5).
         var sentCount = 0
+        /// R8-T6: when true, this instance is the Status screen's "Send now" lane — `onAppear`
+        /// stops sync then consults `sendGate()` first, entering `.waiting` instead of broadcasting
+        /// immediately when the gate isn't clear. Coordinator-configured (`MigrationCoordFlowCoordinator`'s
+        /// `.status(.delegate(.sendNow))` push site); defaults to false so every other lane keeps
+        /// today's immediate stop+broadcast behavior unchanged.
+        var entersViaSendNow = false
         /// MOB-1497 (T8, Q3'26 canvas): the manual-delivery per-transfer lane — see this file's
         /// header doc. Coordinator-configured; defaults to false so every other lane keeps today's
         /// "migrated" success wording (`sentSubtitle` below).
@@ -115,6 +125,9 @@ struct MigrationSending {
         /// for every other lane (scheduled/manual/Keystone), which keeps today's
         /// `executeNextPendingMigrationTransfer` behavior unchanged.
         var immediateProposal: ImmediateMigrationProposal?
+        /// Scopes the send-now gate-check/wait effects (`.cancellable`) — fixed for this instance's
+        /// lifetime, same idiom as `MigrationStatus.State.cancelStateStreamId`.
+        var cancelSendNowWaitId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         /// MOB-1497 (T8): the success phase's subtitle localization — `isManualStepLane` reads
@@ -132,6 +145,7 @@ struct MigrationSending {
             txId: String = "",
             totalCount: Int = 1,
             sentCount: Int = 0,
+            entersViaSendNow: Bool = false,
             isManualStepLane: Bool = false,
             immediateProposal: ImmediateMigrationProposal? = nil
         ) {
@@ -140,6 +154,7 @@ struct MigrationSending {
             self.txId = txId
             self.totalCount = totalCount
             self.sentCount = sentCount
+            self.entersViaSendNow = entersViaSendNow
             self.isManualStepLane = isManualStepLane
             self.immediateProposal = immediateProposal
         }
@@ -149,17 +164,43 @@ struct MigrationSending {
         /// The screen's one transfer has been successfully broadcast (MOB-1496 W5: never more than
         /// one, regardless of `totalCount`).
         case allTransfersSent
+        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
+        /// R7-T3 (MOB-1497, R14/R15/R16): `routeBroadcastFailure`'s resolved route for a classified
+        /// broadcast failure — sets `state.failureKind`, presented by the immediately-following
+        /// `.transferResult` (see `executeNextTransfer`'s doc). Never sent for an unclassified
+        /// failure — `failureKind` then stays `nil`, the existing generic sheet.
+        case broadcastFailureRouted(MigrationBroadcastFailureRoute)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         case closeTapped
         case delegate(Delegate)
+        /// R7-T3 (R11, reused from `MigrationTorSheet`'s off-warning): the R14 sheet's "Proceed
+        /// without Tor" alert confirms — turns Tor off for the REST of this run then retries.
+        case offWarningProceedTapped
         case onAppear
+        /// R7-T3 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button — presents the
+        /// R11 warning alert instead of proceeding directly.
+        case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-run the failed step.
         case retryTapped
+        /// R8-T6 (send-now lane only): `stopSyncBeforeMigrationBroadcast()` + `sendGate()` result
+        /// (the single settle retry on a raced `.syncRequired` folded in) — `.allowed` broadcasts,
+        /// `.waitUntil`/residual `.syncRequired` (re-)enters `.waiting` against the given/fallback
+        /// target. Also the fire-time re-check's own result (`.waitFired` resolves through here too).
+        case sendNowGateResolved(MigrationSendGate)
         /// `executeNextPendingMigrationTransfer` result for the current step; `nil` on a stub/no-op.
         case transferResult(MigrationTransferResult?)
+        /// R7-T3 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
+        case useSyncServerTapped
         case viewTransactionTapped
+        /// R8-T6: WAITING phase's Cancel affordance (also swipe-dismiss, on any surface that allows
+        /// it — see this task's report). Nothing broadcasts; nudges Root's app-side gate feed to
+        /// resume sync, then closes exactly like the success screen's Close.
+        case waitCancelTapped
+        /// R8-T6: the WAITING phase's clock-driven countdown reached its target — time to re-check
+        /// the gate (`sendNowGateResolved` handles both the broadcast-now and still-blocked outcomes).
+        case waitFired
 
         enum Delegate: Equatable {
             case closed
@@ -186,11 +227,26 @@ struct MigrationSending {
                 state.phase = .success
                 return .none
 
+            case .alert(.presented(let action)):
+                return .send(action)
+
+            case .alert(.dismiss):
+                // Mirrors `MigrationCompleteStore`'s plain shape (not `MigrationTorSheetStore`'s,
+                // which additionally resets its own `isTorOn` toggle) — this screen has no toggle
+                // analog to restore; "Keep Tor on" simply returns to the R14 sheet unchanged.
+                state.alert = nil
+                return .none
+
             case .binding:
+                return .none
+
+            case .broadcastFailureRouted(let route):
+                state.failureKind = route
                 return .none
 
             case .cancelTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
                 return .none
 
             case .closeTapped:
@@ -198,6 +254,16 @@ struct MigrationSending {
 
             case .delegate:
                 return .none
+
+            case .offWarningProceedTapped:
+                state.alert = nil
+                state.isFailurePresented = false
+                state.failureKind = nil
+                let account = state.selectedWalletAccount
+                if let account {
+                    migrationManager.overrideTorForRun(account.id, false)
+                }
+                return executeNextTransfer(account: account, immediateProposal: state.immediateProposal)
 
             case .onAppear:
                 // MOB-1496 (W-B): a screen pushed ALREADY showing a failure (the "Migrate anyway"
@@ -212,11 +278,108 @@ struct MigrationSending {
                 // execute either — re-running the executor here hit the engine's "nothing pending" path
                 // and popped the failure sheet over the success screen (the QA-reported bogus error).
                 if case .success = state.phase { return .none }
+                // R8-T6: the send-now lane routes through the gate-check/wait flow FIRST; every
+                // other lane (immediate/manual/plan-first review, Keystone) keeps today's immediate
+                // stop+broadcast — they never consulted `sendGate()` and still don't.
+                if state.entersViaSendNow {
+                    return resolveSendGateEffect(waitId: state.cancelSendNowWaitId)
+                }
                 return executeNextTransfer(account: state.selectedWalletAccount, immediateProposal: state.immediateProposal)
+
+            case .proceedWithoutTorTapped:
+                // R7-review fix (Minor-3): gated to the R14 first-run-choice variant — the alert this
+                // presents leads to a clearnet retry (`overrideTorForRun(account, false)`), which R15's
+                // mid-run hold must never offer. The view already never renders this button outside
+                // `.torFirstRunChoice`; this closes the same gap at the reducer, where it actually
+                // matters (a raw `.send`/programmatic dispatch bypasses the view entirely).
+                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
+                let usesFullBalanceCopy = migrationManager.migrationMode(state.selectedWalletAccount?.id) == MigrationMode.immediate
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
+                return .none
 
             case .retryTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
                 return executeNextTransfer(account: state.selectedWalletAccount, immediateProposal: state.immediateProposal)
+
+            case .sendNowGateResolved(let gate):
+                // A `.waitUntil`/`.syncRequired` arriving while `state.phase` is ALREADY `.waiting`
+                // means this is `.waitFired`'s fire-time re-check finding the gate still blocked
+                // (e.g. a stop raced) rather than the initial tap's first read — logged, since it's
+                // an unexpected-but-handled re-entry, not the normal path.
+                let isFireTimeReEntry: Bool
+                if case .waiting = state.phase {
+                    isFireTimeReEntry = true
+                } else {
+                    isFireTimeReEntry = false
+                }
+
+                switch gate {
+                case .allowed:
+                    state.phase = .sending
+                    setSendWaitActive(false)
+
+                    guard let account = state.selectedWalletAccount else {
+                        // R8-T6 fix-wave (Minor-1): unlike every other lane's nil-account guard
+                        // (which never stops sync before reaching it), the send-now lane already
+                        // stopped sync back in `resolveSendGate()`, before this action was ever
+                        // dispatched — so bailing here without a nudge would leave sync stopped
+                        // with nothing left to resume it (the hold is already clear above, so it's
+                        // not FENCED, but nothing proactively kicks a resume either). Mirrors
+                        // `.waitCancelTapped`'s exact clear-then-nudge treatment, minus the
+                        // navigation `.delegate(.closed)` send — this still surfaces the ordinary
+                        // failure sheet via `.transferResult(nil)` rather than closing the screen.
+                        return .concatenate(
+                            .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() },
+                            .run { send in await send(.transferResult(nil)) }
+                        )
+                    }
+
+                    return executeNextTransfer(account: account, immediateProposal: state.immediateProposal)
+
+                case .waitUntil(let target):
+                    if isFireTimeReEntry {
+                        LoggerProxy.warn("Migration send-now: gate still blocked at wait-fire time, re-entering wait")
+                    }
+                    state.phase = .waiting(target: target)
+                    setSendWaitActive(true)
+                    return waitEffect(target: target, waitId: state.cancelSendNowWaitId)
+
+                case .syncRequired:
+                    // Still blocked even after `resolveSendGate`'s own settle retry — never
+                    // broadcast into it. No date to wait against, so fall back to the full privacy
+                    // buffer from now, same as a fresh sync completion would produce.
+                    if isFireTimeReEntry {
+                        LoggerProxy.warn("Migration send-now: gate still blocked at wait-fire time, re-entering wait")
+                    }
+                    let fallbackTarget = Date().addingTimeInterval(sdkSynchronizer.migrationPrivacySyncBufferDuration())
+                    state.phase = .waiting(target: fallbackTarget)
+                    setSendWaitActive(true)
+                    return waitEffect(target: fallbackTarget, waitId: state.cancelSendNowWaitId)
+                }
+
+            case .waitCancelTapped:
+                // Nothing broadcasts. Clear the hold BEFORE the nudge so `RootInitialization`'s
+                // `.retryStart` (replayed by the nudge's eventual `.migrationSyncGateChanged`) sees
+                // it already cleared and actually resumes sync instead of re-deferring.
+                setSendWaitActive(false)
+                return .concatenate(
+                    .cancel(id: state.cancelSendNowWaitId),
+                    .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() },
+                    .send(.delegate(.closed))
+                )
+
+            case .waitFired:
+                return resolveSendGateEffect(waitId: state.cancelSendNowWaitId)
+
+            case .useSyncServerTapped:
+                state.isFailurePresented = false
+                state.failureKind = nil
+                guard let account = state.selectedWalletAccount else { return .none }
+                return .concatenate(
+                    .run { [migrationManager] _ in await migrationManager.overrideBroadcastEndpointToSyncServer(account.id) },
+                    executeNextTransfer(account: account, immediateProposal: state.immediateProposal)
+                )
 
             case .transferResult(let result):
                 switch result {
@@ -231,13 +394,25 @@ struct MigrationSending {
                     // window (armed by `scheduleNextWindow()` below) or a separate, explicit "Send
                     // now" tap picks them up.
                     //
-                    // PHASE 2: #1930 additionally ran `recordTransferBroadcast` (the app-side sent
-                    // record the SDK no longer retains), `migrationBGScheduler.scheduleNextWindow()`
-                    // and `reconcile()` here. The first and third are the SCHEDULED lane's
-                    // persistence/refresh and land with Phase 3; the BG scheduler is dead by D2. The
-                    // immediate lane records itself through `recordImmediateMigration` inside
-                    // `MigrationCommitPipeline.commitImmediateSoftware`, so nothing is lost here.
-                    return .send(.allTransfersSent)
+                    // PHASE 3: #1930 ran `migrationBGScheduler.scheduleNextWindow()` as the middle
+                    // effect here. That dependency does not exist in this build — plan D2 reversed
+                    // the background lane (iOS grants ~1-2 BG fires/24 h), so there is no BG task to
+                    // re-arm. Its OTHER half — arming the next window's local notifications — is
+                    // Phase 4, and lands back in exactly this position.
+                    //
+                    // MOB-1496: `reconcile()` runs here so `migrationManager.stateEvents` picks up
+                    // the just-completed transfer promptly (a store completing a migration op is one
+                    // of `reconcile()`'s two triggers). MOB-1496 (W2): `recordTransferBroadcast`
+                    // persists the sent record the SDK itself no longer retains — runs BEFORE
+                    // `reconcile()` so the freshly reconciled state is observed alongside an
+                    // already-updated schedule. Order is load-bearing; keep the concatenate.
+                    return .concatenate(
+                        .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                            await migrationManager.recordTransferBroadcast(accountUUID, MigrationTransferResult.success(txId: txId))
+                        },
+                        .run { [migrationManager] _ in await migrationManager.reconcile() },
+                        .send(.allTransfersSent)
+                    )
 
                 case .networkError, .invalidNote, .expired, nil:
                     state.isFailurePresented = true
@@ -329,6 +504,7 @@ struct MigrationSending {
             // nudge (see `migrationManager.refreshMigrationSyncGate`'s doc); the guards above (no
             // account / hoisted USK derivation) return before ever stopping sync, so they must not
             // nudge.
+            var didStopSyncForBroadcast = false
             do {
                 let result: MigrationTransferResult?
                 if let immediateProposal, let immediateUSK {
@@ -337,15 +513,10 @@ struct MigrationSending {
                     // path (endpoint selection via `userStoredPreferences.automaticServerSelection()`),
                     // not the engine transfers' `MigrationNetworkPrivacyOptions`/Tor-first
                     // `MigrationBroadcaster` routing — see this file's header doc for the accepted
-                    // divergence.
-                    //
-                    // PHASE 2: #1930 additionally called `stopSyncBeforeMigrationBroadcast()` here
-                    // "consistent with every other foreground migration broadcast lane". Dropped
-                    // deliberately: that stop is only safe alongside Root's
-                    // `.migrationSyncGateChanged` resume machinery (Phase 3) — without it a stopped
-                    // sync would never restart. This lane submits through the ORDINARY send pipeline,
-                    // exactly like the regular Send flow, which does not stop sync either. Restore
-                    // both together in Phase 3, never the stop alone.
+                    // divergence. Still stops sync first, consistent with every other foreground
+                    // migration broadcast lane.
+                    await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                    didStopSyncForBroadcast = true
                     let txId = try await MigrationCommitPipeline.commitImmediateSoftware(
                         proposal: immediateProposal,
                         usk: immediateUSK,
@@ -354,32 +525,109 @@ struct MigrationSending {
                     )
                     result = MigrationTransferResult.success(txId: txId)
                 } else {
-                    // PHASE 2: #1930's ENGINE (scheduled) lane —
-                    // `migrationNetworkOptions` -> `stopSyncBeforeMigrationBroadcast` ->
-                    // `executeNextPendingMigrationTransfer` — lands with Phase 3, together with the
-                    // network law (N-series) and Root's sync-gate resume machinery. Phase 2 only
-                    // ever pushes this screen with a non-nil `immediateProposal`, so this branch is
-                    // unreachable; it fails visibly rather than silently reporting a phantom send.
-                    result = nil
+                    let options = await migrationManager.migrationNetworkOptions(account.id)
+                    await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                    didStopSyncForBroadcast = true
+                    result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
+                }
+                if let result, let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
+                    await send(.broadcastFailureRouted(route))
                 }
                 await send(.transferResult(result))
+                // A `.success` result from the ENGINE (scheduled) lane —
+                // `executeNextPendingMigrationTransfer` — is the only outcome the SDK's own
+                // migration privacy gate transitions on; every other outcome (`.networkError`/
+                // `.invalidNote`/`.expired`/`nil`) stopped sync above without ever reaching that
+                // transition, so nudges Root's gate feed directly.
+                if case MigrationTransferResult.success? = result {
+                    if immediateProposal != nil {
+                        // MOB-1513: the immediate lane's success came from
+                        // `createAndSubmitProposedTransactions` (the ordinary-send submission path),
+                        // which never touches the ENGINE's own migration-sync privacy gate at all —
+                        // unlike the engine lanes, nothing else will ever prompt
+                        // `RootInitialization`'s resume-once-clear machinery to re-check, so this
+                        // stop needs the SAME explicit nudge a non-success outcome gets below.
+                        await migrationManager.refreshMigrationSyncGate()
+                    }
+                    // Engine lanes: no nudge — the SDK's own gate transition covers the resume.
+                } else if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                 // The broadcast DID land; only recording failed — treated as landed (like `.success`),
                 // so no nudge either.
                 await send(.transferResult(MigrationTransferResult.success(txId: "")))
             } catch {
-                // PHASE 2: #1930 additionally classified+routed the failure
-                // (`routeBroadcastFailure` -> `.broadcastFailureRouted`, the R14-R17 surfaces) and
-                // nudged the sync gate. Both land with Phase 3/5; the generic failure sheet below
-                // is what #1930 itself falls back to for an unclassified failure.
-                LoggerProxy.error("[migration] immediate broadcast failed: \(error)")
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
+                    await send(.broadcastFailureRouted(route))
+                }
+                // R8-T4 (#3) composed with R7-T3's classification above: the route drives the
+                // failure UI; the nudge independently resumes sync stopped for a broadcast that
+                // never landed (the SDK gate never transitioned).
+                if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
                 await send(.transferResult(nil))
             }
         }
     }
 
-    // PHASE 2: #1930's send-now gate-check / silence-window machinery (`Constants`,
-    // `resolveSendGate`, `resolveSendGateEffect`, `waitEffect`, `setSendWaitActive`) is removed
-    // with the `.waiting` phase it served — that lane belongs to the scheduled migration and
-    // lands with Phase 3, alongside Root's sync-gate resume machinery it depends on.
+    // MARK: - R8-T6: send-now lane gate-check / silence-window wait
+
+    private enum Constants {
+        /// `.syncRequired` immediately after our own stop is a settle race, not a genuine block —
+        /// one short, bounded wait before the single re-read `resolveSendGate()` allows.
+        static let gateSettleDelay: Duration = .milliseconds(300)
+    }
+
+    /// `stopSyncBeforeMigrationBroadcast()` FIRST, then read `sendGate()` — order matters (reading
+    /// the gate before stopping could read a stale `.allowed` a moment before our own stop, or race
+    /// a DIFFERENT lane's concurrent sync completion). `.syncRequired` immediately after our own
+    /// stop means the stop hasn't necessarily drained `isSyncing()` yet (an async SDK teardown
+    /// race, not a genuine block) — settled with a single bounded retry (re-stop, defensively, then
+    /// re-read); whatever comes back — even a residual `.syncRequired` — is `.sendNowGateResolved`'s
+    /// to interpret (it falls back to a full buffer-duration wait), so this never spins.
+    private func resolveSendGate() async -> MigrationSendGate {
+        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+        let gate = await migrationManager.sendGate()
+        guard gate == MigrationSendGate.syncRequired else { return gate }
+
+        try? await clock.sleep(for: Constants.gateSettleDelay)
+        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+        return await migrationManager.sendGate()
+    }
+
+    private func resolveSendGateEffect(waitId: UUID) -> Effect<Action> {
+        .run { send in
+            let gate = await resolveSendGate()
+            await send(.sendNowGateResolved(gate))
+        }
+        .cancellable(id: waitId, cancelInFlight: true)
+    }
+
+    /// Target-date + clock sleep — NOT a decrementing int — so a suspend/resume (e.g. a brief
+    /// backgrounding) can never desync the fire time from the wall-clock target `.waiting` displays.
+    /// The sleep only decides WHEN to re-check; `.waitFired`'s fresh `resolveSendGate()` read is the
+    /// actual authority on whether it's really clear, so minor timing slack here is harmless.
+    private func waitEffect(target: Date, waitId: UUID) -> Effect<Action> {
+        .run { send in
+            let remaining = target.timeIntervalSinceNow
+            if remaining > 0 {
+                try? await clock.sleep(for: .seconds(remaining))
+            }
+            await send(.waitFired)
+        }
+        .cancellable(id: waitId, cancelInFlight: true)
+    }
+
+    /// R8-T6 (MANDATORY TRACE fence): same `@Shared(.inMemory(...))` idiom as `SDKSynchronizerClient
+    /// .stopSyncBeforeMigrationBroadcast()`'s own `migrationStoppedSyncForBroadcast` flag. Set while
+    /// `.waiting`, cleared on broadcast-start/cancel/close — `RootInitialization`'s `.retryStart`
+    /// proactive section defers (without alerting) while this is set, so no foreground trigger that
+    /// routes through it (scene-phase re-entry, the SDK gate's own resume replay, a DIFFERENT lane's
+    /// failure nudge — see this task's report for the traced list) can restart sync mid-wait.
+    private func setSendWaitActive(_ isActive: Bool) {
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        $migrationSendWaitActive.withLock { $0 = isActive }
+    }
 }

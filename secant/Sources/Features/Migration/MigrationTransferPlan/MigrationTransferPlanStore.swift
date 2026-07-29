@@ -148,12 +148,15 @@ struct MigrationTransferPlan {
         enum ConfirmIntent: Equatable {
             /// `requiresSigning == false` — a plain "got it": nothing left to sign or propose.
             case acknowledge
-            // PHASE 2 (docs/slipstream/migration/REBUILD_PLAN.md): #1930's two COMMIT intents —
-            // `software(schedule:account:zip32AccountIndex:)` and `keystone(schedule:account:)` —
-            // are absent. Phase 2 ships the privacy lane as a PREVIEW only (Gate 2: "backing out
-            // commits nothing"); the commit is Phase 3's and the Keystone fork Phase 7's. Restore
-            // both verbatim from #1930 with those phases, together with
-            // `MigrationCommitPipeline.commitSoftware`/`proposeKeystoneBatch`.
+            /// The software lane: sign + store `schedule` with a USK derived for `account` at
+            /// `zip32AccountIndex`.
+            case software(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex)
+            // PHASE 7 (REBUILD_PLAN D15): `case keystone(schedule:account:)` and its
+            // `requestKeystoneSignature` effect are deleted, not rewritten. They are one of the four
+            // callers of #1930's single Keystone ceremony machine, which lands as ONE batch. The
+            // `confirmIntent` fork below returns nil for a Keystone account instead, which cannot be
+            // reached anyway while `bannerVariant`/`reentryRoute` fence the surface to seed-backed
+            // accounts.
         }
 
         var variant = Variant.scheduled
@@ -274,15 +277,18 @@ struct MigrationTransferPlan {
         /// must win before the software-only `zip32AccountIndex` guard (a Keystone account never
         /// has one).
         var confirmIntent: ConfirmIntent? {
-            // PHASE 2: the preview's Confirm is a plain acknowledgment — nothing is signed or
-            // stored, so an empty/absent schedule is not a special case here (it simply shows an
-            // empty timeline). #1930's vendor + `zip32AccountIndex` forks return with the commit
-            // intents above, in Phases 3 and 7.
-            //
-            // Kept as a guarded nil for a schedule that never loaded, so a Confirm tap on a failed
-            // preview stays the existing documented no-op rather than acknowledging nothing.
-            guard schedule != nil else { return nil }
-            return .acknowledge
+            guard requiresSigning else { return .acknowledge }
+            // MOB-1496 (R8-T1, S3): an absent or legitimately-empty schedule has nothing to sign —
+            // the engine's `sign_and_store_migration_schedule` deterministically refuses an empty
+            // one either way.
+            guard let schedule, !schedule.transfers.isEmpty else { return nil }
+            guard let account = selectedWalletAccount else { return nil }
+            // PHASE 7: #1930 forked to `.keystone(...)` here. Until the ceremony batch lands, a
+            // hardware account gets NO confirm intent at all — a disabled Confirm is honest, where a
+            // fork into a lane that cannot complete would not be.
+            guard account.vendor != WalletAccount.Vendor.keystone else { return nil }
+            guard let zip32AccountIndex = account.zip32AccountIndex else { return nil }
+            return .software(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
         }
 
         /// MOB-1458: whether `confirmTapped`/`retryTapped` must pass the device-authentication
@@ -518,6 +524,10 @@ struct MigrationTransferPlan {
                     // routing once `.delegate(.confirmed)` lands; this reducer needs no awareness
                     // of it (see `State.isExpiredRecoveryReview`'s own doc).
                     return .send(.delegate(.confirmed))
+
+                case .software(let schedule, let account, let zip32AccountIndex):
+                    state.isConfirming = true
+                    return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
                 }
 
             case .delegate(.keystoneSignRequested):
@@ -602,6 +612,35 @@ struct MigrationTransferPlan {
         }
     }
 
+    /// The software commit — sign-only since MOB-1513 (B4): a success is `.scheduleSigned`, any
+    /// thrown error is the plain generic `.noteSplitFailed` (nothing was persisted — see
+    /// `MigrationCommitPipeline.commitSoftware`'s doc). No broadcast happens here any more, so
+    /// there is no failure to classify/route either. MOB-1458 (Task 3): `ZcashError
+    /// .migrationPlanStale` is caught SPECIFICALLY ahead of that generic catch — see
+    /// `refreshAfterPlanStale`'s doc.
+    private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
+        .run { send in
+            do {
+                try await MigrationCommitPipeline.commitSoftware(
+                    schedule: schedule,
+                    account: account,
+                    zip32AccountIndex: zip32AccountIndex,
+                    sdkSynchronizer: sdkSynchronizer,
+                    migrationManager: migrationManager,
+                    walletStorage: walletStorage,
+                    mnemonic: mnemonic,
+                    derivationTool: derivationTool,
+                    networkType: zcashSDKEnvironment.network().networkType
+                )
+                await send(.scheduleSigned)
+            } catch ZcashError.migrationPlanStale {
+                await refreshAfterPlanStale(accountUUID: account.id, send: send)
+            } catch {
+                await send(.noteSplitFailed)
+            }
+        }
+    }
+
     /// MOB-1458 (Task 3): the SOFTWARE leg's plan-stale recovery (`commitEffect`'s
     /// `signAndStoreMigrationSchedule` echo). MOB-1458 (final review I1): the Keystone leg no longer
     /// shares this — it uses `restartAfterPlanStale` instead, because its `proposeKeystoneBatch`
@@ -648,10 +687,10 @@ struct MigrationTransferPlan {
         }
     }
 
-    // PHASE 2: #1930's `commitEffect` (software sign+store) and `requestKeystoneSignature`
-    // (Keystone PCZT batch) are removed with the commit intents they served — Phase 3 and
-    // Phase 7 restore them verbatim. `refreshAfterPlanStale`/`restartAfterPlanStale` stay: the
-    // propose lane can still hit `migrationPlanStale` on its own.
+    // PHASE 7 (REBUILD_PLAN D15): `requestKeystoneSignature(for:account:)` deleted with the
+    // `.keystone` confirm intent above — it called `MigrationCommitPipeline.proposeKeystoneBatch`,
+    // itself removed from that file for the same reason. Restore all three together, plus the
+    // coordinator's `keystoneNoteSplitSentinelPrefix` and the two SDK PCZT-batch members.
 
     /// MOB-1496 (R8-T1, S3): proposes a fresh schedule via `proposeMigrationTransfers` —
     /// `retryTapped`'s SINGLE-attempt re-proposal after a propose failure (an explicit user tap, not
@@ -732,11 +771,12 @@ struct MigrationTransferPlan {
             uniqueElements: schedule.transfers.enumerated().map { index, transfer in
                 let minutes = MigrationETA.minutesFromNow(scheduledHeight: transfer.nextExecutableAfterHeight, currentTip: tip)
                 return MigrationTransferRow(
-                    // OLD -> NEW SDK: `MigrationTransferProposal.id` is a `UInt32` engine id in the
-                    // new SDK (`Model/MigrationModels.swift:196`); #1930 passed it straight through
-                    // to `MigrationTransferRow.id`, which is a `String`. Stringified here rather
-                    // than re-typing the row: the row id is only an `Identifiable` key for the list.
-                    id: String(transfer.id),
+                    // OLD -> NEW SDK: `MigrationTransferProposal.id` is `UInt32` now while the row
+                    // id is a `String`. `transferKey` is the ONE conversion point (see its doc in
+                    // `MigrationManagerLiveKey`) and is the same key the manager's own row join
+                    // uses — so a row built here and a row built there are the same row, which is
+                    // what lets the live per-transaction statuses join onto these.
+                    id: transfer.transferKey,
                     index: index,
                     amount: transfer.amount,
                     status: Self.transferRowStatus(index: index, hasSplitRow: hasSplitRow),

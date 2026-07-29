@@ -70,6 +70,8 @@ import Foundation
 /// calls throw — callers that don't care about the payload can still map ANY of these to the same
 /// commit-failure surface, exactly as before.
 enum MigrationCommitError: Error, Equatable {
+    /// The proposed Keystone PCZT batch came back empty — nothing to hand to the signing device.
+    case emptyPcztBatch
     /// MOB-1513: an immediate-lane submit (`createAndSubmitProposedTransactions`/
     /// `createAndSubmitTransactionFromPCZT`) came back as anything other than `.success` — no txid to
     /// record, no partial state to clean up (nothing was stored anywhere by this pipeline).
@@ -79,6 +81,53 @@ enum MigrationCommitError: Error, Equatable {
 /// Shared commit-lane pipelines for the migration flow's software- and Keystone-signing paths (see
 /// this file's header for the extraction rationale).
 enum MigrationCommitPipeline {
+    /// Signs and persists `schedule` in the migration engine, software-signing path — the SIGN-ONLY
+    /// commit (MOB-1513 B4; see this file's header for what used to run here and why it left):
+    /// derive the account's USK, then `signAndStoreMigrationSchedule` directly (the atomic commit:
+    /// signs every transaction of the run — `schedule`'s transfers AND any note-split preparation
+    /// layers the engine still needs — straight from the plan cache `schedule`'s own propose call
+    /// wrote, with NO proving and NO broadcast) -> `recordCommittedSchedule` -> `reconcile`.
+    /// Deliberately no separate `isNoteSplitNeeded`/`prepareNoteSplit` step here (MOB-1513 F1-A1
+    /// fix): the SDK's one proposal-handle slot per account means a `prepareNoteSplit` call at
+    /// this point would supersede `schedule`'s own handle before it is signed, turning every
+    /// commit that needs a split into a guaranteed `migrationPlanStale` throw — see this file's
+    /// header.
+    ///
+    /// A thrown commit persists NOTHING (the engine's commit is persist-once-atomic, and neither
+    /// `recordCommittedSchedule` nor `reconcile` has run) — callers map the throw to their existing
+    /// commit-failure surface and a Retry re-runs this whole chain.
+    ///
+    /// This is the STAGGERED-SCHEDULE lane only (`MigrationTransferPlanStore`'s
+    /// `scheduled`/`manual`/`recreated` variants — all three sign a multi-transfer schedule the same
+    /// way). The immediate single-sweep lane no longer calls this at all — see
+    /// `commitImmediateSoftware`/`commitImmediateKeystone` below.
+    static func commitSoftware(
+        schedule: MigrationSchedule,
+        account: WalletAccount,
+        zip32AccountIndex: Zip32AccountIndex,
+        sdkSynchronizer: SDKSynchronizerClient,
+        migrationManager: MigrationManagerClient,
+        walletStorage: WalletStorageClient,
+        mnemonic: MnemonicClient,
+        derivationTool: DerivationToolClient,
+        networkType: NetworkType
+    ) async throws {
+        let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+            zip32AccountIndex: zip32AccountIndex,
+            walletStorage: walletStorage,
+            mnemonic: mnemonic,
+            derivationTool: derivationTool,
+            networkType: networkType
+        )
+        try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
+
+        // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no proposal list
+        // post-commit) and reconcile so `stateEvents` picks up the fresh state promptly (a store
+        // completing a migration op is one of `reconcile()`'s two triggers).
+        await migrationManager.recordCommittedSchedule(account.id, schedule)
+        await migrationManager.reconcile()
+    }
+
     // MARK: - MOB-1513: immediate lane (send-max `ImmediateMigrationProposal`)
 
     /// The immediate lane's software (USK-signing) submit: derives no new state ahead of time — the
@@ -108,6 +157,14 @@ enum MigrationCommitPipeline {
         await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
         return displayTxId
     }
+
+    // PHASE 7 (docs/slipstream/migration/REBUILD_PLAN.md, D15): the two KEYSTONE arms —
+    // `commitImmediateKeystone` (post-signing add-proofs + submit for the manual lane) and
+    // `proposeKeystoneBatch` (the scheduled lane's unsigned-PCZT batch) — are deleted here, not
+    // rewritten. They are two of the four callers of #1930's single Keystone ceremony machine and
+    // land together with it in one batch, never per-phase. They need SDK members this build has not
+    // bound (`proposeNoteSplitPCZTs`, `proposeMigrationPCZTs`) and the coordinator's
+    // `keystoneNoteSplitSentinelPrefix` — restore all three with them.
 
     /// Used by the immediate submit path above (and, from Phase 7, by the Keystone one too): the broadcast already landed by the time this
     /// runs (a `displayTxId` in hand), so a `recordImmediateMigration` failure here is bookkeeping

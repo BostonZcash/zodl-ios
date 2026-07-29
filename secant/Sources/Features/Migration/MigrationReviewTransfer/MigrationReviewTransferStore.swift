@@ -93,12 +93,6 @@
 //  (unconditionally — this branch only runs when `failureReason == .propose`, already known
 //  non-nil) instead of clearing state ahead of a re-propose that never launches.
 //
-//
-//  PHASE 2 SCOPE (docs/slipstream/migration/REBUILD_PLAN.md): copied from #1930 with the Keystone
-//  fork REMOVED — that lane is Phase 7 and the migration surface is gated to seed-backed accounts
-//  until then. The Keystone paragraphs below are #1930's own and are kept deliberately: they are the
-//  restore instructions for Phase 7. Everything else is verbatim.
-//
 
 import Foundation
 import ComposableArchitecture
@@ -126,10 +120,11 @@ struct MigrationReviewTransfer {
             /// Immediate mode, non-Keystone account: nothing left to commit locally — the
             /// coordinator threads `immediateProposal` into the pushed Sending screen.
             case immediateSoftware
-            // PHASE 2 (docs/slipstream/migration/REBUILD_PLAN.md): #1930's third case,
-            // `immediateKeystone(proposal:account:)`, is deliberately absent — the Keystone lane is
-            // Phase 7 and the migration surface is gated to seed-backed accounts until then (see
-            // `MigrationDerivations.bannerVariant`). Restore it verbatim from #1930 with Phase 7.
+            /// Immediate mode, Keystone account: propose+redact the proposal's PCZT and hand it to
+            /// the coordinator's signing ceremony. Carries the exact proposal/account pair
+            /// `confirmIntent` read at tap time — NOT whatever `immediateProposal`/
+            /// `selectedWalletAccount` hold once the authentication prompt returns.
+            case immediateKeystone(proposal: ImmediateMigrationProposal, account: WalletAccount)
         }
 
         /// Distinguishes what `isFailurePresented`'s sheet is showing, so `retryTapped` re-attempts
@@ -189,10 +184,10 @@ struct MigrationReviewTransfer {
         /// either way, the tap must not open the authentication prompt at all.
         var confirmIntent: ConfirmIntent? {
             guard case .immediate = mode else { return ConfirmIntent.manualStep }
-            guard immediateProposal != nil, selectedWalletAccount != nil else { return nil }
-            // PHASE 2: no vendor fork — the migration surface only reaches seed-backed accounts
-            // until Phase 7 restores the Keystone lane.
-            return ConfirmIntent.immediateSoftware
+            guard let immediateProposal, let selectedWalletAccount else { return nil }
+            return selectedWalletAccount.vendor == WalletAccount.Vendor.keystone
+                ? ConfirmIntent.immediateKeystone(proposal: immediateProposal, account: selectedWalletAccount)
+                : ConfirmIntent.immediateSoftware
         }
 
         init(
@@ -261,8 +256,26 @@ struct MigrationReviewTransfer {
         enum Delegate: Equatable {
             case closed
             case confirmed
+            /// MOB-1468/MOB-1513 (R8): the immediate-mode proposal's single ordinary-send PCZT was
+            /// proposed AND redacted for the signer — the coordinator routes it through the
+            /// PRODUCTION single-PCZT Keystone ceremony (`urEncoderForPCZT` QR over `redacted`,
+            /// `keystonePCZTScanChecker` scan, the device echoes the full signed PCZT), never the
+            /// migration batch bridge. `unsigned` is the unredacted original the post-scan
+            /// proofs+combine step needs (`MigrationCommitPipeline.commitImmediateKeystone`); the
+            /// redaction is wire-only. R8's root cause for abandoning the batch bridge here: the
+            /// batch apply FFI (`decode_signed_pairs`) numeric-parses every PCZT id, and this lane's
+            /// engine-external PCZT has none — see `MigrationCoordFlowCoordinator`'s Keystone rows.
+            case keystoneImmediateSignRequested(unsigned: Data, redacted: Data)
         }
     }
+
+    /// MOB-1513: the sentinel id the immediate lane's single Keystone-signing PCZT rides under in
+    /// `MigrationKeystoneSign.State.pczts` — it carries no engine-issued id, since
+    /// `createPCZTFromProposal` is the ordinary-send PCZT builder, not an engine call. MOB-1513
+    /// (R8): STATE-ONLY now — it never reaches the SDK (the immediate ceremony's single-PCZT
+    /// reroute bypasses the batch bridge, whose apply FFI numeric-parses ids and would reject this
+    /// string); the coordinator's post-signing step reads the entry positionally (`.first`).
+    static let immediateKeystonePcztId = "immediate"
 
     /// MOB-1513 (E2-FIX): single-flight + dismiss-cancellation id for the bounded entry-retry loop
     /// (`proposeWithRetryEffect`). `cancelInFlight` restarts the window on a re-appearance; TCA's
@@ -335,6 +348,12 @@ struct MigrationReviewTransfer {
                     // happens on the Sending screen, which the coordinator threads
                     // `immediateProposal` into. Both cases just acknowledge.
                     return .send(.delegate(.confirmed))
+
+                case .immediateKeystone(let proposal, let account):
+                    // Flips back to `true` — the PCZT propose+redact below is itself async, so
+                    // Confirm stays in its loading state until `requestKeystoneSignature` resolves.
+                    state.isConfirming = true
+                    return requestKeystoneSignature(for: proposal, account: account)
                 }
 
             case .confirmTapped, .retryTapped:
@@ -397,6 +416,13 @@ struct MigrationReviewTransfer {
                 state.isConfirming = true
                 return localAuthentication.gated(success: .confirmAuthenticated(intent), cancelled: .authenticationCancelled)
 
+            case .delegate(.keystoneImmediateSignRequested):
+                // MOB-1513 (B4): the PCZT is handed to the coordinator (which pushes the QR
+                // ceremony on top) — re-enable Confirm so a pop-back after a rejected signature
+                // lands on a tappable button again.
+                state.isConfirming = false
+                return .none
+
             case .delegate:
                 return .none
 
@@ -427,6 +453,28 @@ struct MigrationReviewTransfer {
                 state.amount = proposal.amount
                 state.fee = proposal.fee
                 return .none
+            }
+        }
+    }
+
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate proposal's single PCZT via
+    /// `createPCZTFromProposal` (MOB-1513: the ordinary-send PCZT builder — the proposal is
+    /// engine-external, so there is no schedule for the engine's `proposeMigrationPCZTs`/
+    /// `proposeNoteSplitPCZTs` machinery to build a batch from; a send-max sweep also never needs a
+    /// note split of its own), redacts it for the signer (MOB-1513 R8 — the production
+    /// `SignWithKeystone` wire copy: witnesses/proprietary cleared, FVK and any pre-existing
+    /// dummy-spend sigs KEPT, exactly what the device's single-PCZT `zcash-pczt` protocol expects),
+    /// and hands both to the coordinator for the production QR ceremony. Either throw surfaces as
+    /// the same commit failure (`.noteSplitFailed` -> failure sheet + Retry), never swallowed.
+    private func requestKeystoneSignature(for proposal: ImmediateMigrationProposal, account: WalletAccount) -> Effect<Action> {
+        .run { send in
+            do {
+                let pczt = try await sdkSynchronizer.createPCZTFromProposal(account.id, proposal.proposal)
+                let redacted = try await sdkSynchronizer.redactPCZTForSigner(Pczt(pczt))
+                await send(.delegate(.keystoneImmediateSignRequested(unsigned: pczt, redacted: redacted)))
+            } catch {
+                LoggerProxy.error("[MOB-1513] immediate Keystone PCZT build/redact failed: \(error)")
+                await send(.noteSplitFailed)
             }
         }
     }
