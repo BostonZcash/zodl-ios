@@ -158,6 +158,9 @@ extension SDKSynchronizerClient: DependencyKey {
             lockMigrationResidual: { accountUUID in
                 try await synchronizer.lockMigrationResidual(accountUUID: accountUUID)
             },
+            unlockMigrationResidual: { accountUUID in
+                try await synchronizer.unlockMigrationResidual(accountUUID: accountUUID)
+            },
             // PHASE 7 — the Keystone lane. Thin forwards, exactly like the migration closures above;
             // see `SDKSynchronizerInterface` for why none of these takes `transactionGuard`.
             proposeNoteSplitPCZTs: { accountUUID, schedule in

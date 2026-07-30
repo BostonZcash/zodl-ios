@@ -219,11 +219,163 @@ extension MigrationCoordFlow {
 
             // The flow's terminal closes. `.scheduled(.delegate(.done))` is the commit's own exit —
             // it was MISSING (the screen emitted the delegate, nothing consumed it, so Done was a
-            // dead button that stranded the user on the screen). #1930 groups these three; Phase 5
-            // adds `.recovery(.delegate(.close))` to the same list.
+            // dead button that stranded the user on the screen). PHASE 5 adds the recovery screen's
+            // flow-root close to the same list.
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.closed)))),
+                 .path(.element(id: _, action: .recovery(.delegate(.close)))),
                  .path(.element(id: _, action: .scheduled(.delegate(.done)))):
                 return .send(.flowFinished)
+
+                // MARK: - PHASE 5: attention + recovery
+
+            case .path(.element(id: let id, action: .recovery(.delegate(.recreate)))):
+                guard case .recovery(var recoveryState) = state.path[id: id] else { return .none }
+                // Single-flight: a refresh/restart is multi-second and a second one would race the
+                // first over the same run. The disabled button covers the common double-tap; this
+                // covers the rest.
+                guard !recoveryState.isRecovering else { return .none }
+                guard let account = state.selectedWalletAccount else { return .none }
+                let reason = recoveryState.reason
+                recoveryState.isRecovering = true
+                state.path[id: id] = .recovery(recoveryState)
+
+                switch reason {
+                case .notesSpent:
+                    // A funding note left the wallet: nothing about the old plan is salvageable, so
+                    // the whole step is re-planned from live balances.
+                    return .send(.recoveryRestartRequested)
+
+                case .expired:
+                    // Only the elapsed rows are rebuilt, IN PLACE — amounts do not change, so there
+                    // is no new consent decision to take the user back through.
+                    guard account.vendor != WalletAccount.Vendor.keystone else {
+                        // Keystone: refresh with a nil usk (rebuilt rows come back UNSIGNED) and
+                        // hand the rebuilt batch to the same ceremony the plan commit uses.
+                        return .run { [sdkSynchronizer, migrationManager, account] send in
+                            do {
+                                let schedule = try await sdkSynchronizer.refreshStaleMigrationTransfers(account.id, nil)
+                                await migrationManager.recordCommittedSchedule(account.id, schedule)
+                                await migrationManager.reconcile()
+                                // Land on the plan screen carrying the REBUILT schedule. Its own
+                                // Confirm runs `proposeKeystoneBatch` and hands the batch to the
+                                // ceremony the plan-commit lane already owns — deliberately NOT
+                                // pre-proposed here, because proposing twice would create two runs.
+                                var planState = MigrationTransferPlan.State(variant: .recreated)
+                                planState.injectedSchedule = schedule
+                                await send(.pushHydratedPathState(.transferPlan(planState)))
+                            } catch {
+                                await send(.recoveryFailed)
+                            }
+                        }
+                    }
+
+                    // Software: derive the account's real usk so the engine can re-sign every rebuilt
+                    // transfer in place. A nil usk here would strand the rebuilt rows awaiting a
+                    // ceremony that never comes, so a software account must never take the branch
+                    // above. A missing `zip32AccountIndex` on a software account is a "can't happen",
+                    // but it routes to the same failure rather than a silent no-op — the recover
+                    // button must never die without feedback.
+                    guard let zip32AccountIndex = account.zip32AccountIndex else {
+                        return .send(.recoveryFailed)
+                    }
+                    let networkType = zcashSDKEnvironment.network().networkType
+                    return .run { [sdkSynchronizer, migrationManager, walletStorage, mnemonic, derivationTool, networkType, zip32AccountIndex, account] send in
+                        do {
+                            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                                zip32AccountIndex: zip32AccountIndex,
+                                walletStorage: walletStorage,
+                                mnemonic: mnemonic,
+                                derivationTool: derivationTool,
+                                networkType: networkType
+                            )
+                            let schedule = try await sdkSynchronizer.refreshStaleMigrationTransfers(account.id, usk)
+                            // Persist the RETURNED schedule as committed truth BEFORE reconcile: the
+                            // SDK keeps no app-facing schedule post-refresh (the refreshed heights
+                            // live only in the returned value), and the summary, the rows and the
+                            // Home banner all render from the locally persisted one. Without this the
+                            // app would keep showing the STALE pre-refresh schedule.
+                            await migrationManager.recordCommittedSchedule(account.id, schedule)
+                            await migrationManager.reconcile()
+                            await send(.pushHydratedPathState(.scheduled(
+                                await scheduledState(accountUUID: account.id, schedule: schedule)
+                            )))
+                        } catch {
+                            await send(.recoveryFailed)
+                        }
+                    }
+                }
+
+            case .recoveryRestartRequested:
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.recoveryFailed) }
+                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
+                    guard (try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)) != nil else {
+                        await send(.recoveryFailed)
+                        return
+                    }
+                    // Reconcile so the restart's state transition (off `.requiresAttention`) is
+                    // observed promptly. The fresh plan's own commit reconciles again later.
+                    await migrationManager.reconcile()
+                    // No injected schedule: the pushed screen's own `onAppear` proposes fresh. A
+                    // silent empty-schedule fallback would render an empty plan as if it were real.
+                    await send(.pushHydratedPathState(.transferPlan(MigrationTransferPlan.State(variant: .recreated))))
+                }
+
+            case .recoveryFailed:
+                // Clear the in-flight flag wherever the recovery element currently sits, so Continue
+                // is tappable again. No alert: this lane's whole design premise is that attention
+                // states are calm and re-tryable, never error surfaces.
+                for id in state.path.ids {
+                    if case .recovery(var recoveryState) = state.path[id: id] {
+                        recoveryState.isRecovering = false
+                        state.path[id: id] = .recovery(recoveryState)
+                    }
+                }
+                return .none
+
+                // MARK: - PHASE 6: completion + the residual fork
+
+            case .path(.element(id: _, action: .complete(.delegate(.done)))):
+                // Acknowledging is what lets the NEXT round (or nothing) take over: it wipes the
+                // finished run's schedule/snapshot/failure records.
+                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                    await migrationManager.acknowledgeComplete(accountUUID)
+                    await migrationManager.reconcile()
+                    await send(.flowFinished)
+                }
+
+            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
+                // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
+                // "Migrate anyway" unlocks it and sweeps it through the ordinary immediate pipeline —
+                // one transaction, engine-external, exactly like the manual lane's own sweep.
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
+                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
+                    do {
+                        _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
+                        // Reconcile before handing over: the unlock changes the account's spendable
+                        // Orchard balance, and the Review screen's own proposal reads from it.
+                        await migrationManager.reconcile()
+                        await send(.migrateAnywayUnlocked)
+                    } catch {
+                        await send(.migrateAnywayFailed)
+                    }
+                }
+
+            case .migrateAnywayUnlocked:
+                // Straight onto the manual lane's own review screen: the user still confirms the
+                // sweep, and every downstream path (software commit, Keystone single-PCZT ceremony,
+                // broadcast-failure routing) is the one that lane already owns. `.immediate` carries
+                // no proposal — that screen proposes for itself on appear.
+                state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+                return .none
+
+            case .migrateAnywayFailed:
+                for id in state.path.ids {
+                    if case .complete(var completeState) = state.path[id: id] {
+                        completeState.isMigratingAnyway = false
+                        state.path[id: id] = .complete(completeState)
+                    }
+                }
+                return .none
 
                 // MARK: - PHASE 7: Keystone ceremony — the two entries (#1930 :685-1158)
 
@@ -1057,9 +1209,6 @@ extension MigrationCoordFlow {
     /// Maps `migrationManager.reentryRoute()` onto the flow-root screen to append. `.entry` appends
     /// nothing — Entry is the coordinator's own root screen, already showing.
     ///
-    /// PHASE 3: `.recovery` (Phase 5) and `.complete` (Phase 6) have no screen in this build. Both
-    /// fall through to Entry rather than to a wrong screen: Entry re-derives from live state, so the
-    /// worst case is the user sees the fork again, not a lie about their run.
     private func reentryPathState(accountUUID: AccountUUID?) async -> Path.State? {
         switch await migrationManager.reentryRoute() {
         case .statusResume:
@@ -1071,8 +1220,61 @@ extension MigrationCoordFlow {
         case .reviewManual(let step, let total):
             return .reviewTransfer(MigrationReviewTransfer.State(mode: .manualStep(number: step, total: total), isFlowRoot: true))
 
-        case .recovery, .complete, .entry:
+        // PHASE 5 / PHASE 6: these two used to fall through to Entry because their screens did not
+        // exist. They exist now, and re-entry lands on them directly — which is the whole point: a
+        // run needing attention must say so at the door, not present the fork again as if nothing
+        // had happened.
+        case .recovery(let isExpired):
+            return .recovery(await recoveryState(accountUUID: accountUUID, isExpired: isExpired, isFlowRoot: true))
+
+        case .complete:
+            return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
+
+        case .entry:
             return nil
         }
+    }
+
+    // MARK: - PHASE 5 / PHASE 6 state hydration
+
+    /// PHASE 5: the attention screen's state, hydrated from the live rows so the "Transfers {a}–{b}"
+    /// range in the copy names the transfers that actually need attention rather than a placeholder.
+    ///
+    /// `isExpired` comes from the re-entry route (which derives it from the engine's own attention
+    /// reason), so the screen never has to guess which of the two lanes it is on.
+    private func recoveryState(accountUUID: AccountUUID?, isExpired: Bool, isFlowRoot: Bool) async -> MigrationRecovery.State {
+        let rows = await migrationManager.migrationTransfers(accountUUID)
+        // The affected rows are the ones that are not already sent. Falling back to the whole list's
+        // bounds (rather than to the hardcoded 3–5 the screen defaults to) keeps the copy honest
+        // even if the status classification is momentarily empty.
+        let affected = rows.filter { $0.status != MigrationTransferRow.Status.sent }
+        let candidates = affected.isEmpty ? rows : affected
+        return MigrationRecovery.State(
+            reason: isExpired ? .expired : .notesSpent,
+            firstTransfer: (candidates.first?.index ?? 0) + 1,
+            lastTransfer: (candidates.last?.index ?? 0) + 1,
+            isFlowRoot: isFlowRoot
+        )
+    }
+
+    /// PHASE 6: the terminal screen's state. `dust` drives the residual fork — `MigrationComplete
+    /// .State`'s own init derives `.offered` from a non-zero value, so nothing here names it.
+    ///
+    /// `migrationLockedAmount` wins over `summary.dust` when the residual is ALREADY locked: after a
+    /// lock, `migrationSummary().dust` re-plans from live spendable notes and reports zero, so
+    /// reading it alone would make a locked balance vanish from the screen that exists to report it.
+    private func completeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationComplete.State {
+        let summary = await migrationManager.migrationSummary(accountUUID)
+        let isLocked = await migrationManager.isMigrationDustLocked(accountUUID)
+        let lockedAmount = await migrationManager.migrationLockedAmount(accountUUID)
+        return MigrationComplete.State(
+            totalTransferred: summary.transferred,
+            dust: isLocked ? lockedAmount : summary.dust,
+            transfersSent: summary.transfersSent,
+            transfersTotal: summary.transfersTotal,
+            durationHours: summary.estimatedDurationHours,
+            isFlowRoot: isFlowRoot,
+            dustResolution: isLocked ? .locked : nil
+        )
     }
 }

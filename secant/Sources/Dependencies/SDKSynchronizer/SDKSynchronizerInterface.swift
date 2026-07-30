@@ -133,6 +133,9 @@ struct SDKSynchronizerClient: Sendable {
     /// it is Phase 6; the member is bound here because the manager (copied whole from #1930) calls
     /// it, and a live binding is safer than a stub that silently no-ops a real lock.
     let lockMigrationResidual: @Sendable (AccountUUID) async throws -> Zatoshi
+    /// PHASE 6: releases a previously locked residual so it can be swept — the "Migrate anyway"
+    /// fork's first step. Returns the number of notes unlocked.
+    let unlockMigrationResidual: @Sendable (AccountUUID) async throws -> Int
 
     // PHASE 7 — the Keystone lane (REBUILD_PLAN D15). Two groups: the PCZT serve/store pair that
     // creates and completes a hardware-signed run, and the batch-signing bridge that carries one

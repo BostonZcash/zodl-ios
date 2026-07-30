@@ -99,9 +99,16 @@ struct MigrationCoordFlow {
 
     @Reducer(state: .equatable)
     enum Path {
+        /// PHASE 6: the terminal per-run screen — summary, the residual lock/"Migrate anyway" fork,
+        /// and the acknowledgement that lets the next round (or nothing) take over.
+        case complete(MigrationComplete)
         case howItWorks(MigrationHowItWorks)
         case keystoneSign(MigrationKeystoneSign)
         case notifications(MigrationNotifications)
+        /// PHASE 5: the attention lane — "Transfers No Longer Valid" (a funding note was spent
+        /// externally) and "Reschedule Transfers" (a transfer's window elapsed). Calm, actionable,
+        /// never an error surface.
+        case recovery(MigrationRecovery)
         case reviewTransfer(MigrationReviewTransfer)
         case scan(Scan)
         case scheduled(MigrationScheduled)
@@ -202,6 +209,21 @@ struct MigrationCoordFlow {
         /// Pushes a path state that had to be hydrated asynchronously first (the network snapshot
         /// must exist before anything downstream reads it), so the push itself stays synchronous.
         case pushHydratedPathState(Path.State)
+        /// PHASE 5: the `.notesSpent` recovery lane — a funding note was spent outside the run, so
+        /// the whole step is re-planned from live balances. Also the fallback when an expired
+        /// refresh fails.
+        case recoveryRestartRequested
+        /// PHASE 5: an expired-transfer refresh or a restart failed. Clears the recovery screen's
+        /// in-flight flag so its Continue button is usable again — a dead button is the one outcome
+        /// this lane must never produce.
+        case recoveryFailed
+        /// PHASE 6: "Migrate anyway" — the residual has been unlocked and the ordinary immediate
+        /// lane takes it from here. Carries no proposal: `MigrationReviewTransfer`'s `.immediate`
+        /// mode proposes for itself on appear, exactly as the manual lane's own entry does.
+        case migrateAnywayUnlocked
+        /// PHASE 6: the unlock or the immediate proposal failed; clears the Complete screen's
+        /// single-flight flag so the button comes back.
+        case migrateAnywayFailed
         /// Same, for the Status screen — kept separate because re-entry hydrates it from a
         /// different source (rows + summary) than a fresh push.
         case pushHydratedStatus(MigrationStatus.State)
@@ -265,10 +287,16 @@ struct MigrationCoordFlow {
     // PHASE 7: the immediate single-PCZT ceremony resets the shared BC-UR fountain decoder before
     // pushing its scan session (`SendConfirmation.getSignatureTapped` precedent), so a retry
     // ceremony never inherits a previous session's accumulated frames.
+    // PHASE 5: the expired-transfer refresh re-signs the rebuilt rows IN PLACE for a software
+    // account, so this coordinator now derives a USK of its own (`MigrationSpendingKeyDerivation`)
+    // — hence the derivation trio below, mirroring `MigrationTransferPlan`'s own dependency set.
+    @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 

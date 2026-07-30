@@ -32,8 +32,12 @@ struct MigrationCoordFlowView: View {
                 )
             } destination: { store in
                 switch store.case {
+                case let .complete(store):
+                    MigrationCompleteView(store: store)
                 case let .howItWorks(store):
                     MigrationHowItWorksView(store: store)
+                case let .recovery(store):
+                    MigrationRecoveryView(store: store)
                 case let .keystoneSign(store):
                     MigrationKeystoneSignView(store: store)
                 case let .notifications(store):
