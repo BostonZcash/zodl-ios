@@ -52,6 +52,12 @@ struct MigrationTransferTimeline: View {
     /// Titles follow the count, so the overwhelmingly common single-split case is untouched: one
     /// row still reads "Split Balance", several read "Split Balance 1", "Split Balance 2", …
     var splitRows: IdentifiedArrayOf<MigrationTransferRow> = []
+    /// Opts a "Show details" disclosure onto the split row, opening the caller's own
+    /// "Prepare Your Balance" sheet (Figma 5207:16024). Set only by a caller that COLLAPSES a
+    /// multi-transaction split into one row and has somewhere to put the per-step detail; `nil`
+    /// (the default) leaves every existing call site — including the ones that still render one
+    /// row per preparation — exactly as it was.
+    var onSplitDetailsTapped: (() -> Void)?
     var skeletonPendingCaptions = false
     /// MOB-1511 (W4): per-row caption tone — `nil` keeps the historical tertiary everywhere;
     /// `MigrationStatusView` uses it to render the completed Split Balance row's "Done" in green.
@@ -88,6 +94,21 @@ struct MigrationTransferTimeline: View {
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
                 captionOrSkeleton(for: row)
+
+                if row.kind == .splitBalance, let onSplitDetailsTapped {
+                    Button {
+                        onSplitDetailsTapped()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(String(localizable: .migrationPlanShowDetails))
+                                .zFont(.medium, size: 12, style: Design.Text.primary)
+
+                            Asset.Assets.chevronDown.image
+                                .zImage(size: 16, style: Design.Text.primary)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
             }
             .padding(.top, 2)
 

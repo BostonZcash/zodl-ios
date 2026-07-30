@@ -27,6 +27,16 @@ enum MigrationBannerVariant: Equatable {
     /// Tor-specific `info` line instead of the generic waiting copy. Defaults `false` so every
     /// pre-existing call site (none of which know about the indicator) is unaffected.
     case transferWaiting(number: Int, torHold: Bool = false)
+    /// Figma 5139:34287 — a BROADCAST session in flight. The engine's `next_step` returned
+    /// `Broadcast`, so this app-open spends its window on the submission and deliberately does NOT
+    /// sync: ZIP 318 wants a wake window used either to sync or to broadcast, never both, so a
+    /// network observer cannot correlate the two. Distinct from `.transferWaiting`, which is the
+    /// opposite state (nothing in flight, the transfer is blocked on its schedule).
+    ///
+    /// The "keep the app open" line is not a nicety. With no background lane on iOS, backgrounding
+    /// mid-broadcast is exactly what strands it — so the banner asks for the one thing that keeps
+    /// the session alive.
+    case transferSending(number: Int)
     case updatePlan
     case transfersExpired(first: Int, last: Int)
     case transferReady(number: Int)
@@ -40,6 +50,8 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerProgressTitle)
         case .transferWaiting(let number, _):
             return String(localizable: .migrationBannerWaitingTitle(number))
+        case .transferSending(let number):
+            return String(localizable: .migrationBannerSendingTitle(number))
         case .updatePlan:
             return String(localizable: .migrationBannerUpdatePlanTitle)
         case .transfersExpired(let first, let last):
@@ -72,6 +84,8 @@ enum MigrationBannerVariant: Equatable {
             return torHold
                 ? String(localizable: .migrationFailureTorHoldBannerInfo)
                 : String(localizable: .migrationBannerWaitingInfo)
+        case .transferSending:
+            return String(localizable: .migrationBannerSendingInfo)
         case .updatePlan:
             return String(localizable: .migrationBannerUpdatePlanInfo)
         case .transfersExpired:
@@ -86,7 +100,7 @@ enum MigrationBannerVariant: Equatable {
     /// "More" everywhere except `transferReady`, which reads "Review".
     var buttonLabel: String {
         switch self {
-        case .transferReady:
+        case .transferReady, .transferSending:
             return String(localizable: .sendReview)
         default:
             return String(localizable: .generalMore)
@@ -163,6 +177,12 @@ struct MigrationBannerContentView: View {
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:
             migrationProgressRing()
+        case .transferSending:
+            // No static "sending" glyph in the catalogue, and a live spinner says the thing the
+            // banner is asking for (the session is running, keep it running) better than one would.
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: titleStyle))
+                .frame(width: 20, height: 20)
         case .transferWaiting, .updatePlan, .transfersExpired:
             Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, color: titleStyle)

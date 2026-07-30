@@ -92,7 +92,12 @@ struct MigrationTransferPlanView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
-                            splitRows: store.splitRows
+                            splitRows: store.splitRows,
+                            // Offered only for a multi-transaction split — a single-transaction one
+                            // has nothing to expand (Figma 5207:16024).
+                            onSplitDetailsTapped: store.hasMultiStepSplit
+                                ? { store.send(.splitDetailsTapped) }
+                                : nil
                         )
                     }
                     .screenHorizontalPadding()
@@ -128,6 +133,13 @@ struct MigrationTransferPlanView: View {
             .zashiBack()
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent
+            }
+            .zashiSheet(isPresented: $store.isPrepareBalancePresented) {
+                MigrationPrepareBalanceSheet(
+                    steps: store.preparationSteps,
+                    amountBeingSplit: store.splitRows.first?.amount,
+                    gotItTapped: { store.send(.prepareBalanceDismissed) }
+                )
             }
         }
         .applyScreenBackground()
@@ -175,8 +187,11 @@ struct MigrationTransferPlanView: View {
         // path below (its `minutesFromNow == 0` buckets to "Ready now") — never the `.recreated`
         // hardcoded bypass the `.active` case used to carry (see this file's header doc for why
         // that bypass is retired along with the row-0 relabel it existed to paper over).
+        // The collapsed split row carries the step count in its caption when the split takes more
+        // than one transaction ("Ready now · 4 steps" — Figma 5207:16024); a single-transaction
+        // split reads exactly as it always did.
         if row.kind == .splitBalance {
-            return forwardETA(for: row)
+            return store.splitCaption
         }
         switch row.status {
         case .sent:

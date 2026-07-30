@@ -220,6 +220,10 @@ struct MigrationTransferPlan {
         /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
         /// `FailureReason`.
         var failureReason: FailureReason?
+        /// The "Prepare Your Balance" sheet behind the collapsed split row's "Show details"
+        /// disclosure (Figma 5207:16024). Independent of `isFailurePresented` — the disclosure is
+        /// only offered on a healthy plan, and the two are never up at once.
+        var isPrepareBalancePresented = false
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         /// MOB-1458 (Task 3): the app-wide toast idiom — `.planStaleRefreshed` uses it to tell the
@@ -257,24 +261,51 @@ struct MigrationTransferPlan {
             let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
                 ? nil
                 : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
-            // D14: the total belongs on the split row ONLY when there is one of them. Across several
-            // it would read as "this much, N times" — and the engine gives no per-preparation
-            // amounts to divide it into honestly (`MigrationTransactionStatus` carries none by
-            // design). Several rows therefore show count and timing, not amounts.
-            let count = max(1, preparationCount)
-            return IdentifiedArrayOf(
-                uniqueElements: (0..<count).map { index in
-                    MigrationTransferRow(
-                        id: count == 1 ? "split-balance" : "split-balance-\(index)",
-                        index: index,
-                        amount: count == 1 ? totalAmount : nil,
-                        status: .active,
-                        hoursFromNow: 0,
-                        minutesFromNow: 0,
-                        kind: .splitBalance
-                    )
-                }
+            // Figma 5207:16024: ONE collapsed row, whatever the split's transaction count. D14
+            // rendered one timeline row per preparation, which put N rows of a mechanism the user
+            // did not ask about ahead of the transfers they did — and, having no honest per-step
+            // amount to show (`MigrationTransactionStatus` carries none), left every one of those
+            // rows amount-less. Collapsed, the row carries the split's real TOTAL again, and the
+            // per-step detail moves behind "Show details" into `MigrationPrepareBalanceSheet`.
+            return [
+                MigrationTransferRow(
+                    id: "split-balance",
+                    index: 0,
+                    amount: totalAmount,
+                    status: .active,
+                    hoursFromNow: 0,
+                    minutesFromNow: 0,
+                    kind: .splitBalance
+                )
+            ]
+        }
+
+        /// Whether the split takes more than one transaction — the only case that earns the
+        /// "Show details" disclosure and its sheet. A single-transaction split (the overwhelmingly
+        /// common case) has nothing to expand: the collapsed row already says all of it.
+        var hasMultiStepSplit: Bool {
+            preparationCount > 1
+        }
+
+        /// The rows the "Prepare Your Balance" sheet renders.
+        ///
+        /// Interim: shaped from the count alone (see `MigrationPreparationStep.interimLadder`)
+        /// until the FFI for `MigrationState::transaction_statuses` lands and can supply each
+        /// step's real state and `depends_on`. The sheet renders whatever it is handed, so only
+        /// this one line changes when the engine data arrives.
+        var preparationSteps: [MigrationPreparationStep] {
+            MigrationPreparationStep.interimLadder(count: preparationCount)
+        }
+
+        /// The split row's caption: the shared ETA phrasing on its own for a single-transaction
+        /// split, suffixed with the step count when there are several ("Ready now · 4 steps").
+        var splitCaption: String {
+            let eta = MigrationETA.caption(
+                minutesFromNow: 0,
+                phrasing: variant == .scheduled ? .inPrefixed : .bare
             )
+            guard hasMultiStepSplit else { return eta }
+            return String(localizable: .migrationPlanSplitBalanceCaption(eta, preparationCount))
         }
 
         /// MOB-1458 (regression fix, F1): what `.confirmTapped`/`.retryTapped` will actually do,
@@ -366,6 +397,13 @@ struct MigrationTransferPlan {
         /// the commit — kept for continuity with `MigrationReviewTransfer`'s identical action.)
         case noteSplitFailed
         case onAppear
+        /// The collapsed split row's "Show details" disclosure — opens the "Prepare Your Balance"
+        /// sheet. Offered only when the split takes more than one transaction
+        /// (`State.hasMultiStepSplit`).
+        case splitDetailsTapped
+        /// "Got it" on the "Prepare Your Balance" sheet, or a swipe-dismiss. Read-only sheet, so
+        /// this only closes it.
+        case prepareBalanceDismissed
         /// MOB-1511 (W2): the round context loaded on appearance — see `State.round`'s doc.
         case roundContextLoaded(round: Int, totalRounds: Int?)
         /// D14: the engine's preparation-transaction estimate for this run — how many
@@ -600,6 +638,14 @@ struct MigrationTransferPlan {
 
             case .preparationCountLoaded(let count):
                 state.preparationCount = max(1, count)
+                return .none
+
+            case .splitDetailsTapped:
+                state.isPrepareBalancePresented = true
+                return .none
+
+            case .prepareBalanceDismissed:
+                state.isPrepareBalancePresented = false
                 return .none
 
             case .roundContextLoaded(let round, let totalRounds):

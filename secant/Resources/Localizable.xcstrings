@@ -10178,6 +10178,40 @@
         }
       }
     },
+    "migrationBanner.sendingInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Zodl open on active phone screen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Mantén Zodl abierto con la pantalla activa"
+          }
+        }
+      }
+    },
+    "migrationBanner.sendingTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer %lld is sending..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "La transferencia %lld se está enviando..."
+          }
+        }
+      }
+    },
     "migrationBanner.updatePlanInfo": {
       "extractionState": "manual",
       "localizations": {
@@ -12014,6 +12048,23 @@
         }
       }
     },
+    "migrationPlan.showDetails": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show details"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ver detalles"
+          }
+        }
+      }
+    },
     "migrationPlan.splitBalance": {
       "extractionState": "manual",
       "localizations": {
@@ -12027,6 +12078,23 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Dividir saldo"
+          }
+        }
+      }
+    },
+    "migrationPlan.splitBalanceCaption": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$lld steps"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%1$@ · %2$lld pasos"
           }
         }
       }
@@ -12112,6 +12180,176 @@
           "stringUnit": {
             "state": "translated",
             "value": "Transferencia %1$lld"
+          }
+        }
+      }
+    },
+    "migrationPrepare.amountBeingSplit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amount Being Split"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Importe a dividir"
+          }
+        }
+      }
+    },
+    "migrationPrepare.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your balance needs to be split into transfer-sized notes across %lld steps before your scheduled transfers begin."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu saldo debe dividirse en notas del tamaño de las transferencias en %lld pasos antes de que comiencen tus transferencias programadas."
+          }
+        }
+      }
+    },
+    "migrationPrepare.stateDone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Hecho"
+          }
+        }
+      }
+    },
+    "migrationPrepare.statePreparing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Preparando"
+          }
+        }
+      }
+    },
+    "migrationPrepare.stateReady": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready to send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Listo para enviar"
+          }
+        }
+      }
+    },
+    "migrationPrepare.stepsTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparation Steps"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Pasos de preparación"
+          }
+        }
+      }
+    },
+    "migrationPrepare.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prepare Your Balance"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prepara tu saldo"
+          }
+        }
+      }
+    },
+    "migrationPrepare.transactionNOfM": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transaction %1$lld of %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Transacción %1$lld de %2$lld"
+          }
+        }
+      }
+    },
+    "migrationPrepare.waitsOnStep": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waits on step %lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Espera al paso %lld"
+          }
+        }
+      }
+    },
+    "migrationPrepare.waitsOnSteps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waits on steps %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Espera a los pasos %@"
           }
         }
       }
@@ -16192,6 +16430,40 @@
       }
     },
     "send.orchardDisclaimerTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This send requires spending Orchard funds"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Este envío requiere gastar fondos de Orchard"
+          }
+        }
+      }
+    },
+    "send.orchardWarning.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Te recomendamos migrar tus fondos primero para evitar exponer el importe de la transacción en la cadena."
+          }
+        }
+      }
+    },
+    "send.orchardWarning.title": {
       "extractionState": "manual",
       "localizations": {
         "en": {
