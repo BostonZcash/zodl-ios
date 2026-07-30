@@ -21,6 +21,24 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
+/// Two DIFFERENT types share this name, and this suite means the app's.
+///
+/// The app's (`Features/SendConfirmation/KeystoneFirmwareVersion.swift`) is the DISPLAYED
+/// numbering: `Int` fields, reachable only through `init(displayMajor:minor:build:)` or
+/// `fromStamp`, which subtracts Keystone's `stampedMajorOffset` — a device whose screen reads
+/// 3.0.1 stamps `[13, 0, 1]`. The SDK's (`Model/MigrationModels.swift`) is the RAW stamp off the
+/// batch-signing envelope: `UInt8` fields, no offset applied.
+///
+/// App source never sees the ambiguity — the same-module type shadows the imported one. A test
+/// module importing both does, hence this alias. It is deliberately NOT a fix for the collision:
+/// comparing a raw triple against a displayed one would silently mis-gate the minimum-firmware
+/// check, so the two types must stay distinct. Renaming one is tracked on the migration board.
+/// Module-scoped (not `private`): a parameterized `@Test` takes this type as an argument, and a
+/// private alias would force the test method itself to be private. Declaring it in the test module
+/// shadows the imported SDK type for the whole module — the same shadowing app source already gets
+/// for free from its own declaration.
+typealias KeystoneFirmwareVersion = zodl_internal.KeystoneFirmwareVersion
+
 // MARK: - Data.keystoneFirmwareStamp() reader
 
 @Suite struct KeystoneFirmwareStampReaderTests {
