@@ -37,13 +37,29 @@ enum MigrationNotification: Equatable, Sendable {
     /// route (the same event that arms `isPendingBackgroundTorPrompt`) — generic copy per design;
     /// the specifics live in the Tor-failure sheet its tap routes to.
     case migrationTorFailure
-    /// PHASE 4 (D9, plan): the eighth id — NEW here, with no #1930 counterpart. #1930 relied on a
-    /// background task to have the wallet already synced when a send window opened; plan D2
-    /// reversed that lane, so the user has to be given a reason to open the app AHEAD of the
-    /// window. This fires at `window - lead` and asks for a sync; `manualTransferReady` still fires
-    /// AT the window. Without it, a cold wallet reaching its window computes due-ness against a
-    /// stale tip and reports "nothing due" (matrix D10).
+    /// PHASE 4 (D9) proposed a two-poke cadence: this fired at `window - lead` asking for a sync,
+    /// `manualTransferReady` fired AT the window asking for a send. RETIRED — nothing schedules it
+    /// any more. See `stepReady` below for what replaced the pair and why.
+    ///
+    /// Kept as a case (rather than deleted) only so `cancelMigrationNotifications` still recognises
+    /// and clears one left pending by an older build. It is dead on every fresh install.
     case timeToSync(number: Int)
+    /// THE notification. Exactly one is ever scheduled, wallet-wide.
+    ///
+    /// The migration has no background lane: nothing happens unless the user opens Zodl. Each open
+    /// is one opportunity to evaluate state and take ONE step — sync, or send, or split, or
+    /// re-plan. Which one it is depends on state at open time, so this poke deliberately promises
+    /// none of them; it just says the migration can move.
+    ///
+    /// One step per open is not a simplification, it is the privacy property: the ~600 s buffer in
+    /// `sendGate` exists so a sync and a send are never adjacent enough to be linked by an
+    /// observer. That holds however long the user was away — waking up nine hours late does not
+    /// earn the right to batch two actions.
+    ///
+    /// So there is exactly one moment worth poking about: when the NEXT step becomes permissible.
+    /// No number, no account: by the time the user opens, state may have moved, and naming a
+    /// transfer or an account in the poke would be a promise the app might not keep.
+    case stepReady
 
     /// Stable, "migration."-prefixed — re-posting the same case replaces the previous pending/
     /// delivered notification (no dedup marker needed elsewhere).
@@ -65,6 +81,9 @@ enum MigrationNotification: Equatable, Sendable {
             return "\(Self.identifierPrefix)torFailure"
         case .timeToSync:
             return "\(Self.identifierPrefix)timeToSync"
+
+        case .stepReady:
+            return "\(Self.identifierPrefix)stepReady"
         }
     }
 
@@ -84,6 +103,8 @@ enum MigrationNotification: Equatable, Sendable {
 
     var title: String {
         switch self {
+        case .stepReady:
+            return String(localizable: .migrationNotificationStepReadyTitle)
         case .transferComplete:
             return String(localizable: .migrationNotificationTransferCompleteTitle)
         case let .transferWaiting(number):
@@ -110,6 +131,8 @@ enum MigrationNotification: Equatable, Sendable {
     /// armed-window interval rounded to hours (caller-computed).
     var body: String {
         switch self {
+        case .stepReady:
+            return String(localizable: .migrationNotificationStepReadyBody)
         case let .transferComplete(number, total, nextInHours, remaining):
             return String(
                 localizable: .migrationNotificationTransferCompleteBody(

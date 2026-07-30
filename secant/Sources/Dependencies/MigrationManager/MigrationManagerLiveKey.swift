@@ -1244,37 +1244,60 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// height-based due-ness at open (`executeNextPendingMigrationTransfer`'s nil return is the
     /// sole authority — matrix D7). An early poke therefore causes no broadcast, only a calm
     /// "not yet".
+    /// Arms THE notification — exactly one, wallet-wide, always.
+    ///
+    /// The migration has no background lane. Nothing happens unless the user opens Zodl, and each
+    /// open is one opportunity to take ONE step: sync, or send, or split, or re-plan. Which one
+    /// depends on state at open time, so the poke names none of them.
+    ///
+    /// One step per open is the PRIVACY property, not a convenience: `sendGate`'s ~600 s buffer
+    /// exists so a sync and a send are never adjacent enough for an observer to link them. That
+    /// holds no matter how long the user was away — waking up nine hours late does not earn the
+    /// right to batch two actions. So after any step there is always exactly one moment worth
+    /// poking about: when the NEXT step becomes permissible.
+    ///
+    /// This replaces the D9 two-poke cadence (a `timeToSync` lead ahead of a `manualTransferReady`
+    /// at the window). That pair assumed the user would open at a time we chose; they do not —
+    /// they are asleep, at work, in a cinema. The lead poke was therefore usually spent on nobody,
+    /// and it doubled the volume of a flow whose whole appeal is that it asks little. It also made
+    /// D13 ("suppress the sync poke when a sync already happened") an unsolvable problem, since a
+    /// scheduled local notification cannot be conditionally withdrawn at delivery time. With one
+    /// poke, armed fresh on every open, there is nothing to suppress.
+    ///
+    /// Wallet-wide rather than per-account on purpose: two accounts migrating at once still means
+    /// one app to open, and a poke that named an account would have to promise which one still
+    /// needs attention by the time it fires. It cannot.
     func armNextWindowNotifications(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 
         let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
         // The next thing the user must be present for: the first row not yet sent.
         guard let next = rows.first(where: { $0.status != MigrationTransferRow.Status.sent }) else {
-            // Nothing pending — retire both pokes rather than leaving a stale one armed.
+            // Nothing left to do — retire the poke rather than leaving a stale one armed.
             await userNotifications.cancelMigrationNotifications()
             return
         }
 
-        let accountKey = Data(resolvedAccountUUID.id).hexEncodedString()
-        let number = next.index + 1
+        // When this transfer's own window opens.
         let windowDate = Date().addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60)
 
-        // The sync poke leads the window so a cold wallet has time to reach the tip before
-        // due-ness is computed against it (matrix D10). A window already inside the lead gets no
-        // sync poke at all — posting one for a moment already past would fire immediately and read
-        // as noise.
-        let syncDate = windowDate.addingTimeInterval(-Constants.timeToSyncLead)
-        if syncDate.timeIntervalSinceNow > 0 {
-            await userNotifications.scheduleMigrationNotification(
-                MigrationNotification.timeToSync(number: number),
-                syncDate,
-                accountKey
-            )
+        // ...but the next PERMISSIBLE moment is the later of that and the privacy buffer's expiry.
+        // A sync that just completed pushes it out: sending on its heels is exactly the adjacency
+        // the buffer exists to prevent, so poking at the window would invite an action the gate
+        // would refuse.
+        var nextStepDate = windowDate
+        if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > nextStepDate {
+            nextStepDate = gateUntil
         }
+
+        // Cancel first, then arm: this is what makes "exactly one, never more" true rather than
+        // merely intended. Re-posting the same identifier would replace its own kind, but not the
+        // retired `timeToSync` an older build may have left pending.
+        await userNotifications.cancelMigrationNotifications()
         await userNotifications.scheduleMigrationNotification(
-            MigrationNotification.manualTransferReady(number: number),
-            windowDate,
-            accountKey
+            MigrationNotification.stepReady,
+            nextStepDate,
+            Data(resolvedAccountUUID.id).hexEncodedString()
         )
     }
 

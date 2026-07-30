@@ -11436,6 +11436,40 @@
         }
       }
     },
+    "migrationNotification.stepReadyBody": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Zodl to take the next step."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Abre Zodl para dar el siguiente paso."
+          }
+        }
+      }
+    },
+    "migrationNotification.stepReadyTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your migration can continue"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu migración puede continuar"
+          }
+        }
+      }
+    },
     "migrationNotification.timeToSyncBody": {
       "extractionState": "manual",
       "localizations": {
