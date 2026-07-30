@@ -22,6 +22,9 @@ struct MigrationNotificationsView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT
+                // and on each pinned footer child — never on the column that holds the scroller.
+                // See `MigrationEntryView` for the full note.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(localizable: .migrationNotificationsTitle)
@@ -35,23 +38,26 @@ struct MigrationNotificationsView: View {
 
                         bulletRows
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
                 Spacer(minLength: 16)
 
                 footerNote
+                    .screenHorizontalPadding()
                     .padding(.bottom, 16)
 
                 skipButton
+                    .screenHorizontalPadding()
                     .padding(.bottom, 12)
 
                 ZashiButton(String(localizable: .migrationAllow)) {
                     store.send(.allowTapped)
                 }
+                .screenHorizontalPadding()
                 .padding(.bottom, 24)
             }
-            .screenHorizontalPadding()
             .zashiBack()
         }
         .applyScreenBackground()

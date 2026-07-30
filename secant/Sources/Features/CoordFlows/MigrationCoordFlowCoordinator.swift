@@ -1007,8 +1007,7 @@ extension MigrationCoordFlow {
             totalAmount: (summary.transferred ?? Zatoshi.zero) + newScheduleAmount,
             sentCount: summary.transfersSent,
             totalCount: summary.transfersTotal,
-            durationHours: summary.estimatedDurationHours ?? 0,
-            dustAmount: summary.dust
+            durationHours: summary.estimatedDurationHours ?? 0
         )
     }
 

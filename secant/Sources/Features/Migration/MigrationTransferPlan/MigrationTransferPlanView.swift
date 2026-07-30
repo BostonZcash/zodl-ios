@@ -65,6 +65,10 @@ struct MigrationTransferPlanView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT
+                // and on each pinned footer child — never on the column that holds the scroller,
+                // or the indicator is inset by the same 24pt and draws ON TOP of the ZEC amounts
+                // in the timeline. See `MigrationEntryView` for the full note.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(title)
@@ -91,6 +95,7 @@ struct MigrationTransferPlanView: View {
                             splitRow: store.splitRow
                         )
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
@@ -107,6 +112,7 @@ struct MigrationTransferPlanView: View {
                                 )
                             )
                     ) { }
+                    .screenHorizontalPadding()
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                     .disabled(store.isConfirming)
@@ -114,11 +120,11 @@ struct MigrationTransferPlanView: View {
                     ZashiButton(String(localizable: .generalConfirm)) {
                         store.send(.confirmTapped)
                     }
+                    .screenHorizontalPadding()
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                 }
             }
-            .screenHorizontalPadding()
             .zashiBack()
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent

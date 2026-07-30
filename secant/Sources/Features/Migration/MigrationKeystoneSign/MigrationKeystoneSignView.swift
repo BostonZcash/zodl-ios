@@ -35,6 +35,11 @@ struct MigrationKeystoneSignView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT
+                // and on each pinned footer child — never on the column that holds the scroller, or
+                // the indicator is inset by the same 24pt and draws ON TOP of the account card's
+                // edge. See `MigrationEntryView` for the full note. The description below keeps its
+                // OWN extra `screenHorizontalPadding()`, so it stays inset 48pt as before.
                 ScrollView {
                     VStack(spacing: 0) {
                         accountCard
@@ -64,6 +69,7 @@ struct MigrationKeystoneSignView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 4)
                     }
+                    .screenHorizontalPadding()
                 }
 
                 Spacer()
@@ -74,6 +80,7 @@ struct MigrationKeystoneSignView: View {
                 ) {
                     store.send(.rejectTapped)
                 }
+                .screenHorizontalPadding()
                 .padding(.bottom, 8)
 
                 ZashiButton(
@@ -81,6 +88,7 @@ struct MigrationKeystoneSignView: View {
                 ) {
                     store.send(.getSignatureTapped)
                 }
+                .screenHorizontalPadding()
                 .padding(.bottom, 24)
             }
             .onAppear {
@@ -89,7 +97,6 @@ struct MigrationKeystoneSignView: View {
             .frame(maxWidth: .infinity)
             .padding(.top, 20)
         }
-        .screenHorizontalPadding()
         .applyScreenBackground()
         .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)

@@ -46,6 +46,10 @@ struct MigrationReviewTransferView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+                // SCROLLER SHAPE: full-bleed ScrollView, `screenHorizontalPadding()` on its CONTENT
+                // and on each pinned footer child — never on the column that holds the scroller, or
+                // the indicator is inset by the same 24pt and draws ON TOP of the detail rows'
+                // values. See `MigrationEntryView` for the full note.
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if isIconHeaderVisible {
@@ -70,6 +74,7 @@ struct MigrationReviewTransferView: View {
 
                         detailRows
                     }
+                    .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
@@ -87,6 +92,7 @@ struct MigrationReviewTransferView: View {
                                 )
                             )
                     ) { }
+                    .screenHorizontalPadding()
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                     .disabled(store.isConfirming)
@@ -94,11 +100,11 @@ struct MigrationReviewTransferView: View {
                     ZashiButton(String(localizable: .generalConfirm)) {
                         store.send(.confirmTapped)
                     }
+                    .screenHorizontalPadding()
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                 }
             }
-            .screenHorizontalPadding()
             .applyPresentationModifier(store: store)
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent

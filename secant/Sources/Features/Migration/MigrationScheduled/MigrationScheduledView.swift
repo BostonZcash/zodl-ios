@@ -6,9 +6,9 @@
 //  by the coordinator at push time (MOB-1458 W-E — see `MigrationScheduledStore.swift`'s header).
 //  The `doneTapped` delegate is emitted and consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
-//  MOB-1458 (W-E, Figma 3480:7631): the "Dust balance remaining" card below the summary rows,
-//  shown whenever `store.hasDust` — deliberately milder, informational copy than `MigrationComplete`'s
-//  own dust card (which owns the lock/migrate-anyway *decision*); the two are NOT unified.
+//  The "Dust balance remaining" card MOB-1458 (W-E, Figma 3480:7631) put below the summary rows is
+//  GONE — the component is no longer valid here. `MigrationComplete`'s own dust card (the
+//  lock/migrate-anyway *decision*, Phase 6) was never unified with this one and is unaffected.
 //
 
 import ComposableArchitecture
@@ -44,11 +44,6 @@ struct MigrationScheduledView: View {
 
                 summaryCard
                     .padding(.top, 24)
-
-                if store.hasDust {
-                    dustCard
-                        .padding(.top, 16)
-                }
 
                 Spacer()
 
@@ -97,40 +92,11 @@ struct MigrationScheduledView: View {
             )
         }
     }
-
-    // MARK: - Dust card (MOB-1458 W-E, Figma 3480:7631)
-
-    @ViewBuilder private var dustCard: some View {
-        ZashiInfoCallout(
-            style: .filled,
-            title: String(localizable: .migrationScheduledDustTitle),
-            body: String(localizable: .migrationScheduledDustBody),
-            boldBodyPrefix: "\(store.dustAmount.decimalString()) ZEC "
-        )
-    }
 }
 
 // MARK: - Previews
 
 #Preview {
-    NavigationView {
-        MigrationScheduledView(
-            store: StoreOf<MigrationScheduled>(
-                initialState: MigrationScheduled.State(
-                    totalAmount: Zatoshi(1_245_800_000),
-                    sentCount: 0,
-                    totalCount: 5,
-                    durationHours: 24,
-                    dustAmount: Zatoshi(31_000)
-                )
-            ) {
-                MigrationScheduled()
-            }
-        )
-    }
-}
-
-#Preview("No dust") {
     NavigationView {
         MigrationScheduledView(
             store: StoreOf<MigrationScheduled>(

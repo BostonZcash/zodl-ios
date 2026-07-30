@@ -12388,40 +12388,6 @@
         }
       }
     },
-    "migrationScheduled.dustBody": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "stayed in Orchard — below the transfer threshold. It will migrate in a future batch."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "permaneció en Orchard — por debajo del umbral de transferencia. Se migrará en un lote futuro."
-          }
-        }
-      }
-    },
-    "migrationScheduled.dustTitle": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dust balance remaining"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Saldo de polvo restante"
-          }
-        }
-      }
-    },
     "migrationScheduled.rowDuration": {
       "extractionState": "manual",
       "localizations": {
