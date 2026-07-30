@@ -52,12 +52,13 @@ struct MigrationCoordFlowView: View {
                     MigrationTransferPlanView(store: store)
                 }
             }
-            .zashiSheet(
-                isPresented: Binding(
-                    get: { store.isTorSheetPresented },
-                    set: { store.send(.torSheetPresentationChanged($0)) }
-                )
-            ) {
+            // `$store.<flag>` rather than a hand-rolled `Binding(get:set:)`: SwiftUI invokes a
+            // hand-rolled binding's `get` during ITS update cycle, outside the
+            // `WithPerceptionTracking` scope this body established, which trips "Perceptible state
+            // was accessed but is not being tracked" on EVERY screen this coordinator hosts — not
+            // just the one owning the sheet. The side effects survive: see
+            // `.binding(\.isTorSheetPresented)` in the coordinator.
+            .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
             // PHASE 7: the migration Keystone minimum-firmware gate. Mirrors
@@ -69,33 +70,33 @@ struct MigrationCoordFlowView: View {
             // reports the right required version. Presented directly here rather than scoped from a
             // `SendConfirmation` store (there is none in this flow), mirroring the Tor sheet's
             // coordinator-owned-sheet idiom above.
-            .zashiSheet(
-                isPresented: Binding(
-                    get: { store.isKeystoneFirmwareGatePresented },
-                    set: { store.send(.keystoneFirmwareGatePresentationChanged($0)) }
-                )
-            ) {
-                VStack(spacing: 0) {
-                    Asset.Assets.Illustrations.failure3.image
-                        .resizable()
-                        .frame(width: 148, height: 148)
-                        .padding(.top, 24)
+            .zashiSheet(isPresented: $store.isKeystoneFirmwareGatePresented) {
+                // The content builder is evaluated at PRESENTATION time, outside this body's
+                // tracking scope, and it reads store state (`keystoneFirmwareGateBody`) — so it
+                // needs a tracking scope of its own.
+                WithPerceptionTracking {
+                    VStack(spacing: 0) {
+                        Asset.Assets.Illustrations.failure3.image
+                            .resizable()
+                            .frame(width: 148, height: 148)
+                            .padding(.top, 24)
 
-                    Text(String(localizable: .migrationKeystoneFirmwareTitle))
-                        .zFont(.semiBold, size: 28, style: Design.Text.primary)
-                        .padding(.top, 16)
+                        Text(String(localizable: .migrationKeystoneFirmwareTitle))
+                            .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                            .padding(.top, 16)
 
-                    Text(keystoneFirmwareGateBody)
-                        .zFont(size: 14, style: Design.Text.primary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(1.5)
-                        .screenHorizontalPadding()
+                        Text(keystoneFirmwareGateBody)
+                            .zFont(size: 14, style: Design.Text.primary)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(1.5)
+                            .screenHorizontalPadding()
 
-                    ZashiButton(String(localizable: .migrationKeystoneFirmwareClose)) {
-                        store.send(.keystoneFirmwareGatePresentationChanged(false))
+                        ZashiButton(String(localizable: .migrationKeystoneFirmwareClose)) {
+                            store.send(.keystoneFirmwareGatePresentationChanged(false))
+                        }
+                        .padding(.top, 32)
+                        .padding(.bottom, Design.Spacing.sheetBottomSpace)
                     }
-                    .padding(.top, 32)
-                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 }
             }
         }

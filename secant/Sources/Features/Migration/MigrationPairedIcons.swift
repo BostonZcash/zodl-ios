@@ -8,7 +8,7 @@
 //  (R2) removed that screen (the split phase folded into Migration Progress), so the live consumers —
 //  MigrationEntry and MigrationReviewTransfer — both render the default `.coinsSwap` badge, and the
 //  spinner/success variants now survive only in this file's previews. MOB-1468 parameterizes the
-//  leading brandmark by account vendor: `.zcash` (default) keeps the ZODL brandmark every existing
+//  leading brandmark by account vendor: `.zcash` (default) keeps the Zodl brandmark every existing
 //  call site already renders; `.keystone` swaps in the Keystone brandmark `SignWithKeystoneView`'s
 //  account card uses — no new assets.
 //

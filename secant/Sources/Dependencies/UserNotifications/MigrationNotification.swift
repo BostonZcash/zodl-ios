@@ -130,7 +130,7 @@ enum MigrationNotification: Equatable, Sendable {
         case .migrationBatchComplete:
             return String(localizable: .migrationNotificationBatchCompleteBody)
         case .migrationTorFailure:
-            // Deliberately the same generic "open ZODL" line the complete notification uses —
+            // Deliberately the same generic "open Zodl" line the complete notification uses —
             // per design, the notification names only the fact; the sheet carries the details.
             return String(localizable: .migrationNotificationMigrationCompleteBody)
         case .timeToSync:

@@ -178,7 +178,22 @@ struct MigrationCoordFlow {
         init() { }
     }
 
-    enum Action {
+    enum Action: BindableAction {
+        /// Exists so the two coordinator-owned sheets can be presented with `$store.<flag>` rather
+        /// than a hand-rolled `Binding(get:set:)`.
+        ///
+        /// A hand-rolled binding's `get` closure is invoked by SwiftUI during ITS update cycle —
+        /// outside the `WithPerceptionTracking` scope the view body established — so reading store
+        /// state in it trips "Perceptible state was accessed but is not being tracked" on every
+        /// screen the coordinator hosts, not just the one owning the sheet. `$store.<flag>` reads
+        /// through `@Perception.Bindable`, which is tracked. Same shape as
+        /// `AddKeystoneHWWalletCoordFlow`.
+        ///
+        /// The write still runs its side effects: `BindingReducer()` applies the value, then
+        /// `coordinatorReduce()` observes `.binding(\.isTorSheetPresented)` /
+        /// `.binding(\.isKeystoneFirmwareGatePresented)` and forwards to the existing presentation
+        /// actions, which stay in place for their programmatic senders.
+        case binding(BindingAction<State>)
         case entry(MigrationEntry.Action)
         /// Terminal: the flow is done (or was backed out of) — `Root` tears it down.
         case flowFinished
@@ -258,6 +273,10 @@ struct MigrationCoordFlow {
     init() { }
 
     var body: some Reducer<State, Action> {
+        // FIRST, deliberately: it applies the binding's write, so the side-effect arms in
+        // `coordinatorReduce()` observe state that is already up to date.
+        BindingReducer()
+
         coordinatorReduce()
 
         Scope(state: \.entryState, action: \.entry) {

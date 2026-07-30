@@ -45,7 +45,7 @@ struct MigrationBulletRow: View {
         MigrationBulletRow(
             icon: Asset.Assets.Icons.clockCheck.image,
             title: "Transfers send at their scheduled windows",
-            caption: "ZODL wakes up and sends each transfer at its scheduled time — no action needed."
+            caption: "Zodl wakes up and sends each transfer at its scheduled time — no action needed."
         )
 
         MigrationBulletRow(
@@ -57,7 +57,7 @@ struct MigrationBulletRow: View {
         MigrationBulletRow(
             icon: Asset.Assets.Icons.shieldTick.image,
             title: "Sends on a fixed schedule, not your activity",
-            caption: "Transfers go out at set network-wide times, so they're not linked to when you open ZODL."
+            caption: "Transfers go out at set network-wide times, so they're not linked to when you open Zodl."
         )
     }
     .screenHorizontalPadding()

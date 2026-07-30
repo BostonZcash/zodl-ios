@@ -53,6 +53,20 @@ extension MigrationCoordFlow {
                     await send(.pushHydratedPathState(pathState))
                 }
 
+                // MARK: - Sheet presentation bindings
+
+            case .binding(\.isTorSheetPresented):
+                // `BindingReducer()` already wrote the flag; forward to the existing action for its
+                // side effects (which are real — see its own case). Sending rather than duplicating
+                // keeps ONE implementation for both the swipe-dismiss and the programmatic path.
+                return .send(.torSheetPresentationChanged(state.isTorSheetPresented))
+
+            case .binding(\.isKeystoneFirmwareGatePresented):
+                return .send(.keystoneFirmwareGatePresentationChanged(state.isKeystoneFirmwareGatePresented))
+
+            case .binding:
+                return .none
+
             case .flowFinished:
                 return .none
 
@@ -203,7 +217,12 @@ extension MigrationCoordFlow {
                 )
                 return .none
 
-            case .path(.element(id: _, action: .reviewTransfer(.delegate(.closed)))):
+            // The flow's terminal closes. `.scheduled(.delegate(.done))` is the commit's own exit —
+            // it was MISSING (the screen emitted the delegate, nothing consumed it, so Done was a
+            // dead button that stranded the user on the screen). #1930 groups these three; Phase 5
+            // adds `.recovery(.delegate(.close))` to the same list.
+            case .path(.element(id: _, action: .reviewTransfer(.delegate(.closed)))),
+                 .path(.element(id: _, action: .scheduled(.delegate(.done)))):
                 return .send(.flowFinished)
 
                 // MARK: - PHASE 7: Keystone ceremony — the two entries (#1930 :685-1158)
