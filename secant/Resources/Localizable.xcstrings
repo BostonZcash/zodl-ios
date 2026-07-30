@@ -16908,6 +16908,74 @@
         }
       }
     },
+    "serverSetup.alert.migrationPrivacy.chooseAnother": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose another"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Elegir otro"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your migration sends transfers through this provider. Syncing with it too lets one server see both sides."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu migración envía transferencias a través de este proveedor. Sincronizar también con él permite que un solo servidor vea ambos lados."
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reduces your migration's privacy"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Reduce la privacidad de tu migración"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.useAnyway": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use it anyway"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Usarlo de todos modos"
+          }
+        }
+      }
+    },
     "serverSetup.allServers": {
       "extractionState": "manual",
       "localizations": {
