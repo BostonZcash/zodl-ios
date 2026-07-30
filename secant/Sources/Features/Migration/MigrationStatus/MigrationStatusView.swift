@@ -64,12 +64,15 @@ struct MigrationStatusView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
-                            splitRow: store.splitRow,
+                            splitRows: store.splitRows,
                             skeletonPendingCaptions: store.isRescheduling,
                             captionStyle: { row in
                                 // MOB-1511 (W4): the Split Balance row's "Done" renders green,
                                 // matching its check badge; every other caption keeps the default.
-                                row.kind == .splitBalance
+                                // D14: gated on `.sent` for the same reason the caption is — an
+                                // unfinished split shows an ETA, and an ETA in success-green would
+                                // read as completed.
+                                row.kind == .splitBalance && row.status == .sent
                                     ? Design.Utility.SuccessGreen._600 as Colorable
                                     : Design.Text.tertiary
                             }
@@ -147,7 +150,11 @@ struct MigrationStatusView: View {
         // an event the user tracks by time. MOB-1513 (A2): keyed off `kind` now, not `index == 0` —
         // an ordinary sent Transfer 1 must keep its own real "Sent Nh ago"/"Sent N min ago" caption
         // below, not this one.
-        if row.kind == .splitBalance {
+        // D14: only a FINISHED split reads "Done". Before D14 there was one synthesized split row
+        // and it was always `.sent`, so the unconditional return was correct; now the rows are real
+        // (`MigrationDerivations.preparationRows`) and a multi-layer split is genuinely part-way
+        // through — an unfinished one must fall through to the ordinary status captions below.
+        if row.kind == .splitBalance && row.status == .sent {
             return String(localizable: .migrationStatusDone)
         }
         switch row.status {

@@ -116,6 +116,9 @@ extension SDKSynchronizerClient: DependencyKey {
             estimateMigrationRunCount: { accountUUID in
                 try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.count
             },
+            estimateMigrationPreparationCount: { accountUUID in
+                try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.first?.preparationTransactions
+            },
             migrationTransactionStatuses: { accountUUID in
                 try await synchronizer.migrationTransactionStatuses(accountUUID: accountUUID)
             },

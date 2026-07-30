@@ -145,6 +145,8 @@ extension MigrationManagerClient: DependencyKey {
             isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
             migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
+            migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
+            migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -1429,6 +1431,30 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return (round, totalRounds)
     }
 
+    /// D14: how many "Split Balance" rows the PRE-commit plan shows — the engine's estimated
+    /// preparation-transaction count for the NEXT run. `1` whenever the estimate is unavailable, so
+    /// an estimate failure degrades to exactly the single row every plan showed before D14 rather
+    /// than to no split row at all. Clamped to at least 1 for the same reason: a run that reaches
+    /// the plan screen always splits at least once.
+    func migrationPreparationCount(accountUUID: AccountUUID?) async -> Int {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return 1 }
+        let estimate = (try? await sdkSynchronizer.estimateMigrationPreparationCount(resolvedAccountUUID)) ?? nil
+        return max(1, estimate ?? 1)
+    }
+
+    /// D14: the POST-commit "Split Balance" rows, from the run's REAL `.preparation`-kind statuses —
+    /// so a multi-transaction split shows each transaction with its own state and ETA instead of one
+    /// summary row. `nil` when the statuses carry no preparation at all (no run stored yet, or a
+    /// read failure), which tells the caller to fall back to its synthesized single row.
+    func migrationPreparationRows(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+        return MigrationDerivations.preparationRows(
+            statuses: statuses,
+            currentTip: sdkSynchronizer.latestState().latestBlockHeight
+        )
+    }
+
     /// R8-T3 (#24): per-account lookup against `reconcile()`'s ONE hoisted `getAccountsBalances()`
     /// read — mirrors `orchardBalanceToMigrate`'s own derivation without re-issuing the full-wallet
     /// read itself.
@@ -2282,6 +2308,95 @@ enum MigrationDerivations {
                 status: rowStatus,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow
+            )
+        }
+    }
+
+    /// D14: the run's note-PREPARATION rows, derived from the live per-transaction statuses the
+    /// engine reports — the post-commit counterpart to the pre-commit count that
+    /// `MigrationRunEstimate.Run.preparationTransactions` supplies.
+    ///
+    /// Until D14 the UI synthesized exactly ONE "Split Balance" row regardless of how many
+    /// preparation transactions a run actually had. A large balance genuinely splits across several
+    /// transactions and several dependency LAYERS (a split of a split), and Android has always
+    /// shown them separately. One row understated both the work and the elapsed time.
+    ///
+    /// Ordering is `(layer, index)` — the engine's own dependency order, which is the order they
+    /// broadcast in, so the rows read top-to-bottom the way they happen.
+    ///
+    /// Every row's `amount` is `nil`, and that is a CONTRACT not a gap: `MigrationTransactionStatus`
+    /// carries no amount by design ("status rows carry no amount" — its own doc). Splitting the
+    /// run's total across N rows would be invention; the timeline already renders an amount-less
+    /// row correctly (trailing column collapses, row rhythm intact).
+    ///
+    /// Returns `nil` — not `[]` — when the statuses carry no preparation at all, so a caller can
+    /// tell "no preparation data available, fall back to the synthesized row" apart from "this run
+    /// genuinely has no preparation step".
+    static func preparationRows(
+        statuses: [MigrationTransactionStatus],
+        currentTip: BlockHeight
+    ) -> [MigrationTransferRow]? {
+        let preparations = statuses
+            .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
+                guard case let MigrationTransactionStatus.Kind.preparation(layer, index) = status.kind else { return nil }
+                return (layer, index, status)
+            }
+            .sorted { ($0.layer, $0.index) < ($1.layer, $1.index) }
+
+        guard !preparations.isEmpty else { return nil }
+
+        return preparations.enumerated().map { position, preparation in
+            let status = preparation.status
+
+            // MINED is the only genuinely finished state for a preparation: its whole purpose is to
+            // create spendable notes for the transfers that depend on it, and a merely-broadcast
+            // split has not created them yet.
+            if case MigrationTransactionStatus.State.mined = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: position,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.sent,
+                    hoursFromNow: 0,
+                    kind: MigrationTransferRow.Kind.splitBalance
+                )
+            }
+
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, currentTip: currentTip)
+
+            if case MigrationTransactionStatus.State.broadcast = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: position,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.active,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow,
+                    isBroadcasting: true,
+                    kind: MigrationTransferRow.Kind.splitBalance
+                )
+            }
+
+            if status.blockedOn == MigrationTransactionStatus.Blocker.expired {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: position,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.expired,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow,
+                    kind: MigrationTransferRow.Kind.splitBalance
+                )
+            }
+
+            return MigrationTransferRow(
+                id: String(status.id),
+                index: position,
+                amount: nil,
+                status: MigrationTransferRow.Status.active,
+                hoursFromNow: minutesFromNow / 60,
+                minutesFromNow: minutesFromNow,
+                kind: MigrationTransferRow.Kind.splitBalance
             )
         }
     }

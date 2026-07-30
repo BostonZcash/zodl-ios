@@ -40,10 +40,18 @@ struct MigrationTransferTimeline: View {
 
     let rows: IdentifiedArrayOf<MigrationTransferRow>
     let caption: (MigrationTransferRow) -> String
-    /// MOB-1513 (A2): the synthesized "Split Balance" row a caller opts into ahead of `rows` — see
-    /// this file's header doc. `nil` renders no split row at all (e.g. before any rows have
-    /// loaded).
-    var splitRow: MigrationTransferRow?
+    /// D14: the "Split Balance" rows a caller opts into ahead of `rows` — see this file's header
+    /// doc. Empty renders none at all (e.g. before any rows have loaded).
+    ///
+    /// This was a single optional row until D14. A run's note-split is not necessarily ONE
+    /// transaction: the engine reports `preparationTransactions` across `preparationLayers`, and a
+    /// large balance genuinely splits in several steps (Android has always shown these separately —
+    /// "Split balance 1..4"). One row for an N-transaction split under-reported the work the user
+    /// is approving and the time it takes.
+    ///
+    /// Titles follow the count, so the overwhelmingly common single-split case is untouched: one
+    /// row still reads "Split Balance", several read "Split Balance 1", "Split Balance 2", …
+    var splitRows: IdentifiedArrayOf<MigrationTransferRow> = []
     var skeletonPendingCaptions = false
     /// MOB-1511 (W4): per-row caption tone — `nil` keeps the historical tertiary everywhere;
     /// `MigrationStatusView` uses it to render the completed Split Balance row's "Done" in green.
@@ -51,8 +59,10 @@ struct MigrationTransferTimeline: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let splitRow {
-                timelineRow(splitRow, isLast: rows.isEmpty)
+            // Only the LAST split row can be the list's last row, and only when no transfers
+            // follow it — every earlier split still needs its trailing connector.
+            ForEach(Array(splitRows.enumerated()), id: \.element.id) { index, row in
+                timelineRow(row, isLast: rows.isEmpty && index == splitRows.count - 1)
             }
 
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -105,13 +115,16 @@ struct MigrationTransferTimeline: View {
         }
     }
 
-    /// MOB-1513 (A2): the split row always reads "Split Balance"; every other row is a genuine
-    /// transfer, always "Transfer `index + 1`" — no more index-0 exception. See this file's header
-    /// doc.
+    /// A split row reads "Split Balance" when it is the only one and "Split Balance N" when the run
+    /// has several (D14 — see `splitRows`); every other row is a genuine transfer, always
+    /// "Transfer `index + 1`" — no index-0 exception. See this file's header doc.
     private func rowTitle(for row: MigrationTransferRow) -> String {
-        row.kind == .splitBalance
-            ? String(localizable: .migrationPlanSplitBalance)
-            : String(localizable: .migrationPlanTransferN(row.index + 1))
+        guard row.kind == .splitBalance else {
+            return String(localizable: .migrationPlanTransferN(row.index + 1))
+        }
+        return splitRows.count > 1
+            ? String(localizable: .migrationPlanSplitBalanceN(row.index + 1))
+            : String(localizable: .migrationPlanSplitBalance)
     }
 
     @ViewBuilder private func captionOrSkeleton(for row: MigrationTransferRow) -> some View {
@@ -153,7 +166,7 @@ struct MigrationTransferTimeline: View {
 
     /// MOB-1487: whether any TRANSFER row has already sent — gates the active transfer row's
     /// trailing connector segment (see `connectorColor(for:)`). MOB-1513 (A2): deliberately scoped
-    /// to `rows` only, excluding `splitRow` — a transfer's own connector cares whether ANOTHER
+    /// to `rows` only, excluding `splitRows` — a transfer's own connector cares whether ANOTHER
     /// TRANSFER has sent, not whether the split has (unchanged visual behavior from before this
     /// task; the split's own trailing segment, rendered via the same `timelineRow`, still reads its
     /// OWN `status` regardless).
@@ -227,14 +240,42 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
         MigrationTransferTimeline(
             rows: .previewRows,
             caption: { row in "hoursFromNow: \(row.hoursFromNow)" },
-            splitRow: MigrationTransferRow(
-                id: "split-balance",
-                index: -1,
-                amount: Zatoshi(1_245_800_000),
-                status: .active,
-                hoursFromNow: 0,
-                minutesFromNow: 0,
-                kind: .splitBalance
+            splitRows: [
+                MigrationTransferRow(
+                    id: "split-balance",
+                    index: 0,
+                    amount: Zatoshi(1_245_800_000),
+                    status: .active,
+                    hoursFromNow: 0,
+                    minutesFromNow: 0,
+                    kind: .splitBalance
+                )
+            ]
+        )
+        .padding()
+    }
+}
+
+/// D14: a multi-transaction split — titles become "Split Balance 1..N" and no per-row amount is
+/// shown, because a preparation transaction genuinely has none to show (see
+/// `MigrationTransactionStatus`: "status rows carry no amount").
+#Preview("With several split rows") {
+    ScrollView {
+        MigrationTransferTimeline(
+            rows: .previewRows,
+            caption: { row in row.kind == .splitBalance ? "Ready now" : "hoursFromNow: \(row.hoursFromNow)" },
+            splitRows: IdentifiedArrayOf(
+                uniqueElements: (0..<4).map { index in
+                    MigrationTransferRow(
+                        id: "split-balance-\(index)",
+                        index: index,
+                        amount: nil,
+                        status: index == 0 ? .sent : .active,
+                        hoursFromNow: 0,
+                        minutesFromNow: 0,
+                        kind: .splitBalance
+                    )
+                }
             )
         )
         .padding()

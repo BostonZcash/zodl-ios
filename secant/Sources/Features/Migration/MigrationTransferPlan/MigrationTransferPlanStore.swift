@@ -242,8 +242,14 @@ struct MigrationTransferPlan {
         /// `apply`/every existing exhaustive `TestStore` assertion needs no parallel bookkeeping —
         /// `.scheduled`, `.manual`, and `.recreated` all populate `rows` through the same `apply`,
         /// so all three get the same treatment with no variant branch here.
-        var splitRow: MigrationTransferRow? {
-            guard !rows.isEmpty else { return nil }
+        /// D14: how many note-preparation transactions the engine estimates this run takes — the
+        /// number of "Split Balance" rows below. Hydrated by the coordinator from
+        /// `MigrationManagerClient.migrationPreparationCount`; `1` until then and whenever the
+        /// estimate is unavailable, which is exactly the single row every plan showed before D14.
+        var preparationCount = 1
+
+        var splitRows: IdentifiedArrayOf<MigrationTransferRow> {
+            guard !rows.isEmpty else { return [] }
             // MOB-1513: this screen's `rows` are always freshly proposed/injected schedule rows
             // (`apply(_:to:)` below), so every row's `amount` is genuinely known in practice — but
             // the sum is honest either way: `nil` (unknown total) if ANY row's amount isn't, rather
@@ -251,14 +257,23 @@ struct MigrationTransferPlan {
             let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
                 ? nil
                 : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
-            return MigrationTransferRow(
-                id: "split-balance",
-                index: -1,
-                amount: totalAmount,
-                status: .active,
-                hoursFromNow: 0,
-                minutesFromNow: 0,
-                kind: .splitBalance
+            // D14: the total belongs on the split row ONLY when there is one of them. Across several
+            // it would read as "this much, N times" — and the engine gives no per-preparation
+            // amounts to divide it into honestly (`MigrationTransactionStatus` carries none by
+            // design). Several rows therefore show count and timing, not amounts.
+            let count = max(1, preparationCount)
+            return IdentifiedArrayOf(
+                uniqueElements: (0..<count).map { index in
+                    MigrationTransferRow(
+                        id: count == 1 ? "split-balance" : "split-balance-\(index)",
+                        index: index,
+                        amount: count == 1 ? totalAmount : nil,
+                        status: .active,
+                        hoursFromNow: 0,
+                        minutesFromNow: 0,
+                        kind: .splitBalance
+                    )
+                }
             )
         }
 
@@ -353,6 +368,9 @@ struct MigrationTransferPlan {
         case onAppear
         /// MOB-1511 (W2): the round context loaded on appearance — see `State.round`'s doc.
         case roundContextLoaded(round: Int, totalRounds: Int?)
+        /// D14: the engine's preparation-transaction estimate for this run — how many
+        /// "Split Balance" rows the plan shows. Loaded alongside the round context.
+        case preparationCountLoaded(Int)
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
         /// proposal when `failureReason == .propose`.
@@ -552,6 +570,9 @@ struct MigrationTransferPlan {
                 let roundContextEffect = Effect<MigrationTransferPlan.Action>.run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
                     let context = await migrationManager.migrationRoundContext(accountUUID)
                     await send(.roundContextLoaded(round: context.round, totalRounds: context.totalRounds))
+                    // D14: same appearance path, same reasoning — derived from live engine state,
+                    // independent of where the rows came from.
+                    await send(.preparationCountLoaded(await migrationManager.migrationPreparationCount(accountUUID)))
                 }
                 if let injectedSchedule = state.injectedSchedule {
                     apply(injectedSchedule, to: &state)
@@ -576,6 +597,10 @@ struct MigrationTransferPlan {
                 // the entry propose is the bounded, quiet retry (`proposeWithRetryEffect`); an
                 // explicit Retry stays the single-attempt `proposeEffect`.
                 return .concatenate(roundContextEffect, proposeWithRetryEffect(accountUUID: state.selectedWalletAccount?.id))
+
+            case .preparationCountLoaded(let count):
+                state.preparationCount = max(1, count)
+                return .none
 
             case .roundContextLoaded(let round, let totalRounds):
                 // MOB-1511 (W2): shown only for a genuinely multi-round migration — a later round

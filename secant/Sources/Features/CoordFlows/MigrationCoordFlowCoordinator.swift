@@ -1029,6 +1029,8 @@ extension MigrationCoordFlow {
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
+        // D14: the run's REAL split rows; `nil` leaves the store on its synthesized single row.
+        state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
     }
 
@@ -1045,6 +1047,8 @@ extension MigrationCoordFlow {
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
+        // D14: as in `statusResumeState` — real preparation rows when the engine has them.
+        state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
     }
 

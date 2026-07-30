@@ -92,7 +92,7 @@ struct MigrationTransferPlanView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
-                            splitRow: store.splitRow
+                            splitRows: store.splitRows
                         )
                     }
                     .screenHorizontalPadding()

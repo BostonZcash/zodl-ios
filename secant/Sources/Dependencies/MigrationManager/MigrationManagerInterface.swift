@@ -68,6 +68,16 @@ struct MigrationManagerClient: Sendable {
     // count + 1) and the engine's estimated TOTAL rounds, `nil` when the SDK's estimate has zero
     // runs (see `SDKSynchronizerClient.estimateMigrationRunCount`'s doc).
     var migrationRoundContext: @Sendable (_ accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) = { _ in (1, nil) }
+    // D14: how many "Split Balance" rows the PRE-commit plan should show — the engine's estimated
+    // preparation-transaction count for the next run (`SDKSynchronizerClient
+    // .estimateMigrationPreparationCount`). Falls back to `1` whenever the estimate is unavailable,
+    // which is exactly what every plan showed before D14.
+    var migrationPreparationCount: @Sendable (_ accountUUID: AccountUUID?) async -> Int = { _ in 1 }
+    // D14: the POST-commit "Split Balance" rows, derived from the run's real `.preparation`-kind
+    // transaction statuses (`MigrationDerivations.preparationRows`) so each one carries its own
+    // state and ETA. `nil` when no preparation statuses are readable — the caller then falls back
+    // to the single synthesized row, preserving pre-D14 behavior.
+    var migrationPreparationRows: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationTransferRow]? = { _ in nil }
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.

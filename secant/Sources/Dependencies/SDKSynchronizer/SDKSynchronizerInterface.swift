@@ -70,6 +70,20 @@ struct SDKSynchronizerClient: Sendable {
     /// The engine's estimate of how many migration runs ("rounds") migrating the account's whole
     /// Orchard balance will take. `nil` when the estimate is unavailable or has no runs.
     let estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int?
+    /// D14: how many note-PREPARATION transactions the account's NEXT run will take, from the same
+    /// `estimateMigrationRuns` call `estimateMigrationRunCount` reads — the pre-commit counterpart
+    /// to the post-commit `.preparation`-kind rows in `migrationTransactionStatuses`.
+    ///
+    /// Read off the FIRST run: the plan the user is about to confirm is always the next one, and
+    /// later runs' preparation counts are re-estimated when their own turn comes. `nil` when the
+    /// estimate is unavailable or has no runs — callers fall back to showing one split row, which
+    /// is what every plan showed before D14.
+    ///
+    /// Deliberately a sibling member rather than a widening of `estimateMigrationRunCount`'s return
+    /// type: the round-count call site (`MigrationManagerImpl.migrationRoundContext`) and this one
+    /// want different fields of the same estimate, and two narrow members keep both call sites and
+    /// every `SDKSynchronizerTest` shape honest without a tuple no one destructures whole.
+    let estimateMigrationPreparationCount: @Sendable (AccountUUID) async throws -> Int?
 
     // PHASE 3 — the scheduler. Commit, the broadcast loop, and the reads the loop reconciles from.
 

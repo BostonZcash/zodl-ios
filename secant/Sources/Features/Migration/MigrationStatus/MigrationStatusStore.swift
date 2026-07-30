@@ -104,22 +104,40 @@ struct MigrationStatus {
         /// without going through `.statusLoaded` — and so it doesn't force every
         /// `.statusLoaded`/`.rescheduleCompleted` call site (and every existing exhaustive
         /// `TestStore` assertion) to separately track a parallel stored field.
-        var splitRow: MigrationTransferRow? {
-            guard !rows.isEmpty else { return nil }
+        /// D14: the run's REAL note-preparation rows, from its `.preparation`-kind transaction
+        /// statuses (`MigrationManagerClient.migrationPreparationRows`). Non-nil once the
+        /// coordinator/`.statusLoaded` path has read them; `nil` means "no preparation statuses
+        /// readable", and `splitRows` falls back to the single synthesized row below — exactly what
+        /// this screen showed before D14.
+        ///
+        /// Stored, not computed, because unlike `rows` these do not derive from anything already in
+        /// state: they are a separate engine read.
+        var preparationRows: [MigrationTransferRow]?
+
+        var splitRows: IdentifiedArrayOf<MigrationTransferRow> {
+            // Real rows win whenever we have them: each carries its own state (a split part-way
+            // through a multi-layer preparation is genuinely half-done) and its own ETA.
+            if let preparationRows, !preparationRows.isEmpty {
+                return IdentifiedArrayOf(uniqueElements: preparationRows)
+            }
+
+            guard !rows.isEmpty else { return [] }
             // MOB-1513: `rows` can now be a W1-fallback derivation (no committed schedule — every
             // row's `amount` is `nil` on that path) — the sum stays honest: `nil` (unknown total)
             // if ANY row's amount is, rather than silently treating an unknown row as zero.
             let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
                 ? nil
                 : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
-            return MigrationTransferRow(
-                id: "split-balance",
-                index: -1,
-                amount: totalAmount,
-                status: .sent,
-                hoursFromNow: 0,
-                kind: .splitBalance
-            )
+            return [
+                MigrationTransferRow(
+                    id: "split-balance",
+                    index: 0,
+                    amount: totalAmount,
+                    status: .sent,
+                    hoursFromNow: 0,
+                    kind: .splitBalance
+                )
+            ]
         }
 
         init(

@@ -11997,6 +11997,23 @@
         }
       }
     },
+    "migrationPlan.splitBalanceN": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split Balance %1$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dividir saldo %1$lld"
+          }
+        }
+      }
+    },
     "migrationPlan.staleRefreshed": {
       "extractionState": "manual",
       "localizations": {
