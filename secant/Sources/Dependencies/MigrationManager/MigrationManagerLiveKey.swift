@@ -1413,7 +1413,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         var steps: [MigrationAdvanceStep?] = []
         for accountUUID in accountUUIDs {
-            steps.append(try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))
+            let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            // THE key driver, logged verbatim. Everything this lane does follows from the engine's
+            // answer here, and until 07-31 it was the one thing never written down: a run sitting at
+            // 0-of-12 looked identical whether the engine was saying `prove`, `waiting`, or
+            // `broadcast`, so "nothing is happening" could not be told from "the engine is asking
+            // for something nobody does".
+            LoggerProxy.event("\(Self.logTag) advance step: \(step.map { String(describing: $0) } ?? "none (no run)")")
+            steps.append(step)
         }
         let visit = MigrationVisit.decide(advanceSteps: steps)
         if visit == .send {
@@ -1449,9 +1456,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 LoggerProxy.event("\(Self.logTag) prove sweep failed for one account: \(error.toZcashError())")
             }
         }
-        if proved > 0 {
-            LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
-        }
+        // Logged even at ZERO. A sweep that proves nothing, over and over, while the engine keeps
+        // asking to prove IS the signal — and staying quiet about it made a stalled run look
+        // identical to a healthy idle one.
+        LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
         return proved
     }
 
