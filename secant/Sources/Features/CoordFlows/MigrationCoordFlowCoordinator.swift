@@ -755,13 +755,43 @@ extension MigrationCoordFlow {
                 // engine for a fresh window, then re-render the plan as the RESCHEDULED variant
                 // (`requiresSigning == false` — it is already signed; its confirm is an
                 // acknowledgment, handled above).
-                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
-                    guard let accountUUID else { return }
+                //
+                // FIELD-CAUGHT 2026-07-31: this used to send `.sendNowCompleted`, which refreshes
+                // rows and NOTHING else — while `rescheduleTapped` had already set
+                // `isRescheduling = true` to drive the button's spinner. `rescheduleCompleted` is
+                // the only action that clears it, and nobody sent it: its own doc said so ("the
+                // coordinator doesn't send this yet"), and the captured `id` was discarded with
+                // `_ = id`, which is what an unfinished intention looks like. The spinner therefore
+                // turned forever, and with "Send now" failing the user could neither send NOR
+                // reschedule — a dead end reachable from an ordinary failed broadcast.
+                //
+                // Every exit from this effect now lands on `rescheduleCompleted`, including the
+                // no-account branch: a spinner with no terminating path is worse than a wrong
+                // answer, because the user cannot tell it from work in progress.
+                let currentRows: [MigrationTransferRow]
+                if case .status(let statusState) = state.path[id: id] {
+                    currentRows = Array(statusState.rows)
+                } else {
+                    currentRows = []
+                }
+                return .run { [accountUUID = state.selectedWalletAccount?.id, currentRows] send in
+                    guard let accountUUID else {
+                        await send(
+                            .path(.element(id: id, action: .status(
+                                .rescheduleCompleted(rows: currentRows, totalDurationHours: nil)
+                            )))
+                        )
+                        return
+                    }
                     _ = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID)
                     await migrationManager.reconcile()
                     let rows = await migrationManager.migrationTransfers(accountUUID)
-                    await send(.sendNowCompleted(rows: rows))
-                    _ = id
+                    let summary = await migrationManager.migrationSummary(accountUUID)
+                    await send(
+                        .path(.element(id: id, action: .status(
+                            .rescheduleCompleted(rows: rows, totalDurationHours: summary.estimatedDurationHours)
+                        )))
+                    )
                 }
 
             case .path(.element(id: _, action: .status(.delegate(.done)))):
