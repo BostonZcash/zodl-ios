@@ -81,6 +81,14 @@ struct MigrationManagerClient: Sendable {
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.
+    /// What this app-open is FOR — see `MigrationVisit`. Ask BEFORE starting sync; `.send` means
+    /// this session belongs to a broadcast and must not initiate one.
+    ///
+    /// Degrades to `.sync` if the reads fail. Fail-open is the right direction here: a migration
+    /// read error must not be able to brick ordinary wallet syncing, and the SDK's own reactive
+    /// gate is still behind this as a second line of defence.
+    var visitKind: @Sendable () async -> MigrationVisit = { .sync }
+
     /// THE PROVE SWEEP, run over every migrating account. Call on SYNC visits, once sync reaches
     /// the tip — never on a broadcast visit.
     ///

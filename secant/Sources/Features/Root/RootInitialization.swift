@@ -292,7 +292,16 @@ extension Root {
                 }
                 return .run { [state] send in
                     do {
-                        try await sdkSynchronizer.start(true)
+                        // ZIP 318 session separation, decided BEFORE the wire is touched: if any
+                        // account has a proven transfer due, this open is a BROADCAST session and
+                        // must not initiate sync. Stopping an in-flight sync (the reactive gate
+                        // below) is too late for the privacy property — the correlation exists the
+                        // moment sync connects. See `MigrationVisit`.
+                        if await migrationManager.visitKind() == .send {
+                            LoggerProxy.event("migration: skipping sync start — broadcast session")
+                        } else {
+                            try await sdkSynchronizer.start(true)
+                        }
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
                         }
@@ -548,7 +557,14 @@ extension Root {
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
-                            try await sdkSynchronizer.start(false)
+                            // Same session separation as the foreground path above — a launch that
+                            // lands in a due broadcast window must not sync either. See
+                            // `MigrationVisit`.
+                            if await migrationManager.visitKind() == .send {
+                                LoggerProxy.event("migration: skipping sync start on launch — broadcast session")
+                            } else {
+                                try await sdkSynchronizer.start(false)
+                            }
 
                             var selectedAccount: WalletAccount?
                             

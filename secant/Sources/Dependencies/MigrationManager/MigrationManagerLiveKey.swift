@@ -147,6 +147,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
+            visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
@@ -1300,6 +1301,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
             nextStepDate,
             Data(resolvedAccountUUID.id).hexEncodedString()
         )
+    }
+
+    /// See `MigrationManagerClient.visitKind`. Reads every candidate account's advance step and
+    /// lets `MigrationVisit.decide` make the wallet-wide call.
+    ///
+    /// Reads run concurrently and a per-account failure contributes `nil` (no vote) rather than
+    /// aborting: one account's engine error must not decide the whole wallet's session type.
+    func visitKind() async -> MigrationVisit {
+        guard isIronwoodActivated() else { return .sync }
+
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else { return .sync }
+
+        var steps: [MigrationAdvanceStep?] = []
+        for accountUUID in accountUUIDs {
+            steps.append(try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))
+        }
+        let visit = MigrationVisit.decide(advanceSteps: steps)
+        if visit == .send {
+            LoggerProxy.event("migration: broadcast due — this session will NOT sync")
+        }
+        return visit
     }
 
     /// THE PROVE SWEEP over every candidate account — see `MigrationManagerClient.runProveSweep`.
