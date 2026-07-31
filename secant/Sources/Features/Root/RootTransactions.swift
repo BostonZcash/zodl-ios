@@ -174,8 +174,18 @@ extension Root {
                 // every 30 seconds until nothing is pending — a cheap SQLite read, no network.
                 // Managed on every completed fetch, including ones whose payload equals the current
                 // state, so an unchanged list keeps the poller alive.
+                //
+                // Deliberately restricted to `.zcash` transactions, whose pending state is
+                // `minedHeight == nil` and therefore resolvable by exactly the local re-read this
+                // poller performs. For every other type `isPending` reports the SWAP status
+                // (`TransactionState.isPending`), which is owned by the swap provider's metadata and
+                // refreshed by `.autoUpdateCandidatesSwapDetails` in `RootSwaps` — re-reading the
+                // SDK database can never resolve it. Including those here would leave a swap parked
+                // in `.pending`/`.incomplete` (an abandoned or stalled swap never has to resolve)
+                // polling every 30 seconds for the rest of the session, with no state it could
+                // possibly settle.
                 let pendingTransactionsPoller: Effect<Root.Action>
-                if identifiedArray.contains(where: \.isPending) {
+                if identifiedArray.contains(where: { $0.type == .zcash && $0.isPending }) {
                     pendingTransactionsPoller = .run { send in
                         while !Task.isCancelled {
                             try await mainQueue.sleep(for: .seconds(30))

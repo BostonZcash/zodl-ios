@@ -196,6 +196,109 @@ import ComposableArchitecture
 
     // MARK: - (3) Reconciliation poller: refetch while pending, stop when resolved
 
+    /// A swap parked in `.pending` must NOT keep the poller alive. `TransactionState.isPending`
+    /// reports the SWAP status for every non-`.zcash` type, and that status is owned by the swap
+    /// provider's metadata (refreshed by `.autoUpdateCandidatesSwapDetails` in `RootSwaps`), not by
+    /// the SDK database this poller re-reads. An abandoned or stalled swap never has to resolve, so
+    /// arming the poller on one would poll every 30 seconds for the rest of the session against
+    /// state it cannot possibly settle.
+    @Test func swapPendingAloneDoesNotArmThePoller() async {
+        let account = Self.walletAccount(idByte: 83)
+        let scheduler = DispatchQueue.test
+        let fetchCalls = LockIsolated<Int>(0)
+
+        // A swap-to-ZEC row: type != .zcash, and `isPending` true purely from its swap status.
+        let pendingSwap = TransactionState(
+            depositAddress: "deposit-address",
+            timestamp: 1,
+            zecAmount: "1",
+            swapStatus: .pending
+        )
+        #expect(pendingSwap.isPending, "fixture must be pending, else the test proves nothing")
+        #expect(pendingSwap.type != .zcash)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$transactions.withLock { $0 = [] }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.mainQueue = scheduler.eraseToAnyScheduler()
+            $0.sdkSynchronizer.getAllTransactions = { _ in
+                fetchCalls.withValue { $0 += 1 }
+                return IdentifiedArrayOf(uniqueElements: [pendingSwap])
+            }
+        }
+
+        store.send(.fetchedTransactions(account.id, [pendingSwap]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Far past several poll intervals: a poller armed on the swap would have ticked by now.
+        for _ in 0..<5 {
+            await scheduler.advance(by: .seconds(30))
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        #expect(fetchCalls.value == 0, "a swap-only pending list must not arm the local-database poller")
+    }
+
+    /// Cancelling the poller must stop it dead: no fetch may be dispatched from a sleep that was
+    /// already in flight when the cancellation landed. Reviewed concern -- if the scheduler's
+    /// `sleep` did not observe cancellation, a tick could still fire up to one full interval after
+    /// the poller was torn down (here, after backgrounding).
+    @Test func cancellingThePollerPreventsAnyLaterTick() async {
+        let account = Self.walletAccount(idByte: 84)
+        let scheduler = DispatchQueue.test
+        let fetchCalls = LockIsolated<Int>(0)
+        let pendingTransaction = tx(id: "pending-tx", status: .sending)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$transactions.withLock { $0 = [] }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.mainQueue = scheduler.eraseToAnyScheduler()
+            $0.sdkSynchronizer.getAllTransactions = { _ in
+                fetchCalls.withValue { $0 += 1 }
+                return IdentifiedArrayOf(uniqueElements: [pendingTransaction])
+            }
+        }
+
+        // Arm the poller and let it tick once, so the effect is provably running.
+        store.send(.fetchedTransactions(account.id, [pendingTransaction]))
+        for _ in 0..<40 where fetchCalls.value < 1 {
+            await scheduler.advance(by: .seconds(1))
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(fetchCalls.value >= 1, "poller never armed, so cancellation proves nothing")
+
+        // Cancel mid-interval: advance part of the way, then tear the poller down.
+        await scheduler.advance(by: .seconds(10))
+        store.send(.initialization(.appDelegate(.didEnterBackground)))
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        let fetchesAtCancellation = fetchCalls.value
+
+        // Push well past the interval the in-flight sleep would have completed in.
+        for _ in 0..<5 {
+            await scheduler.advance(by: .seconds(30))
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        #expect(
+            fetchCalls.value == fetchesAtCancellation,
+            "a sleep in flight at cancellation still dispatched a fetch afterwards"
+        )
+    }
+
     /// While any transaction is pending, a lost push signal must not be able to strand the list --
     /// the poller re-reads the database every 30 seconds. Once nothing is pending it must stop:
     /// polling is a pending-state backstop, not a steady-state loop.
