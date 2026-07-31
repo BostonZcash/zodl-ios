@@ -515,7 +515,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         let state = rawState
 
-        return MigrationDerivations.reentryRoute(
+        let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
             hasInvalid: hasInvalid,
@@ -525,6 +525,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
             progress: progress
         )
+
+        // Which screen a banner tap opens, and the inputs that decided it. Added 07-31 after a
+        // tester saw the Resume screen (Reschedule / Send now) and then, across a restart with no
+        // action in between, the Progress screen (Got it) — with no way for either of us to tell
+        // whether the STATE had changed or the ROUTING was wrong. Deciding which is not the
+        // tester's job; the app should say. `state` and `hasOverdue` are the pair that flips this
+        // route, so they are named rather than left to be inferred.
+        LoggerProxy.event(
+            "\(Self.logTag) route: \(route) — state \(state), hasOverdue \(hasOverdue)"
+            + ", hasInvalid \(hasInvalid), activated \(isIronwoodActivated())"
+        )
+
+        return route
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {
