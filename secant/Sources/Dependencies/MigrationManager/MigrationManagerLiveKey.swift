@@ -150,6 +150,8 @@ extension MigrationManagerClient: DependencyKey {
             visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
             runBroadcastSession: { await impl.runBroadcastSession() },
+            runInvalidationSweep: { await impl.runInvalidationSweep() },
+            migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -389,13 +391,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
         async let balanceTask = orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
+        async let clockTask = chainClock(accountUUID: resolvedAccountUUID)
 
         let progress = await progressTask
         let hasOverdue = await hasOverdueTask
         let balance = await balanceTask
+        let clock = await clockTask
 
         let state = rawState
-        let rows = await bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
+        let rows = await bannerTransferRows(
+            resolvedAccountUUID: resolvedAccountUUID,
+            state: state,
+            hasOverdue: hasOverdue,
+            progress: progress,
+            clock: clock
+        )
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
         let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
 
@@ -404,7 +414,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             state: state,
             hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(for: resolvedAccountUUID),
-            isNextTransferDue: isNextTransferDue(progress: progress),
+            isNextTransferDue: isNextTransferDue(progress: progress, clock: clock),
             orchardBalance: balance,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
@@ -464,11 +474,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
         async let progressTask = migrationProgress(accountUUID: accountUUID)
         async let hasInvalidTask = hasInvalidMigrationTransfers(accountUUID: accountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: accountUUID)
+        async let clockTask = chainClock(accountUUID: accountUUID)
 
         let rawState = await rawStateTask ?? MigrationState.notStarted
         let progress = await progressTask
         let hasInvalid = await hasInvalidTask
         let hasOverdue = await hasOverdueTask
+        let clock = await clockTask
 
         let state = rawState
 
@@ -478,7 +490,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(for: accountUUID),
-            isNextTransferDue: isNextTransferDue(progress: progress),
+            isNextTransferDue: isNextTransferDue(progress: progress, clock: clock),
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
             progress: progress
         )
@@ -557,7 +569,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
             if let statusRows = MigrationDerivations.statusOnlyTransferRows(
                 statuses: statuses,
-                currentTip: sdkSynchronizer.latestState().latestBlockHeight
+                clock: await chainClock(accountUUID: resolvedAccountUUID)
             ) {
                 return statusRows
             }
@@ -579,7 +591,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
             now: Date(),
-            currentTip: sdkSynchronizer.latestState().latestBlockHeight,
+            clock: await chainClock(accountUUID: resolvedAccountUUID),
             statuses: statuses
         )
     }
@@ -617,19 +629,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// this read before (it still doesn't derive its OWN rows from live statuses — see
     /// `transferRows`'s call below, `statuses:` omitted), so prefetching it unconditionally at the
     /// call site would add a wasted SDK round-trip to the common (schedule-present) case.
+    ///
+    /// P3: takes the caller's already-read `clock` rather than reading its own — same one-read-each
+    /// discipline as `progress`/`hasOverdue` above. `bannerVariant` needs the clock for its own
+    /// due-ness check anyway, so a second read here would be a wasted pair of round-trips per pass.
     private func bannerTransferRows(
         resolvedAccountUUID: AccountUUID,
         state: MigrationState,
         hasOverdue: Bool,
-        progress: MigrationProgress?
+        progress: MigrationProgress?,
+        clock: MigrationChainClock
     ) async -> [MigrationTransferRow] {
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
             let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
-            if let statusRows = MigrationDerivations.statusOnlyTransferRows(
-                statuses: statuses,
-                currentTip: sdkSynchronizer.latestState().latestBlockHeight
-            ) {
+            if let statusRows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, clock: clock) {
                 return statusRows
             }
             guard let progress else { return [] }
@@ -641,7 +655,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
             now: Date(),
-            currentTip: sdkSynchronizer.latestState().latestBlockHeight
+            clock: clock
         )
     }
 
@@ -1282,27 +1296,46 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// Wallet-wide rather than per-account on purpose: two accounts migrating at once still means
     /// one app to open, and a poke that named an account would have to promise which one still
     /// needs attention by the time it fires. It cannot.
+    ///
+    /// P3: the poke is armed at the earliest moment the run has ANY step to take, which is not
+    /// always the next transfer's window. The engine schedules its own sync/proving wake-ups
+    /// (`migrationSyncWakeups`), and those come FIRST by construction: proving is what makes a
+    /// broadcast window usable at all. Poking only at the broadcast window meant the user could
+    /// arrive exactly on time and find the transfer unproven — `executeNextPendingMigrationTransfer`
+    /// answers `.awaitingProof`, nothing is sent, and the run waits for whenever they happen to open
+    /// the app next. Heights become dates through the measured block rate (`MigrationChainClock`),
+    /// not a 75 s assumption, and are re-drawn on every call: the engine re-jitters its wake-ups per
+    /// read, so this must never cache a schedule.
     func armNextWindowNotifications(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 
+        let clock = await chainClock(accountUUID: resolvedAccountUUID)
+        let now = Date()
+
+        // A SYNC step: the earliest height at which the engine wants the wallet woken and proved.
+        // No privacy buffer applies — a sync visit is the thing the buffer separates a SEND from.
+        let proveDate = (try? await sdkSynchronizer.migrationSyncWakeups(resolvedAccountUUID))?
+            .map { clock.date(atHeight: $0.height, now: now) }
+            .min()
+
+        // A SEND step: the first row not yet sent...
         let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
-        // The next thing the user must be present for: the first row not yet sent.
-        guard let next = rows.first(where: { $0.status != MigrationTransferRow.Status.sent }) else {
+        var sendDate: Date?
+        if let next = rows.first(where: { $0.status != MigrationTransferRow.Status.sent }) {
+            // ...at the later of its own window and the privacy buffer's expiry. A sync that just
+            // completed pushes it out: sending on its heels is exactly the adjacency the buffer
+            // exists to prevent, so poking at the window would invite an action the gate refuses.
+            var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60)
+            if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > date {
+                date = gateUntil
+            }
+            sendDate = date
+        }
+
+        guard let nextStepDate = [proveDate, sendDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire the poke rather than leaving a stale one armed.
             await userNotifications.cancelMigrationNotifications()
             return
-        }
-
-        // When this transfer's own window opens.
-        let windowDate = Date().addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60)
-
-        // ...but the next PERMISSIBLE moment is the later of that and the privacy buffer's expiry.
-        // A sync that just completed pushes it out: sending on its heels is exactly the adjacency
-        // the buffer exists to prevent, so poking at the window would invite an action the gate
-        // would refuse.
-        var nextStepDate = windowDate
-        if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > nextStepDate {
-            nextStepDate = gateUntil
         }
 
         // Cancel first, then arm: this is what makes "exactly one, never more" true rather than
@@ -1372,6 +1405,46 @@ final class MigrationManagerImpl: @unchecked Sendable {
             LoggerProxy.event("migration prove sweep: proved \(proved) transaction(s)")
         }
         return proved
+    }
+
+    /// THE INVALIDATION SWEEP over every candidate account — see
+    /// `MigrationManagerClient.runInvalidationSweep`.
+    ///
+    /// Runs beside `runProveSweep` at the sync-complete edge, and BEFORE it: proving a transfer
+    /// whose funding note is already gone is work spent on a transaction that must be rebuilt, not
+    /// broadcast. Local-database only, so unlike proving it is cheap.
+    ///
+    /// Outside `serialExecutor` for the same reason the prove sweep is: it is an engine-side probe
+    /// that mutates no app-side migration storage, and the app-level `reconcile()` running behind it
+    /// is what actually needs the mutex. Per-account failures degrade to "nothing invalidated"
+    /// rather than aborting the sweep.
+    func runInvalidationSweep() async -> Bool {
+        guard isIronwoodActivated() else { return false }
+
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+
+        var didInvalidate = false
+        for accountUUID in accountUUIDs {
+            do {
+                didInvalidate = try await sdkSynchronizer.reconcileMigrationInvalidations(accountUUID) || didInvalidate
+            } catch {
+                LoggerProxy.event("migration invalidation sweep failed for one account: \(error.toZcashError())")
+            }
+        }
+        if didInvalidate {
+            LoggerProxy.event("migration invalidation sweep: a transfer's funding note was spent elsewhere")
+        }
+        return didInvalidate
+    }
+
+    /// See `MigrationManagerClient.migrationChainClock` — the public face of `chainClock`, with the
+    /// selected-account fallback every `nil`-accepting member here uses.
+    func migrationChainClock(accountUUID: AccountUUID?) async -> MigrationChainClock {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationChainClock.unknown }
+        return await chainClock(accountUUID: resolvedAccountUUID)
     }
 
     /// THE BROADCAST SESSION — see `MigrationManagerClient.runBroadcastSession`.
@@ -1649,7 +1722,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         return MigrationDerivations.preparationRows(
             statuses: statuses,
-            currentTip: sdkSynchronizer.latestState().latestBlockHeight
+            clock: await chainClock(accountUUID: resolvedAccountUUID)
         )
     }
 
@@ -1824,15 +1897,39 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
+    /// P3: THE chain-time frame for this account — the SDK's ESTIMATED tip and its MEASURED block
+    /// rate, read together so the two halves can never disagree at a call site. See
+    /// `MigrationChainClock` for why neither half is the scanned tip or a hardcoded 75 s.
+    ///
+    /// Each read degrades independently: the tip falls back to the scanned tip (the pre-P3
+    /// behaviour, and still a real answer), the rate to Zcash's target spacing. A wallet that has
+    /// never scanned a block throws `migrationChainTipUnavailable`, which lands on a scanned tip of
+    /// `0` — `MigrationChainClock.unknown`'s "Ready now" flooring, not a fabricated distance.
+    private func chainClock(accountUUID: AccountUUID) async -> MigrationChainClock {
+        async let tipTask = try? await sdkSynchronizer.estimatedMigrationChainTip(accountUUID)
+        async let rateTask = try? await sdkSynchronizer.estimatedMigrationSecondsPerBlock(accountUUID)
+
+        let tip = await tipTask ?? sdkSynchronizer.latestState().latestBlockHeight
+        let secondsPerBlock = await rateTask ?? MigrationChainClock.targetSecondsPerBlock
+
+        return MigrationChainClock(tip: tip, secondsPerBlock: secondsPerBlock)
+    }
+
     /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
     /// R8-T3 (#23): takes an already-fetched `progress` instead of reading it itself — `bannerVariant`/
     /// `reentryRoute` both already have one in hand by the time they need this.
-    private func isNextTransferDue(progress: MigrationProgress?) -> Bool {
+    ///
+    /// P3: measured against the caller's `clock` — the ESTIMATED tip — rather than the scanned one.
+    /// This is a DUE-NESS decision, and every due-ness decision the SDK makes for the app already
+    /// passes `useEstimatedTip: true`; on a session that deliberately did not sync, the scanned tip
+    /// is stale by construction and would report "not due yet" for a transfer the engine is about
+    /// to broadcast.
+    private func isNextTransferDue(progress: MigrationProgress?, clock: MigrationChainClock) -> Bool {
         guard let readyAtHeight = progress?.nextTransferReadyAtHeight else {
             return false
         }
 
-        return readyAtHeight <= sdkSynchronizer.latestState().latestBlockHeight
+        return readyAtHeight <= clock.tip
     }
 
     /// MOB-1483: "Ironwood (NU6.3) activated on the current network." `tip > 0` is the fail-safe
@@ -2232,7 +2329,7 @@ enum MigrationDerivations {
         state: MigrationState,
         hasOverdueMigrationTransfers: Bool,
         now: Date,
-        currentTip: BlockHeight,
+        clock: MigrationChainClock,
         statuses: [MigrationTransactionStatus] = []
     ) -> [MigrationTransferRow] {
         struct RowSeed {
@@ -2318,7 +2415,7 @@ enum MigrationDerivations {
             // broadcasting/sent-pending styling, regardless of position (see this function's own
             // doc, precedence item 2).
             if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.broadcast = liveStatus.state {
-                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, currentTip: currentTip)
+                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, clock: clock)
                 return MigrationTransferRow(
                     id: seed.transferId,
                     index: index,
@@ -2333,7 +2430,7 @@ enum MigrationDerivations {
             // MOB-1513 (T-A): a live-expired row is unambiguous per-row ground truth (see this
             // function's own doc, precedence item 3).
             if let liveStatus = seed.liveStatus, liveStatus.blockedOn == MigrationTransactionStatus.Blocker.expired {
-                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, currentTip: currentTip)
+                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, clock: clock)
                 return MigrationTransferRow(
                     id: seed.transferId,
                     index: index,
@@ -2355,7 +2452,7 @@ enum MigrationDerivations {
             // preference to the persisted schedule's `nextExecutableAfterHeight` (see this
             // function's own doc, precedence item 4).
             let scheduledHeight = seed.liveStatus?.scheduledHeight ?? seed.nextExecutableAfterHeight
-            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: scheduledHeight, currentTip: currentTip)
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: scheduledHeight, clock: clock)
 
             return MigrationTransferRow(
                 id: seed.transferId,
@@ -2486,7 +2583,7 @@ enum MigrationDerivations {
     /// function that mirrors those conventions by construction instead.
     static func statusOnlyTransferRows(
         statuses: [MigrationTransactionStatus],
-        currentTip: BlockHeight
+        clock: MigrationChainClock
     ) -> [MigrationTransferRow]? {
         let transferStatuses = statuses
             .compactMap { status -> (crossing: Int, status: MigrationTransactionStatus)? in
@@ -2518,7 +2615,7 @@ enum MigrationDerivations {
                 )
             }
 
-            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, currentTip: currentTip)
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
 
             if case MigrationTransactionStatus.State.broadcast = status.state {
                 return MigrationTransferRow(
@@ -2583,7 +2680,7 @@ enum MigrationDerivations {
     /// genuinely has no preparation step".
     static func preparationRows(
         statuses: [MigrationTransactionStatus],
-        currentTip: BlockHeight
+        clock: MigrationChainClock
     ) -> [MigrationTransferRow]? {
         let preparations = statuses
             .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
@@ -2611,7 +2708,7 @@ enum MigrationDerivations {
                 )
             }
 
-            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, currentTip: currentTip)
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
 
             if case MigrationTransactionStatus.State.broadcast = status.state {
                 return MigrationTransferRow(

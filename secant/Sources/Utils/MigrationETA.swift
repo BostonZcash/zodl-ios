@@ -12,10 +12,14 @@
 //  CHECKPOINT at-or-below the height and returns `nil` for any height beyond the newest shipped
 //  checkpoint (all FUTURE migration heights). A `nil` timestamp floored to `0` hours, which the
 //  caption rendered as the hardcoded "~10 mins" fallback (`migrationPlanEtaFirst`) on every row. A
-//  block delta at a fixed 75 s/block is precise regardless of checkpoint staleness — the same
-//  correction `MigrationCoordFlowCoordinator.liveStalledHoursAgo` already applied for the BACKWARD
+//  block delta is precise regardless of checkpoint staleness — the same correction
+//  `MigrationCoordFlowCoordinator.liveStalledHoursAgo` already applied for the BACKWARD
 //  ("N hours ago") direction. Android parity: `MigrationDurationFormat.kt` does the same
 //  `(toHeight − fromHeight) × BLOCK_INTERVAL`.
+//
+//  P3: the frame that delta is measured in moved into `MigrationChainClock` — the SDK's estimated
+//  tip and MEASURED block rate, rather than the scanned tip and a fixed 75 s. See that type's
+//  header for why each half matters.
 //
 
 import Foundation
@@ -29,21 +33,16 @@ enum MigrationETA: Equatable, Sendable {
     case minutes(Int)
     case hours(Int)
 
-    /// Zcash target block time in seconds (Android parity: `MigrationDurationFormat.kt`'s block
-    /// interval). The one place this constant lives for every forward-ETA surface.
-    static let secondsPerBlock = 75.0
-
-    /// Minutes-from-now for a transfer's scheduled execution height, via a block delta against the
-    /// live chain tip: `(scheduledHeight − currentTip) × 75 s ÷ 60`, floored, never negative.
+    /// Minutes-from-now for a transfer's scheduled execution height, via a block delta measured in
+    /// `clock`'s frame: `(scheduledHeight − tip) × secondsPerBlock ÷ 60`, floored, never negative.
     ///
-    /// An unknown tip (`currentTip <= 0`, before the first server round-trip) or a height at/below
-    /// the tip yields `0` — the same fail-safe-sentinel idiom `isIronwoodActivated()` /
-    /// `liveStalledHoursAgo` use: an unknown tip is not a low one, so it must not be subtracted from.
-    static func minutesFromNow(scheduledHeight: BlockHeight, currentTip: BlockHeight) -> Int {
-        guard currentTip > 0, scheduledHeight > currentTip else { return 0 }
-
-        let seconds = Double(scheduledHeight - currentTip) * secondsPerBlock
-        return max(0, Int((seconds / 60).rounded(.down)))
+    /// P3: the tip and the rate now travel together in `MigrationChainClock` — see that type for
+    /// why both are read from the SDK's measured estimators rather than the scanned tip and a
+    /// hardcoded 75 s. An unknown tip or a height at/below it still yields `0`, the same
+    /// fail-safe-sentinel idiom `isIronwoodActivated()` / `liveStalledHoursAgo` use: an unknown tip
+    /// is not a low one, so it must not be subtracted from.
+    static func minutesFromNow(scheduledHeight: BlockHeight, clock: MigrationChainClock) -> Int {
+        max(0, Int((clock.secondsUntil(height: scheduledHeight) / 60).rounded(.down)))
     }
 
     /// Buckets a minutes-from-now value into the display granularity: `<= 0` -> Ready now, `1..<60`

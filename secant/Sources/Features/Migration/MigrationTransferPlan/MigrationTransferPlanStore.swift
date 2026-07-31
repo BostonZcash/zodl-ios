@@ -174,6 +174,10 @@ struct MigrationTransferPlan {
         /// The schedule currently backing `rows` (either `injectedSchedule` or a freshly proposed
         /// one) — what `confirmTapped` signs and stores. `nil` until a proposal succeeds.
         var schedule: MigrationSchedule?
+        /// P3: the chain-time frame every row's ETA is measured in — the SDK's estimated tip and
+        /// MEASURED block rate (see `MigrationChainClock`). Hydrated by `.onAppear`; until it
+        /// arrives, rows are laid out against the target-spacing default, then re-applied.
+        var chainClock = MigrationChainClock.unknown
         /// `false` for the rescheduled variant only (MOB-1466): its transfers are already signed at
         /// the original plan commit, so `confirmTapped` is a plain acknowledgment — `false` skips
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
@@ -408,6 +412,7 @@ struct MigrationTransferPlan {
         case roundContextLoaded(round: Int, totalRounds: Int?)
         /// D14: the engine's preparation-transaction estimate for this run — how many
         /// "Split Balance" rows the plan shows. Loaded alongside the round context.
+        case chainClockLoaded(MigrationChainClock)
         case preparationCountLoaded(Int)
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
@@ -611,6 +616,9 @@ struct MigrationTransferPlan {
                     // D14: same appearance path, same reasoning — derived from live engine state,
                     // independent of where the rows came from.
                     await send(.preparationCountLoaded(await migrationManager.migrationPreparationCount(accountUUID)))
+                    // P3: the ETA frame. Loaded on the same appearance path for the same reason —
+                    // it depends on live wallet state, not on where the rows came from.
+                    await send(.chainClockLoaded(await migrationManager.migrationChainClock(accountUUID)))
                 }
                 if let injectedSchedule = state.injectedSchedule {
                     apply(injectedSchedule, to: &state)
@@ -635,6 +643,16 @@ struct MigrationTransferPlan {
                 // the entry propose is the bounded, quiet retry (`proposeWithRetryEffect`); an
                 // explicit Retry stays the single-attempt `proposeEffect`.
                 return .concatenate(roundContextEffect, proposeWithRetryEffect(accountUUID: state.selectedWalletAccount?.id))
+
+            case .chainClockLoaded(let clock):
+                // Re-apply: `apply` runs synchronously on the injected-schedule path before this
+                // read can return, so the first layout used the default frame. Without the
+                // re-apply those rows would keep target-spacing ETAs for the life of the screen.
+                state.chainClock = clock
+                if let schedule = state.schedule {
+                    apply(schedule, to: &state)
+                }
+                return .none
 
             case .preparationCountLoaded(let count):
                 state.preparationCount = max(1, count)
@@ -855,21 +873,23 @@ struct MigrationTransferPlan {
     /// freshly proposed or injected by the coordinator. MOB-1513 (C2, Figma 4207:7394 + 4198:14325):
     /// every transfer row's status is decided by `transferRowStatus` now — see its doc for the rule.
     ///
-    /// MOB-1513 (B3): each row's forward ETA is a block delta against the LIVE chain tip
-    /// (`latestState().latestBlockHeight`, the established synchronous tip accessor) at 75 s/block —
+    /// MOB-1513 (B3): each row's forward ETA is a block delta against the live chain tip —
     /// `MigrationETA.minutesFromNow`. This replaces `estimateTimestamp`, which returns nil for every
     /// FUTURE migration height (beyond the newest bundled checkpoint), flooring every row to 0 and
     /// rendering the "~10 mins" fallback. `minutesFromNow` carries the minute-precise value (so a
     /// sub-hour transfer reads "in ~N mins"); `hoursFromNow` keeps the coarse whole-hour copy.
+    ///
+    /// P3: measured in `state.chainClock`'s frame — the SDK's estimated tip and MEASURED block rate
+    /// — so this screen's "in ~6 hours" and the Status screen's agree about the same transfer.
     private func apply(_ schedule: MigrationSchedule, to state: inout State) {
-        let tip = sdkSynchronizer.latestState().latestBlockHeight
+        let clock = state.chainClock
         // MOB-1513 (C2): mirrors `State.splitRow`'s own gate (shown whenever `rows` is non-empty —
         // see its doc) rather than re-deriving a second "is there a split" notion that could drift
         // from what the view actually renders alongside these rows.
         let hasSplitRow = !schedule.transfers.isEmpty
         state.rows = IdentifiedArrayOf(
             uniqueElements: schedule.transfers.enumerated().map { index, transfer in
-                let minutes = MigrationETA.minutesFromNow(scheduledHeight: transfer.nextExecutableAfterHeight, currentTip: tip)
+                let minutes = MigrationETA.minutesFromNow(scheduledHeight: transfer.nextExecutableAfterHeight, clock: clock)
                 return MigrationTransferRow(
                     // OLD -> NEW SDK: `MigrationTransferProposal.id` is `UInt32` now while the row
                     // id is a `String`. `transferKey` is the ONE conversion point (see its doc in

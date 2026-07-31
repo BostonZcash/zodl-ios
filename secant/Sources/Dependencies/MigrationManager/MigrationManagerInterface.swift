@@ -115,6 +115,22 @@ struct MigrationManagerClient: Sendable {
     /// Returns true iff something was actually broadcast.
     var runBroadcastSession: @Sendable () async -> Bool = { false }
 
+    /// THE INVALIDATION SWEEP, run over every migrating account. Call on SYNC visits, after the
+    /// wallet has caught up — it reads only the local database, never the network.
+    ///
+    /// This is what DETECTS a transfer whose funding note was spent by a foreign transaction (the
+    /// user sent from another device, or from Zodl outside the migration). Nothing else records
+    /// that mark, so without this sweep `hasInvalidMigrationTransfers` never turns true and the
+    /// whole recovery lane — the "Update plan" banner, the recovery flow — can never fire.
+    ///
+    /// Returns true iff this pass recorded an invalidation on any account.
+    var runInvalidationSweep: @Sendable () async -> Bool = { false }
+
+    /// The chain-time frame migration ETAs are measured in — see `MigrationChainClock`. Reads the
+    /// SDK's estimated tip and measured block rate; degrades to the scanned tip and Zcash's target
+    /// spacing. `nil` accountUUID resolves the selected account.
+    var migrationChainClock: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationChainClock = { _ in .unknown }
+
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
