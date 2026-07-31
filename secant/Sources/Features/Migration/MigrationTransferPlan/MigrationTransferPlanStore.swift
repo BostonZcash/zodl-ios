@@ -289,12 +289,12 @@ struct MigrationTransferPlan {
 
         /// The rows the "Prepare Your Balance" sheet renders.
         ///
-        /// Interim: shaped from the count alone (see `MigrationPreparationStep.interimLadder`)
+        /// Interim: shaped from the count alone (see `MigrationPrepareBalanceRow.interimLadder`)
         /// until the FFI for `MigrationState::transaction_statuses` lands and can supply each
         /// step's real state and `depends_on`. The sheet renders whatever it is handed, so only
         /// this one line changes when the engine data arrives.
-        var preparationSteps: [MigrationPreparationStep] {
-            MigrationPreparationStep.interimLadder(count: preparationCount)
+        var preparationSteps: [MigrationPrepareBalanceRow] {
+            MigrationPrepareBalanceRow.interimLadder(count: preparationCount)
         }
 
         /// The split row's caption: the shared ETA phrasing on its own for a single-transaction

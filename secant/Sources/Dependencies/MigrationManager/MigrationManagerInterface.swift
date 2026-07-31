@@ -81,6 +81,17 @@ struct MigrationManagerClient: Sendable {
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.
+    /// THE PROVE SWEEP, run over every migrating account. Call on SYNC visits, once sync reaches
+    /// the tip — never on a broadcast visit.
+    ///
+    /// This is what makes a sync-free SEND visit possible: proving is sync-bound, so if it were
+    /// left to broadcast time every send session would have to sync first, which is exactly the
+    /// correlation ZIP 318 forbids. Sweeping here means a due transfer is already proven when its
+    /// window opens and the send session has nothing to do but submit.
+    ///
+    /// Returns the number of transactions proved across all accounts (0 is the normal case).
+    var runProveSweep: @Sendable () async -> Int = { 0 }
+
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating

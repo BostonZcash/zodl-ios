@@ -154,16 +154,16 @@ import ZcashLightClientKit
     // MARK: - Interim ladder (provisional data, permanent shape)
 
     @Test(arguments: [1, 2, 5]) func interimLadderProducesOneStepPerPreparation(count: Int) {
-        #expect(MigrationPreparationStep.interimLadder(count: count).count == count)
+        #expect(MigrationPrepareBalanceRow.interimLadder(count: count).count == count)
     }
 
     /// Guards the sheet against a zero/negative count reaching it as an empty, headerless card.
     @Test(arguments: [0, -3]) func interimLadderNeverProducesAnEmptyList(count: Int) {
-        #expect(MigrationPreparationStep.interimLadder(count: count).count == 1)
+        #expect(MigrationPrepareBalanceRow.interimLadder(count: count).count == 1)
     }
 
     @Test func interimLadderLeadsWithAReadyStepThenAnInFlightOne() {
-        let steps = MigrationPreparationStep.interimLadder(count: 4)
+        let steps = MigrationPrepareBalanceRow.interimLadder(count: 4)
         #expect(steps[0].state == .readyToSend)
         #expect(steps[1].state == .preparing)
         #expect(steps[2].state == .waitsOn([2]))
@@ -171,7 +171,7 @@ import ZcashLightClientKit
     }
 
     @Test func interimLadderIndexesFromZero() {
-        let steps = MigrationPreparationStep.interimLadder(count: 3)
+        let steps = MigrationPrepareBalanceRow.interimLadder(count: 3)
         #expect(steps.map(\.index) == [0, 1, 2])
         #expect(Set(steps.map(\.id)).count == 3)
     }

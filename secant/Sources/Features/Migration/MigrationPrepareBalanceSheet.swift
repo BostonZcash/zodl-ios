@@ -11,7 +11,7 @@
 //  carrying the split's real total, and everything per-step — count, order, what each is waiting on
 //  — moves behind this disclosure.
 //
-//  Steps show no per-step amount: the engine reports none (see `MigrationPreparationStep`), so the
+//  Steps show no per-step amount: the engine reports none (see `MigrationPrepareBalanceRow`), so the
 //  sheet shows a single honest total in its footer instead of N invented fractions.
 //
 //  A plain `View`, not a feature — it holds no state and has one exit. Presented through
@@ -25,7 +25,7 @@ import SwiftUI
 struct MigrationPrepareBalanceSheet: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    let steps: [MigrationPreparationStep]
+    let steps: [MigrationPrepareBalanceRow]
     /// The whole split's total. `nil` hides the footer row rather than showing a placeholder zero —
     /// the same honesty rule the timeline's amount column follows.
     let amountBeingSplit: Zatoshi?
@@ -96,7 +96,7 @@ struct MigrationPrepareBalanceSheet: View {
         }
     }
 
-    @ViewBuilder private func stepRow(_ step: MigrationPreparationStep, isLast: Bool) -> some View {
+    @ViewBuilder private func stepRow(_ step: MigrationPrepareBalanceRow, isLast: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
                 MigrationStepBadge(number: step.index + 1, style: badgeStyle(for: step.state))
@@ -127,7 +127,7 @@ struct MigrationPrepareBalanceSheet: View {
         .padding(.bottom, isLast ? 0 : 4)
     }
 
-    private func badgeStyle(for state: MigrationPreparationStep.State) -> MigrationStepBadge.Style {
+    private func badgeStyle(for state: MigrationPrepareBalanceRow.State) -> MigrationStepBadge.Style {
         switch state {
         case .done:
             return .sent
@@ -140,7 +140,7 @@ struct MigrationPrepareBalanceSheet: View {
 
     /// The trailing status text. `internal static` so it can be table-tested without a view host —
     /// the dependency-list phrasing (singular / "1 & 2" / "1, 2 & 3") is the only real logic here.
-    static func stateCaption(for state: MigrationPreparationStep.State) -> String {
+    static func stateCaption(for state: MigrationPrepareBalanceRow.State) -> String {
         switch state {
         case .done:
             return String(localizable: .migrationPrepareStateDone)
@@ -168,7 +168,7 @@ struct MigrationPrepareBalanceSheet: View {
 
 #Preview("Four steps") {
     MigrationPrepareBalanceSheet(
-        steps: MigrationPreparationStep.interimLadder(count: 4),
+        steps: MigrationPrepareBalanceRow.interimLadder(count: 4),
         amountBeingSplit: Zatoshi(1_245_000_000),
         gotItTapped: { }
     )
@@ -179,10 +179,10 @@ struct MigrationPrepareBalanceSheet: View {
 #Preview("Mixed states") {
     MigrationPrepareBalanceSheet(
         steps: [
-            MigrationPreparationStep(id: "0", index: 0, state: .done, minutesFromNow: 0),
-            MigrationPreparationStep(id: "1", index: 1, state: .readyToSend, minutesFromNow: 0),
-            MigrationPreparationStep(id: "2", index: 2, state: .waitsOn([1, 2]), minutesFromNow: 120),
-            MigrationPreparationStep(id: "3", index: 3, state: .waitsOn([3]), minutesFromNow: 180)
+            MigrationPrepareBalanceRow(id: "0", index: 0, state: .done, minutesFromNow: 0),
+            MigrationPrepareBalanceRow(id: "1", index: 1, state: .readyToSend, minutesFromNow: 0),
+            MigrationPrepareBalanceRow(id: "2", index: 2, state: .waitsOn([1, 2]), minutesFromNow: 120),
+            MigrationPrepareBalanceRow(id: "3", index: 3, state: .waitsOn([3]), minutesFromNow: 180)
         ],
         amountBeingSplit: Zatoshi(1_245_000_000),
         gotItTapped: { }
@@ -192,7 +192,7 @@ struct MigrationPrepareBalanceSheet: View {
 
 #Preview("Unknown total") {
     MigrationPrepareBalanceSheet(
-        steps: MigrationPreparationStep.interimLadder(count: 2),
+        steps: MigrationPrepareBalanceRow.interimLadder(count: 2),
         amountBeingSplit: nil,
         gotItTapped: { }
     )

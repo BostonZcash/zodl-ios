@@ -735,7 +735,7 @@ extension MigrationCoordFlow {
                 // acknowledgment, handled above).
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     guard let accountUUID else { return }
-                    _ = try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)
+                    _ = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID)
                     await migrationManager.reconcile()
                     let rows = await migrationManager.migrationTransfers(accountUUID)
                     await send(.sendNowCompleted(rows: rows))
@@ -981,7 +981,20 @@ extension MigrationCoordFlow {
         state.path.append(
             .keystoneSign(
                 MigrationKeystoneSign.State(
-                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: unsigned)],
+                    // `actions: 0` — this PCZT is NOT an engine row. The immediate lane is an
+                    // ordinary send-max proposal built outside the migration engine, so no
+                    // action weight exists for it, and 0 is the same "unknown" the SDK itself
+                    // returns from `applyKeystoneBatchSignatures`. It never reaches
+                    // `batchMigrationPcztsForSigning` (one transaction, one session); if it ever
+                    // did, that call throws on a 0 weight rather than mis-packing a session —
+                    // the safe direction.
+                    pczts: [
+                        MigrationUnsignedTransferPczt(
+                            id: MigrationReviewTransfer.immediateKeystonePcztId,
+                            pczt: unsigned,
+                            actions: 0
+                        )
+                    ],
                     redactedSinglePczt: redacted
                 )
             )

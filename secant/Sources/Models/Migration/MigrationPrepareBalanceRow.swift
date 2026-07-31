@@ -1,5 +1,5 @@
 //
-//  MigrationPreparationStep.swift
+//  MigrationPrepareBalanceRow.swift
 //  zodl
 //
 //  One preparation ("split") transaction, as the "Prepare Your Balance" sheet renders it
@@ -32,7 +32,7 @@
 
 import Foundation
 
-struct MigrationPreparationStep: Equatable, Identifiable, Sendable {
+struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
     /// What this step is doing. Ordered as the sheet reads top to bottom.
     enum State: Equatable, Sendable {
         /// Mined: this step is behind us.
@@ -62,7 +62,7 @@ struct MigrationPreparationStep: Equatable, Identifiable, Sendable {
     /// The renderer is NOT provisional: `.waitsOn` already takes a set, so a real dependency naming
     /// several predecessors ("Waits on steps 1 & 2", as the design draws step 3) renders correctly
     /// the moment `depends_on` is wired, with no change to the sheet.
-    static func interimLadder(count: Int) -> [MigrationPreparationStep] {
+    static func interimLadder(count: Int) -> [MigrationPrepareBalanceRow] {
         let total = max(1, count)
         return (0..<total).map { index in
             let state: State
@@ -71,7 +71,7 @@ struct MigrationPreparationStep: Equatable, Identifiable, Sendable {
             case 1: state = .preparing
             default: state = .waitsOn([index])
             }
-            return MigrationPreparationStep(
+            return MigrationPrepareBalanceRow(
                 id: "preparation-\(index)",
                 index: index,
                 state: state,

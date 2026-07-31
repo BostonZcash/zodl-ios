@@ -147,6 +147,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
+            runProveSweep: { await impl.runProveSweep() },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -1301,6 +1302,39 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
     }
 
+    /// THE PROVE SWEEP over every candidate account — see `MigrationManagerClient.runProveSweep`.
+    ///
+    /// Deliberately OUTSIDE `serialExecutor`: proving is a long, purely additive engine operation
+    /// (it stores proofs; it mutates no app-side migration storage), and holding the mutex that
+    /// serializes reconcile/commit for its whole duration would stall the very reconcile that is
+    /// about to run behind it. Per-account failures degrade to 0 rather than aborting the sweep —
+    /// one account's proving problem must not stop another account's.
+    func runProveSweep() async -> Int {
+        guard isIronwoodActivated() else { return 0 }
+
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else { return 0 }
+
+        var proved = 0
+        for accountUUID in accountUUIDs {
+            do {
+                proved += try await sdkSynchronizer.finalizeReadyMigrationTransfers(accountUUID)
+            } catch {
+                // Includes `migrationProvingUnavailable` (ZRUST0127), the one HARD proving error:
+                // the ironwood tree is not queryable yet. Nothing the app can do but try at the
+                // next sync visit, so log and carry on to the next account.
+                LoggerProxy.event("migration prove sweep failed for one account: \(error.toZcashError())")
+            }
+        }
+        if proved > 0 {
+            LoggerProxy.event("migration prove sweep: proved \(proved) transaction(s)")
+        }
+        return proved
+    }
+
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 
@@ -1673,9 +1707,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     // MARK: - MOB-1496: throwing-SDK-read helpers (account-scoped, degrade on error)
 
+    /// The app's lifecycle state, derived from the engine's advance step plus the composable reads
+    /// (`MigrationState.derive`) — the SDK stopped handing a state over whole on
+    /// `michal/migration-parity-fixes`. `nil` only when the advance-step read itself throws; a
+    /// healthy account with no run derives `.notStarted`.
     private func migrationState(accountUUID: AccountUUID) async -> MigrationState? {
-        guard let result = try? await sdkSynchronizer.getMigrationState(accountUUID) else { return nil }
-        return result
+        guard let advanceStep = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) else {
+            // The read itself failed (not "no run" — that is a successful `nil`). Degrade to no
+            // state so callers keep their previous value rather than flipping to `.notStarted`.
+            return nil
+        }
+        return MigrationState.derive(
+            advanceStep: advanceStep,
+            progress: try? await sdkSynchronizer.getMigrationProgress(accountUUID),
+            statuses: (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? [],
+            hasInvalidTransfers: await hasInvalidMigrationTransfers(accountUUID: accountUUID)
+        )
     }
 
     private func migrationProgress(accountUUID: AccountUUID) async -> MigrationProgress? {
@@ -1687,8 +1734,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
         (try? await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID)) ?? false
     }
 
-    private func hasOverdueMigrationTransfers(accountUUID: AccountUUID) async -> Bool {
-        (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID)) ?? false
+    /// `useEstimatedTip` defaults TRUE here: every app-side caller of this helper is asking on a
+    /// visit that has not necessarily synced, and a stale scanned tip reports "nothing overdue" for
+    /// a transfer that genuinely is. Estimates only accelerate due-ness — expiry and invalidity
+    /// still resolve against the scanned tip inside the SDK.
+    private func hasOverdueMigrationTransfers(
+        accountUUID: AccountUUID,
+        useEstimatedTip: Bool = true
+    ) async -> Bool {
+        (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, useEstimatedTip)) ?? false
     }
 
     // MARK: - MOB-1496: per-account stateEvents subjects
@@ -2166,9 +2220,15 @@ enum MigrationDerivations {
         hasOverdueMigrationTransfers: Bool,
         hasLiveStatus: Bool
     ) -> MigrationTransferRow.Status {
-        if case let MigrationState.requiresAttention(reason) = state,
-           case let MigrationAttentionReason.invalidTransfer(invalidTransferId) = reason,
-           String(invalidTransferId) == transferId {
+        // The FIRST non-sent row wears the invalid badge, because the SDK no longer says which
+        // transfer was invalidated. Its retired `MigrationAttentionReason.invalidTransfer` carried
+        // the id; the replacement signals — `hasInvalidMigrationTransfers` and
+        // `reconcileMigrationInvalidations` — are both plain Bools, and no per-row `Blocker` covers
+        // invalidation either (only `.expired` does). Attaching it to the first non-sent row keeps
+        // the timeline honest at run scope: something ahead is invalid and the run needs a re-plan,
+        // which is exactly what the recovery flow this routes to says. Filed as a board row — if
+        // the SDK re-exposes the id, restore the exact match here.
+        if isFirstNonSent, case MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer) = state {
             return MigrationTransferRow.Status.invalid
         }
 

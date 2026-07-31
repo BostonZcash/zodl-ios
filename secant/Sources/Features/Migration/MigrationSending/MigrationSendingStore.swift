@@ -528,7 +528,30 @@ struct MigrationSending {
                     let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                     didStopSyncForBroadcast = true
-                    result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
+                    // `useEstimatedTip: true` — this IS a send visit. It deliberately did not
+                    // sync (see `stopSyncBeforeMigrationBroadcast` above), so the scanned tip is
+                    // stale by construction and would report "nothing due" for a transfer that
+                    // genuinely is.
+                    let attempt = try await sdkSynchronizer.executeNextPendingMigrationTransfer(
+                        account.id,
+                        options,
+                        true
+                    )
+                    switch attempt {
+                    case .executed(let executed):
+                        result = executed
+                    case .nothingDue:
+                        result = nil
+                    case .awaitingProof(let id):
+                        // The transfer is due but unproven, so nothing was broadcast. Proving is
+                        // sync-bound and this is a send session, so the fix is NOT to prove here —
+                        // it is to let sync resume and have the next SYNC visit run the prove sweep
+                        // (`finalizeReadyMigrationTransfers`), after which a later send visit
+                        // broadcasts. `nil` takes exactly that path: it falls through to the
+                        // `didStopSyncForBroadcast` nudge below, which reopens the sync gate.
+                        LoggerProxy.event("migration: transfer \(id) due but awaiting proof — deferring to the next sync visit")
+                        result = nil
+                    }
                 }
                 if let result, let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
                     await send(.broadcastFailureRouted(route))

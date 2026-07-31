@@ -204,7 +204,7 @@ struct MigrationKeystoneSignView: View {
     NavigationView {
         MigrationKeystoneSignView(
             store: StoreOf<MigrationKeystoneSign>(
-                initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: 0, pczt: Data())])
+                initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: 0, pczt: Data(), actions: 3)])
             ) {
                 MigrationKeystoneSign()
             }

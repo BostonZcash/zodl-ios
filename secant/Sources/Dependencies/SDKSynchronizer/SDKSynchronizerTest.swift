@@ -36,7 +36,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         isInitialized: unimplemented("\(Self.self).isInitialized", placeholder: false),
         importAccount: unimplemented("\(Self.self).importAccount", placeholder: nil),
         deleteAccount: unimplemented("\(Self.self).deleteAccount"),
-        getMigrationState: unimplemented("\(Self.self).getMigrationState", placeholder: .notStarted),
+        migrationAdvanceStep: unimplemented("\(Self.self).migrationAdvanceStep", placeholder: nil),
         proposeMigrationTransfers: unimplemented("\(Self.self).proposeMigrationTransfers"),
         proposeImmediateMigration: unimplemented("\(Self.self).proposeImmediateMigration"),
         recordImmediateMigration: unimplemented("\(Self.self).recordImmediateMigration"),
@@ -45,9 +45,15 @@ extension SDKSynchronizerClient: TestDependencyKey {
         estimateMigrationPreparationCount: unimplemented("\(Self.self).estimateMigrationPreparationCount", placeholder: nil),
         migrationTransactionStatuses: unimplemented("\(Self.self).migrationTransactionStatuses", placeholder: []),
         signAndStoreMigrationSchedule: unimplemented("\(Self.self).signAndStoreMigrationSchedule"),
-        executeNextPendingMigrationTransfer: unimplemented("\(Self.self).executeNextPendingMigrationTransfer", placeholder: nil),
+        executeNextPendingMigrationTransfer:
+            unimplemented("\(Self.self).executeNextPendingMigrationTransfer", placeholder: .nothingDue),
         hasOverdueMigrationTransfers: unimplemented("\(Self.self).hasOverdueMigrationTransfers", placeholder: false),
-        rescheduleOverdueMigrationTransfer: unimplemented("\(Self.self).rescheduleOverdueMigrationTransfer", placeholder: nil),
+        pendingMigrationTransferProposal: unimplemented("\(Self.self).pendingMigrationTransferProposal", placeholder: nil),
+        finalizeReadyMigrationTransfers: unimplemented("\(Self.self).finalizeReadyMigrationTransfers", placeholder: 0),
+        reconcileMigrationInvalidations: unimplemented("\(Self.self).reconcileMigrationInvalidations", placeholder: false),
+        migrationSyncWakeups: unimplemented("\(Self.self).migrationSyncWakeups", placeholder: []),
+        estimatedMigrationChainTip: unimplemented("\(Self.self).estimatedMigrationChainTip", placeholder: 0),
+        estimatedMigrationSecondsPerBlock: unimplemented("\(Self.self).estimatedMigrationSecondsPerBlock", placeholder: 75),
         debugRescheduleMigrationTransfers: unimplemented("\(Self.self).debugRescheduleMigrationTransfers", placeholder: 0),
         isMigrationSyncBlocked: unimplemented("\(Self.self).isMigrationSyncBlocked", placeholder: false),
         migrationSyncBlockedStream: unimplemented("\(Self.self).migrationSyncBlockedStream", placeholder: Empty().eraseToAnyPublisher()),
@@ -61,6 +67,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         storeSignedNoteSplits: unimplemented("\(Self.self).storeSignedNoteSplits"),
         proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
         storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions"),
+        batchMigrationPcztsForSigning: unimplemented("\(Self.self).batchMigrationPcztsForSigning", placeholder: []),
         buildKeystoneSignBatchQRParts: unimplemented("\(Self.self).buildKeystoneSignBatchQRParts", placeholder: []),
         resetKeystoneSignBatchDecoder: unimplemented("\(Self.self).resetKeystoneSignBatchDecoder"),
         decodeKeystoneSignBatchPart: unimplemented(
@@ -70,7 +77,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         applyKeystoneBatchSignatures: unimplemented("\(Self.self).applyKeystoneBatchSignatures", placeholder: []),
         refreshStaleMigrationTransfers: unimplemented(
             "\(Self.self).refreshStaleMigrationTransfers",
-            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0, preparations: [])
         ),
         rescanFrom: unimplemented("\(Self.self).rescanFrom"),
         rewind: unimplemented("\(Self.self).rewind", placeholder: Fail(error: "Error").eraseToAnyPublisher()),
@@ -130,7 +137,7 @@ extension SDKSynchronizerClient {
         isInitialized: { false },
         importAccount: { _, _, _, _, _, _, _ in nil },
         deleteAccount: { _ in },
-        getMigrationState: { _ in .notStarted },
+        migrationAdvanceStep: { _ in nil },
         proposeMigrationTransfers: { _ in throw ZcashError.synchronizerNotPrepared },
         proposeImmediateMigration: { _ in throw ZcashError.synchronizerNotPrepared },
         recordImmediateMigration: { _, _ in },
@@ -139,9 +146,14 @@ extension SDKSynchronizerClient {
         estimateMigrationPreparationCount: { _ in nil },
         migrationTransactionStatuses: { _ in [] },
         signAndStoreMigrationSchedule: { _, _, _ in },
-        executeNextPendingMigrationTransfer: { _, _ in nil },
-        hasOverdueMigrationTransfers: { _ in false },
-        rescheduleOverdueMigrationTransfer: { _ in nil },
+        executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue },
+        hasOverdueMigrationTransfers: { _, _ in false },
+        pendingMigrationTransferProposal: { _ in nil },
+        finalizeReadyMigrationTransfers: { _ in 0 },
+        reconcileMigrationInvalidations: { _ in false },
+        migrationSyncWakeups: { _ in [] },
+        estimatedMigrationChainTip: { _ in 0 },
+        estimatedMigrationSecondsPerBlock: { _ in 75 },
         debugRescheduleMigrationTransfers: { _ in 0 },
         isMigrationSyncBlocked: { false },
         migrationSyncBlockedStream: { Empty().eraseToAnyPublisher() },
@@ -155,6 +167,7 @@ extension SDKSynchronizerClient {
         storeSignedNoteSplits: { _, _ in },
         proposeMigrationPCZTs: { _, _ in [] },
         storeSignedMigrationTransactions: { _, _ in },
+        batchMigrationPcztsForSigning: { pczts, _ in pczts.isEmpty ? [] : [pczts] },
         buildKeystoneSignBatchQRParts: { _, _, _ in [] },
         resetKeystoneSignBatchDecoder: { },
         decodeKeystoneSignBatchPart: { _, _ in
@@ -162,7 +175,7 @@ extension SDKSynchronizerClient {
         },
         applyKeystoneBatchSignatures: { _, _ in [] },
         refreshStaleMigrationTransfers: { _, _ in
-            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0, preparations: [])
         },
         rescanFrom: { _ in },
         rewind: { _ in Empty<Void, Error>().eraseToAnyPublisher() },
@@ -224,7 +237,7 @@ extension SDKSynchronizerClient {
         isInitialized: @escaping @Sendable () -> Bool = { false },
     importAccount: @escaping @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID? = { _, _, _, _, _, _, _ in nil },
         deleteAccount: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in },
-        getMigrationState: @escaping @Sendable (AccountUUID) async throws -> MigrationState = { _ in .notStarted },
+        migrationAdvanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep? = { _ in nil },
         proposeMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> MigrationSchedule = { _ in throw ZcashError.synchronizerNotPrepared },
         proposeImmediateMigration: @escaping @Sendable (AccountUUID) async throws -> ImmediateMigrationProposal = { _ in throw ZcashError.synchronizerNotPrepared },
         recordImmediateMigration: @escaping @Sendable (AccountUUID, Data) async throws -> Void = { _, _ in },
@@ -234,10 +247,16 @@ extension SDKSynchronizerClient {
         migrationTransactionStatuses: @escaping @Sendable (AccountUUID) async throws -> [MigrationTransactionStatus] = { _ in [] },
         signAndStoreMigrationSchedule: @escaping @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void = { _, _, _ in },
         executeNextPendingMigrationTransfer:
-            @escaping @Sendable (AccountUUID, MigrationNetworkPrivacyOptions) async throws -> MigrationTransferResult? = { _, _ in nil },
-        hasOverdueMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
-        rescheduleOverdueMigrationTransfer:
+            @escaping @Sendable (AccountUUID, MigrationNetworkPrivacyOptions, Bool) async throws -> MigrationTransferAttempt
+            = { _, _, _ in .nothingDue },
+        hasOverdueMigrationTransfers: @escaping @Sendable (AccountUUID, Bool) async throws -> Bool = { _, _ in false },
+        pendingMigrationTransferProposal:
             @escaping @Sendable (AccountUUID) async throws -> MigrationTransferProposal? = { _ in nil },
+        finalizeReadyMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Int = { _ in 0 },
+        reconcileMigrationInvalidations: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
+        migrationSyncWakeups: @escaping @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup] = { _ in [] },
+        estimatedMigrationChainTip: @escaping @Sendable (AccountUUID) async throws -> BlockHeight = { _ in 0 },
+        estimatedMigrationSecondsPerBlock: @escaping @Sendable (AccountUUID) async throws -> Double = { _ in 75 },
         debugRescheduleMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Int = { _ in 0 },
         isMigrationSyncBlocked: @escaping @Sendable () async -> Bool = { false },
         migrationSyncBlockedStream: @escaping @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() },
@@ -251,6 +270,9 @@ extension SDKSynchronizerClient {
         storeSignedNoteSplits: @escaping @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void = { _, _ in },
         proposeMigrationPCZTs: @escaping @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt] = { _, _ in [] },
         storeSignedMigrationTransactions: @escaping @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void = { _, _ in },
+        batchMigrationPcztsForSigning:
+            @escaping @Sendable ([MigrationUnsignedTransferPczt], Int) async throws -> [[MigrationUnsignedTransferPczt]]
+            = { pczts, _ in pczts.isEmpty ? [] : [pczts] },
         buildKeystoneSignBatchQRParts: @escaping @Sendable (Data, [MigrationUnsignedTransferPczt], Int) async throws -> [String] = { _, _, _ in [] },
         resetKeystoneSignBatchDecoder: @escaping @Sendable () async -> Void = { },
         decodeKeystoneSignBatchPart: @escaping @Sendable (String, Data) async throws -> KeystoneBatchDecodeResult = { _, _ in
@@ -258,7 +280,7 @@ extension SDKSynchronizerClient {
         },
         applyKeystoneBatchSignatures: @escaping @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt] = { _, _ in [] },
         refreshStaleMigrationTransfers: @escaping @Sendable (AccountUUID, UnifiedSpendingKey?) async throws -> MigrationSchedule = { _, _ in
-            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+            MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0, preparations: [])
         },
         rescanFrom: @escaping @Sendable (BlockHeight) async throws -> Void = { _ in },
         rewind: @escaping @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
@@ -382,7 +404,7 @@ extension SDKSynchronizerClient {
             isInitialized: isInitialized,
             importAccount: importAccount,
             deleteAccount: deleteAccount,
-            getMigrationState: getMigrationState,
+            migrationAdvanceStep: migrationAdvanceStep,
             proposeMigrationTransfers: proposeMigrationTransfers,
             proposeImmediateMigration: proposeImmediateMigration,
             recordImmediateMigration: recordImmediateMigration,
@@ -393,7 +415,12 @@ extension SDKSynchronizerClient {
             signAndStoreMigrationSchedule: signAndStoreMigrationSchedule,
             executeNextPendingMigrationTransfer: executeNextPendingMigrationTransfer,
             hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
-            rescheduleOverdueMigrationTransfer: rescheduleOverdueMigrationTransfer,
+            pendingMigrationTransferProposal: pendingMigrationTransferProposal,
+            finalizeReadyMigrationTransfers: finalizeReadyMigrationTransfers,
+            reconcileMigrationInvalidations: reconcileMigrationInvalidations,
+            migrationSyncWakeups: migrationSyncWakeups,
+            estimatedMigrationChainTip: estimatedMigrationChainTip,
+            estimatedMigrationSecondsPerBlock: estimatedMigrationSecondsPerBlock,
             debugRescheduleMigrationTransfers: debugRescheduleMigrationTransfers,
             isMigrationSyncBlocked: isMigrationSyncBlocked,
             migrationSyncBlockedStream: migrationSyncBlockedStream,
@@ -407,6 +434,7 @@ extension SDKSynchronizerClient {
             storeSignedNoteSplits: storeSignedNoteSplits,
             proposeMigrationPCZTs: proposeMigrationPCZTs,
             storeSignedMigrationTransactions: storeSignedMigrationTransactions,
+            batchMigrationPcztsForSigning: batchMigrationPcztsForSigning,
             buildKeystoneSignBatchQRParts: buildKeystoneSignBatchQRParts,
             resetKeystoneSignBatchDecoder: resetKeystoneSignBatchDecoder,
             decodeKeystoneSignBatchPart: decodeKeystoneSignBatchPart,

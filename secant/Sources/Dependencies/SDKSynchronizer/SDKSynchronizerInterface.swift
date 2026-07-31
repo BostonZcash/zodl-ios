@@ -53,8 +53,17 @@ struct SDKSynchronizerClient: Sendable {
     // #1930's verbatim (map §4.1a: already 1:1 with the new SDK); each phase binds the subset it
     // needs — Phase 1 the banner state read, Phase 2 the two propose lanes below.
 
-    /// The account's current migration state — also the reconciliation hub.
-    let getMigrationState: @Sendable (AccountUUID) async throws -> MigrationState
+    /// What this account's migration needs NEXT, decided by the engine from persisted state alone —
+    /// `nil` when no run is stored. The replacement for the retired 5-case `MigrationState`: that
+    /// enum conflated "what is true" with "what to do", and every app-side consumer actually wanted
+    /// the latter.
+    ///
+    /// Priority is BROADCAST > PROVE > REBUILD, and that ordering is load-bearing: ZIP 318 wants a
+    /// waking session used either to sync or to broadcast, never both, so surfacing every due
+    /// broadcast first is what makes a sync-free broadcast session possible. The step is memoryless
+    /// about sessions — it says WHAT, the app says WHEN (which visit type). See
+    /// `MigrationManagerImpl` for the app's own session policy.
+    let migrationAdvanceStep: @Sendable (AccountUUID) async throws -> MigrationAdvanceStep?
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
     let proposeMigrationTransfers: @Sendable (AccountUUID) async throws -> MigrationSchedule
     /// Proposes the immediate (single-transaction) migration — an ordinary send-max proposal,
@@ -96,16 +105,44 @@ struct SDKSynchronizerClient: Sendable {
     /// account's USK). THE commit — one call signs the whole run, preparation layers included,
     /// straight from the plan cache the schedule's own propose already wrote.
     let signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
-    /// Broadcasts the next height-due migration transfer, or `nil` when nothing is currently due.
-    /// A `nil` return is the SOLE authority on "nothing due" — never second-guess it app-side.
-    /// Broadcast-bearing: guarded by the transaction guard in the LiveKey.
+    /// BROADCAST ONLY — never proves. The three outcomes are distinct and the app must not collapse
+    /// them: `.nothingDue` ends the session, `.awaitingProof(id:)` means the due transaction has no
+    /// proof yet (run `finalizeReadyMigrationTransfers` at the next SYNC visit, then come back), and
+    /// `.executed` carries the recorded result. Broadcast-bearing: guarded by the transaction guard
+    /// in the LiveKey.
+    ///
+    /// `useEstimatedTip` belongs to SEND visits: a broadcast session deliberately does not sync, so
+    /// the scanned tip is stale by construction and would report "nothing due" for a transfer that
+    /// genuinely is. Estimates only ACCELERATE due-ness — expiry and invalidity always use the
+    /// scanned tip.
     let executeNextPendingMigrationTransfer: @Sendable (
-        AccountUUID, MigrationNetworkPrivacyOptions
-    ) async throws -> MigrationTransferResult?
+        AccountUUID, MigrationNetworkPrivacyOptions, Bool
+    ) async throws -> MigrationTransferAttempt
     /// Whether the account has a scheduled transfer past its send height but not yet broadcast.
-    let hasOverdueMigrationTransfers: @Sendable (AccountUUID) async throws -> Bool
+    /// `useEstimatedTip` as above — pass `true` on SEND visits and launch checks.
+    let hasOverdueMigrationTransfers: @Sendable (AccountUUID, Bool) async throws -> Bool
     /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
-    let rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
+    /// Read-only readback — nothing about the plan is mutated (the old name said otherwise).
+    let pendingMigrationTransferProposal: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
+    /// THE PROVE SWEEP. Proves every transfer whose anchor boundary has settled and returns how many
+    /// it proved. Call on every SYNC visit once sync reaches the tip.
+    ///
+    /// Proving has no deadline — boundary checkpoints are durably retained until the transfer is
+    /// broadcast — so this is not a race. It is what keeps SEND visits sync-free: everything is
+    /// already proven by the time a broadcast window opens, leaving nothing but the submission.
+    let finalizeReadyMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
+    /// Detects externally-spent funding notes and resolves submit-crash limbo. `true` = something
+    /// was invalidated, so route to the attention flow. Call on SYNC visits and app-open reconcile.
+    let reconcileMigrationInvalidations: @Sendable (AccountUUID) async throws -> Bool
+    /// The minimal set of heights at which to wake, sync and prove. Jitter is re-drawn per call, so
+    /// these must be recomputed after any state change rather than cached.
+    let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]
+    /// The projected chain tip, measured from recently scanned block headers — height→wall-clock math
+    /// for notification scheduling, and due-ness reasoning between syncs.
+    let estimatedMigrationChainTip: @Sendable (AccountUUID) async throws -> BlockHeight
+    /// The measured seconds-per-block used by `estimatedMigrationChainTip` (clamped 5–150 s, 75 s
+    /// fallback) — the height→time conversion factor for notification fire times.
+    let estimatedMigrationSecondsPerBlock: @Sendable (AccountUUID) async throws -> Double
     /// DEBUG/QA ONLY — rewrites the committed schedule's transfer heights onto short strides so a
     /// real broadcast run can be exercised without waiting out ZIP 318's privacy delay. Returns the
     /// number of transfers rescheduled. Gate 3 runs on this.
@@ -166,6 +203,14 @@ struct SDKSynchronizerClient: Sendable {
     let proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
     /// Stores the Keystone-signed transfer PCZTs, completing the run's signing. All-or-nothing.
     let storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
+    /// Splits an ordered PCZT batch into device-sized signing sessions by ACTION budget, not by
+    /// transaction count. A preparation weighs 16 actions and a transfer 3, so counting transactions
+    /// undercounts: 6 preparations + 1 transfer is 99 actions — two Keystone rounds, where any
+    /// count-based ceiling of 7-or-more claimed one. Order-preserving.
+    ///
+    /// Must be called BEFORE signing: rows returned by `applyKeystoneBatchSignatures` carry `0`
+    /// actions (reconstructed from retained bytes, no engine context) and would throw here.
+    let batchMigrationPcztsForSigning: @Sendable ([MigrationUnsignedTransferPczt], Int) async throws -> [[MigrationUnsignedTransferPczt]]
 
     /// Builds the animated QR frame strings for a Keystone batch-signing request over `pczts` (which
     /// MUST be preparation-then-transfer, schedule order — see the SDK doc). The SAME array, in the

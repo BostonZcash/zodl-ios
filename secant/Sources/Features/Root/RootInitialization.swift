@@ -150,6 +150,13 @@ extension Root {
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
                     ? .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         migrationManager.recordSyncCompleted()
+                        // THE PROVE SWEEP, and this edge is the only correct place for it: sync
+                        // has just reached the tip, so every settled anchor boundary is now
+                        // witnessable. Runs BEFORE reconcile so the state reconcile derives already
+                        // reflects the proofs this sweep just produced — otherwise the first
+                        // reconcile after a sync would still report transfers as unproven and the
+                        // banner would lag a whole visit behind.
+                        _ = await migrationManager.runProveSweep()
                         await migrationManager.reconcile()
                         // PHASE 4: re-arm AFTER reconcile, so the pokes are computed from the rows
                         // reconcile just refreshed. Idempotent — stable per-(case, account) ids mean

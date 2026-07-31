@@ -98,8 +98,8 @@ extension SDKSynchronizerClient: DependencyKey {
             deleteAccount: { accountUUID in
                 try await synchronizer.deleteAccount(accountUUID)
             },
-            getMigrationState: { accountUUID in
-                try await synchronizer.migrationState(accountUUID: accountUUID)
+            migrationAdvanceStep: { accountUUID in
+                try await synchronizer.migrationAdvanceStep(accountUUID: accountUUID)
             },
             proposeMigrationTransfers: { accountUUID in
                 try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID)
@@ -125,14 +125,36 @@ extension SDKSynchronizerClient: DependencyKey {
             signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
                 try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
             },
-            executeNextPendingMigrationTransfer: { accountUUID, options in
-                try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
+            executeNextPendingMigrationTransfer: { accountUUID, options, useEstimatedTip in
+                try await synchronizer.executeNextPendingMigrationTransfer(
+                    accountUUID: accountUUID,
+                    options: options,
+                    useEstimatedTip: useEstimatedTip
+                )
             },
-            hasOverdueMigrationTransfers: { accountUUID in
-                try await synchronizer.hasOverdueMigrationTransfers(accountUUID: accountUUID)
+            hasOverdueMigrationTransfers: { accountUUID, useEstimatedTip in
+                try await synchronizer.hasOverdueMigrationTransfers(
+                    accountUUID: accountUUID,
+                    useEstimatedTip: useEstimatedTip
+                )
             },
-            rescheduleOverdueMigrationTransfer: { accountUUID in
-                try await synchronizer.rescheduleOverdueMigrationTransfer(accountUUID: accountUUID)
+            pendingMigrationTransferProposal: { accountUUID in
+                try await synchronizer.pendingMigrationTransferProposal(accountUUID: accountUUID)
+            },
+            finalizeReadyMigrationTransfers: { accountUUID in
+                try await synchronizer.finalizeReadyMigrationTransfers(accountUUID: accountUUID)
+            },
+            reconcileMigrationInvalidations: { accountUUID in
+                try await synchronizer.reconcileMigrationInvalidations(accountUUID: accountUUID)
+            },
+            migrationSyncWakeups: { accountUUID in
+                try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)
+            },
+            estimatedMigrationChainTip: { accountUUID in
+                try await synchronizer.estimatedMigrationChainTip(accountUUID: accountUUID)
+            },
+            estimatedMigrationSecondsPerBlock: { accountUUID in
+                try await synchronizer.estimatedMigrationSecondsPerBlock(accountUUID: accountUUID)
             },
             debugRescheduleMigrationTransfers: { accountUUID in
                 try await synchronizer.debugRescheduleMigrationTransfers(accountUUID: accountUUID)
@@ -176,6 +198,9 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             storeSignedMigrationTransactions: { accountUUID, signed in
                 try await synchronizer.storeSignedMigrationSchedulePCZTs(accountUUID: accountUUID, signed)
+            },
+            batchMigrationPcztsForSigning: { pczts, maxActionsPerSession in
+                try await synchronizer.batchMigrationPcztsForSigning(pczts, maxActionsPerSession: maxActionsPerSession)
             },
             buildKeystoneSignBatchQRParts: { requestId, pczts, maxFragmentLen in
                 try await synchronizer.buildKeystoneSignBatchQRParts(
