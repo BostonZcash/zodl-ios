@@ -136,6 +136,11 @@ struct MigrationManagerClient: Sendable {
     /// spacing. `nil` accountUUID resolves the selected account.
     var migrationChainClock: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationChainClock = { _ in .unknown }
 
+    /// A12: whether a manual send from `accountUUID` should show the Orchard-spend warning — see
+    /// `MigrationManualSendRisk` for what it approximates and why the approximation is the
+    /// conservative direction.
+    var shouldWarnBeforeManualSend: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
+
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating

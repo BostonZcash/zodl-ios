@@ -153,6 +153,7 @@ extension MigrationManagerClient: DependencyKey {
             runBroadcastSession: { await impl.runBroadcastSession() },
             runInvalidationSweep: { await impl.runInvalidationSweep() },
             migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
+            shouldWarnBeforeManualSend: { await impl.shouldWarnBeforeManualSend(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -1410,6 +1411,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
             LoggerProxy.event("migration prove sweep: proved \(proved) transaction(s)")
         }
         return proved
+    }
+
+    /// A12 — see `MigrationManagerClient.shouldWarnBeforeManualSend`.
+    ///
+    /// Both reads degrade to "no warning": a migration read failing must not block an ordinary
+    /// send, which is a different and much worse failure than missing one advisory sheet.
+    func shouldWarnBeforeManualSend(accountUUID: AccountUUID?) async -> Bool {
+        guard isIronwoodActivated() else { return false }
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        guard let state = await migrationState(accountUUID: resolvedAccountUUID) else { return false }
+
+        return MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: MigrationManualSendRisk.isActiveRun(state),
+            hasUnmigratedOrchard: await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID) > Zatoshi.zero
+        )
     }
 
     /// THE INVALIDATION SWEEP over every candidate account — see

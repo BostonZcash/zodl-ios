@@ -55,6 +55,10 @@ struct SendConfirmation {
         var isKeystoneCodeFound = false
         var isQRCodeEnlarged = false
         var isSending = false
+        /// A12: the Orchard-spend warning (Figma 5139:23856) is up. Set only by `.sendTapped` when
+        /// the account has a live migration run with unmigrated Orchard left — see
+        /// `MigrationManualSendRisk`.
+        var isOrchardWarningPresented = false
         var isShielding = false
         var isTransparentAddress = false
         var message: String
@@ -158,6 +162,16 @@ struct SendConfirmation {
         case sendRequested
         case sendSupportMailFinished
         case sendTapped
+        /// A12: the risk read that `.sendTapped` waits on. `true` presents the warning; `false`
+        /// goes straight to authentication, exactly as `.sendTapped` used to.
+        case orchardRiskResolved(Bool)
+        /// A12: "Send" on the warning sheet — the destructive button. Proceeds to authentication.
+        case orchardWarningSendAnywayTapped
+        /// A12: "Cancel" on the warning sheet — the PRIMARY button. Nothing is sent.
+        case orchardWarningCancelTapped
+        /// A12: authentication + send, split out of `.sendTapped` so the warning can sit in front
+        /// of it without duplicating the path.
+        case sendAuthorizationRequested
         case sendTriggered
         case shareFinished
         case showHideButtonTapped
@@ -200,6 +214,7 @@ struct SendConfirmation {
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
@@ -273,6 +288,29 @@ struct SendConfirmation {
                 return .none
 
             case .sendTapped:
+                // A12: ask BEFORE Face ID. Warning the user after they have authenticated reads as
+                // "too late" — the decision the sheet is asking them to reconsider is whether to
+                // send at all, not whether they are themselves.
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.orchardRiskResolved(migrationManager.shouldWarnBeforeManualSend(accountUUID)))
+                }
+
+            case .orchardRiskResolved(let shouldWarn):
+                guard shouldWarn else {
+                    return .send(.sendAuthorizationRequested)
+                }
+                state.isOrchardWarningPresented = true
+                return .none
+
+            case .orchardWarningCancelTapped:
+                state.isOrchardWarningPresented = false
+                return .none
+
+            case .orchardWarningSendAnywayTapped:
+                state.isOrchardWarningPresented = false
+                return .send(.sendAuthorizationRequested)
+
+            case .sendAuthorizationRequested:
                 state.isSending = true
                 return .run { send in
                     guard await localAuthentication.authenticate() else {

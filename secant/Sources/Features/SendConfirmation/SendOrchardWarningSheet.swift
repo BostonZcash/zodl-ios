@@ -18,10 +18,14 @@
 //  A plain `View`, holding no state — presented through `zashiSheet` by whoever owns the send
 //  confirmation, matching `MigrationBroadcastFailureSheetView`.
 //
-//  NOT YET PRESENTED: the trigger is "does this proposal spend Orchard?", which the SDK does not
-//  expose to the app yet (it lands with the migration SDK work). The sheet, its copy and its
-//  layout are final; only its one presentation condition is outstanding — see
-//  docs/slipstream/migration/BOARD.md, row U2.
+//  PRESENTED by `SendConfirmation`, before authentication rather than after — the sheet asks the
+//  user to reconsider WHETHER to send, and asking that after Face ID reads as too late.
+//
+//  Its trigger is an approximation. The precise question, "does THIS proposal spend Orchard?", is
+//  one the SDK cannot answer today (`Proposal` exposes only a transaction count and a fee), so the
+//  app asks the coarser one it can: is a run live, and is there unmigrated Orchard left to reach?
+//  See `MigrationManualSendRisk` for why over-warning is the right side to err on here — and why
+//  that is the opposite call from the server-switch warning (board A20).
 //
 
 import SwiftUI
