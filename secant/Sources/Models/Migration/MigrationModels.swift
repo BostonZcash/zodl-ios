@@ -270,6 +270,17 @@ enum MigrationServerPinning {
 /// proposal list once a schedule is committed, so this is the app's only record of it — the
 /// payload `migrationSummary`/`migrationTransfers` derive rows/totals from. Not part of the SDK
 /// surface, though it embeds `MigrationSchedule` (already `Codable`) as-is. [ext]
+///
+/// FOR DISPLAY ONLY — NEVER COMMIT THE EMBEDDED SCHEDULE (SDK addendum §6). `MigrationSchedule
+/// .proposalHandle` identifies an entry in a PROCESS-LIFETIME native plan cache, so no persisted
+/// copy can ever identify a live plan; the SDK now omits the handle from its encoding entirely and
+/// every decoded copy reads `0`. Committing one would hand the SDK a handle to nothing.
+///
+/// The rule is satisfied by construction today: the three readers of this type
+/// (`migrationTransfers`, `bannerTransferRows`, `migrationPreparationRows`) all build ROWS, and
+/// every commit path takes its schedule from a live `proposeMigrationTransfers` instead. Keep it
+/// that way — the failure would be silent at the call site and only visible as a commit that does
+/// nothing.
 struct MigrationCommittedSchedule: Equatable, Sendable, Codable {
     /// One broadcast transfer, recorded the moment its broadcast succeeds — append-only across
     /// restarts within one logical run (a re-created plan after a restart continues the same run,

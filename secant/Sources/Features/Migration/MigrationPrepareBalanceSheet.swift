@@ -135,6 +135,10 @@ struct MigrationPrepareBalanceSheet: View {
             return .active
         case .waitsOn:
             return .pending
+        case .invalid:
+            // The amber exclamation the timeline already uses for invalid/expired rows — the one
+            // badge that says "you have to do something", which is exactly this state's meaning.
+            return .warning
         }
     }
 
@@ -148,6 +152,8 @@ struct MigrationPrepareBalanceSheet: View {
             return String(localizable: .migrationPrepareStateReady)
         case .preparing:
             return String(localizable: .migrationPrepareStatePreparing)
+        case .invalid:
+            return String(localizable: .migrationPrepareStateInvalid)
         case .waitsOn(let steps):
             let sorted = steps.sorted()
             guard let last = sorted.last else {

@@ -63,15 +63,29 @@ extension MigrationState {
     /// | `.notStarted` | no advance step AND no progress |
     /// | `.splitPendingConfirmation` | statuses exist and the preparation phase is not complete |
     /// | `.inProgress` | `.prove` / `.broadcast` / `.waiting`, with `progress` for the N-of-M |
-    /// | `.requiresAttention(.invalidTransfer)` | `hasInvalid` — checked FIRST, see below |
+    /// | `.requiresAttention(.invalidTransfer)` | the engine's own `.requiresAttention(id:)`, or `hasInvalid` |
     /// | `.requiresAttention(.transferExpired)` | `.rebuild(id:)` |
     /// | `.complete` | `.complete` |
     ///
-    /// Order matters in two places. Invalidation is checked before the advance step because an
-    /// invalidated run can still report `.waiting` — the engine has no way to know the funding
-    /// notes were spent elsewhere until the app's reconcile tells it, so a live-looking step would
-    /// otherwise mask a run that cannot proceed. And the preparation check sits below the terminal
-    /// cases so a complete run is never re-reported as still splitting.
+    /// TWO INVALIDATION SIGNALS, and they answer different questions.
+    ///
+    /// The engine's own `.requiresAttention(id:)` (SDK addendum §2) names a SPECIFIC transaction
+    /// marked dead by an observed event — a funding note spent outside the migration, or a terminal
+    /// broadcast rejection. Upstream surfaces it FIRST, ahead of every actionable step, and this
+    /// honours that ordering rather than re-deriving it.
+    ///
+    /// `hasInvalidTransfers` answers the coarser run-level question — "spendable Orchard remains
+    /// but no scheduled transfer covers it" — which the engine cannot express as a step because it
+    /// is about the plan's COVERAGE, not about any one transaction. It is still checked before the
+    /// advance step, because a run whose plan no longer covers the balance can keep reporting a
+    /// perfectly live `.waiting`.
+    ///
+    /// Both land on the same state: the banner is a run-level statement either way, and the per-row
+    /// identity now comes from each row's own `.invalid` status (SDK addendum §3), which is where
+    /// per-row facts belong.
+    ///
+    /// The preparation check sits below the terminal cases so a complete run is never re-reported
+    /// as still splitting.
     ///
     /// - Parameters:
     ///   - advanceStep: `nil` when no run is stored.
@@ -100,6 +114,8 @@ extension MigrationState {
         }
 
         switch advanceStep {
+        case .requiresAttention:
+            return .requiresAttention(.invalidTransfer)
         case .complete:
             return .complete
         case .rebuild:

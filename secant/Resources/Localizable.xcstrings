@@ -12235,6 +12235,23 @@
         }
       }
     },
+    "migrationPrepare.stateInvalid": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs attention"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Requiere atención"
+          }
+        }
+      }
+    },
     "migrationPrepare.statePreparing": {
       "extractionState": "manual",
       "localizations": {

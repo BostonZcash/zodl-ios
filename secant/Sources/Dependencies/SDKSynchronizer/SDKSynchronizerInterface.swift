@@ -139,10 +139,10 @@ struct SDKSynchronizerClient: Sendable {
     let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]
     /// The projected chain tip, measured from recently scanned block headers — height→wall-clock math
     /// for notification scheduling, and due-ness reasoning between syncs.
-    let estimatedMigrationChainTip: @Sendable (AccountUUID) async throws -> BlockHeight
+    let estimatedMigrationChainTip: @Sendable () async throws -> BlockHeight
     /// The measured seconds-per-block used by `estimatedMigrationChainTip` (clamped 5–150 s, 75 s
     /// fallback) — the height→time conversion factor for notification fire times.
-    let estimatedMigrationSecondsPerBlock: @Sendable (AccountUUID) async throws -> Double
+    let estimatedMigrationSecondsPerBlock: @Sendable () async throws -> Double
     /// DEBUG/QA ONLY — rewrites the committed schedule's transfer heights onto short strides so a
     /// real broadcast run can be exercised without waiting out ZIP 318's privacy delay. Returns the
     /// number of transfers rescheduled. Gate 3 runs on this.

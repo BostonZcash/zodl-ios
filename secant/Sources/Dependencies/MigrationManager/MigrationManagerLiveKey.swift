@@ -1939,8 +1939,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// never scanned a block throws `migrationChainTipUnavailable`, which lands on a scanned tip of
     /// `0` — `MigrationChainClock.unknown`'s "Ready now" flooring, not a fabricated distance.
     private func chainClock(accountUUID: AccountUUID) async -> MigrationChainClock {
-        async let tipTask = try? await sdkSynchronizer.estimatedMigrationChainTip(accountUUID)
-        async let rateTask = try? await sdkSynchronizer.estimatedMigrationSecondsPerBlock(accountUUID)
+        // Addendum §4: both are WALLET-scoped now — the projection reads the shared blocks table,
+        // so `accountUUID` only selects the fallback's scanned tip, not the estimate itself.
+        async let tipTask = try? await sdkSynchronizer.estimatedMigrationChainTip()
+        async let rateTask = try? await sdkSynchronizer.estimatedMigrationSecondsPerBlock()
 
         let tip = await tipTask ?? sdkSynchronizer.latestState().latestBlockHeight
         let secondsPerBlock = await rateTask ?? MigrationChainClock.targetSecondsPerBlock
@@ -2444,6 +2446,24 @@ enum MigrationDerivations {
                 )
             }
 
+            // A25 (SDK addendum §3): a row the engine marked `.invalid` names ITSELF. Checked
+            // immediately below "sent", mirroring the SDK's own rule that chain inclusion outranks
+            // an invalid verdict — a stale verdict must never shadow a landed transaction — and
+            // above everything else, because no chain condition makes an invalid row actionable
+            // again. This is what retires the old "the first non-sent row wears the badge" guess:
+            // per-row identity now comes from per-row data.
+            if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.invalid = liveStatus.state {
+                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, clock: clock)
+                return MigrationTransferRow(
+                    id: seed.transferId,
+                    index: index,
+                    amount: seed.amount,
+                    status: MigrationTransferRow.Status.invalid,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow
+                )
+            }
+
             // MOB-1513 (T-A): a `.broadcast` live status is in flight right now — the existing
             // broadcasting/sent-pending styling, regardless of position (see this function's own
             // doc, precedence item 2).
@@ -2516,18 +2536,13 @@ enum MigrationDerivations {
         hasOverdueMigrationTransfers: Bool,
         hasLiveStatus: Bool
     ) -> MigrationTransferRow.Status {
-        // The FIRST non-sent row wears the invalid badge, because the SDK no longer says which
-        // transfer was invalidated. Its retired `MigrationAttentionReason.invalidTransfer` carried
-        // the id; the replacement signals — `hasInvalidMigrationTransfers` and
-        // `reconcileMigrationInvalidations` — are both plain Bools, and no per-row `Blocker` covers
-        // invalidation either (only `.expired` does). Attaching it to the first non-sent row keeps
-        // the timeline honest at run scope: something ahead is invalid and the run needs a re-plan,
-        // which is exactly what the recovery flow this routes to says. Filed as a board row — if
-        // the SDK re-exposes the id, restore the exact match here.
-        if isFirstNonSent, case MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer) = state {
-            return MigrationTransferRow.Status.invalid
-        }
-
+        // A25, RESOLVED (SDK addendum §3). This used to put the invalid badge on the first non-sent
+        // row whenever the RUN reported an invalidation, because nothing said which transfer was
+        // meant. `MigrationTransactionStatus.State.invalid(reason:)` now says, so the badge is
+        // decided per-row by the callers above, from the row's own status — and the guess is gone.
+        // A run-level invalidation with no per-row verdict (the "plan no longer covers the balance"
+        // case) stays a run-level statement: the `.updatePlan` banner, not a badge on an arbitrary
+        // row.
         guard isFirstNonSent else { return MigrationTransferRow.Status.pending }
 
         if !hasLiveStatus, case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) = state {
@@ -2650,6 +2665,19 @@ enum MigrationDerivations {
 
             let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
 
+            // A25 (SDK addendum §3): same precedence as `transferRows` — below `.mined`, above
+            // everything else.
+            if case MigrationTransactionStatus.State.invalid = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: index,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.invalid,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow
+                )
+            }
+
             if case MigrationTransactionStatus.State.broadcast = status.state {
                 return MigrationTransferRow(
                     id: String(status.id),
@@ -2728,6 +2756,7 @@ enum MigrationDerivations {
     /// reason for waiting:
     /// - `.mined` -> `.done`
     /// - `.broadcast` -> `.preparing` (in flight)
+    /// - `.invalid` -> `.invalid` (SDK addendum §3 — dead by observed event)
     /// - `isReady` -> `.readyToSend`, whatever the next action is (prove or broadcast — the sheet
     ///   does not distinguish, and neither does the user's decision)
     /// - `blockedOn == .dependencies` with known predecessors -> `.waitsOn([display numbers])`
@@ -2762,6 +2791,11 @@ enum MigrationDerivations {
 
             case MigrationTransactionStatus.State.broadcast:
                 state = MigrationPrepareBalanceRow.State.preparing
+
+            case MigrationTransactionStatus.State.invalid:
+                // SDK addendum §3. Below `.mined` for the same reason every other surface puts it
+                // there — chain inclusion outranks an invalid verdict.
+                state = MigrationPrepareBalanceRow.State.invalid
 
             default:
                 if status.isReady {

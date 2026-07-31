@@ -150,11 +150,13 @@ extension SDKSynchronizerClient: DependencyKey {
             migrationSyncWakeups: { accountUUID in
                 try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)
             },
-            estimatedMigrationChainTip: { accountUUID in
-                try await synchronizer.estimatedMigrationChainTip(accountUUID: accountUUID)
+            estimatedMigrationChainTip: {
+                // Addendum §4: wallet-scoped, not per-account — the projection reads the shared
+                // blocks table, so one answer serves every account.
+                try await synchronizer.estimatedMigrationChainTip()
             },
-            estimatedMigrationSecondsPerBlock: { accountUUID in
-                try await synchronizer.estimatedMigrationSecondsPerBlock(accountUUID: accountUUID)
+            estimatedMigrationSecondsPerBlock: {
+                try await synchronizer.estimatedMigrationSecondsPerBlock()
             },
             debugRescheduleMigrationTransfers: { accountUUID in
                 try await synchronizer.debugRescheduleMigrationTransfers(accountUUID: accountUUID)

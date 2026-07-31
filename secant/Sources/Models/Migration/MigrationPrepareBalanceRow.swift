@@ -45,6 +45,12 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
         /// (1-based), so the view never re-derives them; empty is treated as `.preparing` by the
         /// caption, since "waits on nothing" is not a state a user can act on.
         case waitsOn([Int])
+        /// SDK addendum §3: dead by an observed event — the engine marked this step
+        /// `MigrationTransactionStatus.State.invalid`. No chain condition makes it actionable
+        /// again; the run needs the attention flow. Distinct from every state above because it is
+        /// the only one the user must DO something about, and rendering it as "Preparing" (which is
+        /// where it landed before the state existed) would say the opposite.
+        case invalid
     }
 
     var id: String
