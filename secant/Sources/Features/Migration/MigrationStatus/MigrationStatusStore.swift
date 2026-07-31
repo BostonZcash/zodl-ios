@@ -176,6 +176,9 @@ struct MigrationStatus {
         case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int?)
         case rescheduleTapped
         case sendNowTapped
+        /// Face ID / Touch ID passed for "Send now" — see `sendNowTapped`. Reschedule has no
+        /// equivalent on purpose: it re-reads a window and re-renders, signing and moving nothing.
+        case sendNowAuthenticated
         /// `migrationTransfers()` + `migrationSummary()` + `sdkSynchronizer
         /// .migrationPrivacySyncBufferDuration()` + `manager.isMigrationTorHoldActive()` result.
         /// R8-T6: no longer carries a gate reading — `isSendNowDisabled` is derived from `rows`
@@ -194,6 +197,7 @@ struct MigrationStatus {
         }
     }
 
+    @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.migrationManager) var migrationManager
     // MOB-1496 (W3): `migrationPrivacySyncBufferDuration()` for the resume footer's minutes copy —
     // hydrated here (the store already reads dependencies) rather than adding a dependency to the
@@ -240,6 +244,20 @@ struct MigrationStatus {
                 return .send(.delegate(.reschedule))
 
             case .sendNowTapped:
+                // BIOMETRICS, like every other tap in Zodl that moves money. The transaction was
+                // already signed at commit (behind its own Face ID), so this authenticates a
+                // BROADCAST rather than a signature — and that is deliberate: the user is tapping a
+                // button labelled "Send now", and every other send in the app asks. An exception
+                // here would teach people that migration money moves without asking.
+                //
+                // Honest about what this is NOT: the headless drive loop broadcasts these same
+                // pre-signed transactions with no prompt (it has no UI and cannot have one), so this
+                // is a CONSENT affordance, not a security boundary against someone holding an
+                // unlocked phone. It buys consistency of expectation, which is worth having on its
+                // own — but do not let it be mistaken for a control it isn't.
+                return localAuthentication.gated(success: .sendNowAuthenticated, cancelled: nil)
+
+            case .sendNowAuthenticated:
                 return .send(.delegate(.sendNow))
 
             case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes, let isTorHoldActive):
