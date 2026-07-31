@@ -57,12 +57,15 @@ extension MigrationCoordFlow {
                 }
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     let pathState = await reentryPathState(accountUUID: accountUUID)
-                    // Resolve FIRST, push second: the root is revealed in the same render as the
-                    // screen that belongs on top of it, so the fork never appears under a committed
-                    // run. `nil` means the fork IS the destination — reveal it and push nothing.
-                    await send(.reentryResolved)
+                    // PUSH first, reveal second — and the push does BOTH in one mutation. The
+                    // previous ordering (reveal, then push) was two separate sends, so SwiftUI could
+                    // render between them: root revealed, path still empty, fork on screen. Exactly
+                    // the flash this was meant to remove, just narrower. `nil` means the fork IS the
+                    // destination, and only then is a bare reveal correct.
                     if let pathState {
                         await send(.pushHydratedPathState(pathState))
+                    } else {
+                        await send(.reentryResolved)
                     }
                 }
 
@@ -93,7 +96,10 @@ extension MigrationCoordFlow {
                 return .none
 
             case .pushHydratedPathState(let pathState):
+                // Both in ONE mutation, so no render can catch the root revealed with an empty
+                // path — which is the state that shows the fork. See `State.isReentryResolved`.
                 state.path.append(pathState)
+                state.isReentryResolved = true
                 return .none
 
             case .pushHydratedStatus(let statusState):

@@ -37,7 +37,20 @@ struct MigrationCoordFlowView: View {
                             )
                     )
                 } else {
-                    Color.clear
+                    // A SPINNER, not a blank. Holding the root back removed the fork flash but
+                    // replaced it with an empty screen for however long re-entry takes — and on a
+                    // device that turned out to be up to ~15 s, because the hydrating reads queue
+                    // behind the migration proving work on the same DB actor. Fifteen seconds of
+                    // nothing reads as a hang; fifteen seconds of a spinner reads as work. Neither
+                    // is good, and the duration itself is tracked separately (handover O2) — but of
+                    // the two, only one lies about what the app is doing.
+                    VStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .background(Asset.Colors.background.color)
                 }
             } destination: { store in
                 switch store.case {
