@@ -147,7 +147,7 @@ import XCTestDynamicOverlay
         } operation: {
             var confirmState = SendConfirmation.State.initial
             confirmState.isKeystoneCodeFound = true
-            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
+            confirmState.detectedKeystoneFirmware = KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
 
             var initialState = SendCoordFlow.State()
             initialState.path.append(.confirmWithKeystone(confirmState))
@@ -186,7 +186,7 @@ import XCTestDynamicOverlay
         } operation: {
             var initialState = SignWithKeystoneCoordFlow.State()
             initialState.sendConfirmationState.isKeystoneCodeFound = true
-            initialState.sendConfirmationState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
+            initialState.sendConfirmationState.detectedKeystoneFirmware = KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
             initialState.path.append(.keystoneFirmwareUpdate(initialState.sendConfirmationState))
             let updateId = try #require(initialState.path.ids.last)
 
@@ -219,7 +219,7 @@ import XCTestDynamicOverlay
         } operation: {
             var confirmState = SendConfirmation.State.initial
             confirmState.isKeystoneCodeFound = true
-            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
+            confirmState.detectedKeystoneFirmware = KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
 
             var initialState = SendCoordFlow.State()
             initialState.path.append(.confirmWithKeystone(confirmState))

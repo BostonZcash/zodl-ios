@@ -44,7 +44,7 @@ struct SendConfirmation {
         /// MOB-1510: firmware version detected on the most recent `foundPCZT` scan that failed the
         /// minimum-firmware gate — `nil` when the scan carried no version stamp at all (firmware
         /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateView`.
-        var detectedKeystoneFirmware: KeystoneFirmwareVersion?
+        var detectedKeystoneFirmware: KeystoneDisplayFirmwareVersion?
         var failedCode: Int?
         var failedDescription: String?
         var isAnchorError = false
@@ -175,7 +175,7 @@ struct SendConfirmation {
         case foundPCZT(Pczt)
         // MOB-1510: Keystone minimum-firmware gate — `keystoneFirmwareUpdateRequired` fires from
         // `foundPCZT` in place of scheduling `createTransactionFromPCZT` when the signed PCZT's
-        // firmware is unstamped or below `KeystoneFirmwareVersion.minimumSupported`; on an accepted
+        // firmware is unstamped or below `KeystoneDisplayFirmwareVersion.minimumSupported`; on an accepted
         // firmware, `foundPCZT` fires `keystoneFirmwareAccepted` for the coordinators to observe.
         // `keystoneFirmwareUpdateCloseTapped` is `KeystoneFirmwareUpdateView`'s Close button.
         case keystoneFirmwareAccepted
@@ -481,15 +481,15 @@ struct SendConfirmation {
                     // releases before the minimum this gate enforces — an unstamped PCZT is
                     // therefore necessarily below minimum, never merely "unknown".
                     let firmwareStamp = pcztWithSigs.keystoneFirmwareStamp()
-                    let detectedFirmware = firmwareStamp.map { KeystoneFirmwareVersion.fromStamp($0) }
+                    let detectedFirmware = firmwareStamp.map { KeystoneDisplayFirmwareVersion.fromStamp($0) }
                     // Both numberings, because they differ: the device stamps its internal major,
                     // which is 10 higher than the version shown on its own screen.
                     let firmwareGateLog = """
                         Keystone firmware gate: raw stamp \(firmwareStamp?.rawString ?? "absent"), \
                         reads as \(detectedFirmware?.versionString ?? "unknown"), \
-                        minimum \(KeystoneFirmwareVersion.minimumSupported.versionString)
+                        minimum \(KeystoneDisplayFirmwareVersion.minimumSupported.versionString)
                         """
-                    guard let detectedFirmware, detectedFirmware >= KeystoneFirmwareVersion.minimumSupported else {
+                    guard let detectedFirmware, detectedFirmware >= KeystoneDisplayFirmwareVersion.minimumSupported else {
                         LoggerProxy.warn("\(firmwareGateLog), blocked")
                         state.detectedKeystoneFirmware = detectedFirmware
                         return .send(.keystoneFirmwareUpdateRequired)

@@ -415,8 +415,22 @@ struct ServerSetup {
     /// a custom host, which `classify` alone cannot line up by provider identity since every custom
     /// host is its own family of one.
     ///
-    /// UNLESS the endpoint IS that run's own sync endpoint already: re-choosing the server you are
-    /// already syncing with is the sanctioned same-server mode, not a NEW link, so it never warns.
+    /// TWO EXEMPTIONS, both meaning "this choice creates no link that does not already exist":
+    ///
+    /// 1. The endpoint IS that run's own sync endpoint already — re-choosing the server you are
+    ///    already syncing with is the sanctioned same-server mode, not a new link.
+    /// 2. (A20) That run ALREADY syncs and broadcasts through the same provider. The provider sees
+    ///    both sides of the run whichever of its hosts the user picks, so picking a third one
+    ///    changes the linkability by exactly nothing.
+    ///
+    /// Exemption 2 was the A20 question, and it is a real one rather than a nicety: a warning that
+    /// fires when nothing changes is noise, and noise is what teaches people to dismiss the
+    /// warnings that do matter. The dangerous case — sync on one provider, broadcast on another,
+    /// user about to put them together — is untouched by this and still warns.
+    ///
+    /// Provider identity is not enough on its own, hence the parallel host comparisons: every
+    /// CUSTOM host classifies as its own family of one, so two custom hosts that are really the
+    /// same server would never match by provider.
     ///
     /// Host comparisons are lowercased, matching `ServerProvider.classify`'s own normalization.
     /// Pure and static so it can be table-tested without a store.
@@ -428,11 +442,19 @@ struct ServerSetup {
         let chosenHost = endpoint.host.lowercased()
 
         return activeSnapshots.contains { snapshot in
+            let syncHost = snapshot.syncEndpoint.host.lowercased()
+            let broadcastHost = snapshot.broadcastEndpoint.host.lowercased()
+
             let matchesBroadcastProvider = chosenProvider == snapshot.broadcastProvider
-            let matchesBroadcastHost = chosenHost == snapshot.broadcastEndpoint.host.lowercased()
+            let matchesBroadcastHost = chosenHost == broadcastHost
             guard matchesBroadcastProvider || matchesBroadcastHost else { return false }
 
-            return chosenHost != snapshot.syncEndpoint.host.lowercased()
+            // Exemption 1.
+            guard chosenHost != syncHost else { return false }
+
+            // Exemption 2: this run's two sides are already with one operator.
+            let runIsAlreadySingleProvider = snapshot.syncProvider == snapshot.broadcastProvider || syncHost == broadcastHost
+            return !runIsAlreadySingleProvider
         }
     }
 }

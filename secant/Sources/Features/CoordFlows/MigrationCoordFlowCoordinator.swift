@@ -25,14 +25,15 @@ extension ZcashLightClientKit.KeystoneFirmwareVersion {
     /// The dotted `major.minor.build` rendering of the version the Keystone BATCH-signing response
     /// envelope reports, for the migration flow's firmware-gate copy.
     ///
-    /// A SEPARATE type from the app's own `KeystoneFirmwareVersion`
-    /// (`Features/SendConfirmation/KeystoneFirmwareVersion.swift`), sharing only its bare name —
-    /// hence the module qualification here and at every reference below. The two differ in
-    /// substance, not merely in module: this one carries the device's RAW triple (the SDK documents
-    /// that display offsets are deliberately NOT applied to it), while the app type normalizes a
-    /// PCZT stamp through `stampedMajorOffset`. Do not bridge them: the batch protocol has no
-    /// PCZT-embedded stamp at all, and the two floors are checked against different sources by
-    /// design.
+    /// A SEPARATE type from the app's own `KeystoneDisplayFirmwareVersion`
+    /// (`Features/SendConfirmation/KeystoneDisplayFirmwareVersion.swift`). A21 gave them distinct
+    /// names — they used to share the bare `KeystoneFirmwareVersion`, kept apart only by
+    /// same-module shadowing, which compiled and did the right thing right up until someone
+    /// assigned one to the other. They differ in substance, not merely in module: this one carries
+    /// the device's RAW triple (the SDK documents that display offsets are deliberately NOT applied
+    /// to it), while the app type normalizes a PCZT stamp through `stampedMajorOffset`. Do not
+    /// bridge them: the batch protocol has no PCZT-embedded stamp at all, and the two floors are
+    /// checked against different sources by design.
     var versionString: String {
         "\(major).\(minor).\(build)"
     }
@@ -447,10 +448,10 @@ extension MigrationCoordFlow {
                 // stamp ships since firmware 2.4.6), never merely "unknown" — same reasoning as
                 // `SendConfirmation`'s own gate. The batch envelope's version and its separate floor
                 // never enter this lane.
-                let detectedFirmware = signedPczt.keystoneFirmwareStamp().map(KeystoneFirmwareVersion.fromStamp)
-                guard let detectedFirmware, detectedFirmware >= KeystoneFirmwareVersion.minimumSupported else {
+                let detectedFirmware = signedPczt.keystoneFirmwareStamp().map(KeystoneDisplayFirmwareVersion.fromStamp)
+                guard let detectedFirmware, detectedFirmware >= KeystoneDisplayFirmwareVersion.minimumSupported else {
                     state.detectedKeystoneFirmwareVersion = detectedFirmware?.versionString
-                    state.keystoneFirmwareGateMinimumVersion = KeystoneFirmwareVersion.minimumSupported.versionString
+                    state.keystoneFirmwareGateMinimumVersion = KeystoneDisplayFirmwareVersion.minimumSupported.versionString
                     state.isKeystoneFirmwareGatePresented = true
                     return .send(.keystoneScanAbandoned)
                 }
@@ -913,8 +914,8 @@ extension MigrationCoordFlow {
     /// in this protocol.
     ///
     /// Deliberately distinct from — and unrelated to — the single-transaction flow's own floor,
-    /// `KeystoneFirmwareVersion.minimumSupported` (`Features/SendConfirmation/`), which reads its
-    /// version from a stamp embedded in the signed PCZT bytes. The two `KeystoneFirmwareVersion`
+    /// `KeystoneDisplayFirmwareVersion.minimumSupported` (`Features/SendConfirmation/`), which reads its
+    /// version from a stamp embedded in the signed PCZT bytes. The two `KeystoneDisplayFirmwareVersion`
     /// types share a bare name, so every reference to the SDK's is module-qualified.
     static let keystoneMigrationBatchMinimumFirmware = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
 

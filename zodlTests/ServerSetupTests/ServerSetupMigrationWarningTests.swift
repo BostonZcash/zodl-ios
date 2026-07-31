@@ -90,20 +90,23 @@ import ZcashLightClientKit
         #expect(!Self.shouldWarn(picking: "eu.zec.rocks", sync: "eu.zec.rocks", broadcast: "eu.zec.rocks"))
     }
 
-    /// The exemption is EXACT-HOST, not provider-wide, and this pins that.
+    /// A20, RULED QUIET. Sync and broadcast are already sibling pools of ONE operator, so that
+    /// operator already sees both sides of this run; picking a third pool of the same operator
+    /// changes the linkability by exactly nothing.
     ///
-    /// Sync and broadcast are already sibling pools of one operator, so that operator already sees
-    /// both sides; picking a third pool of the same operator changes the linkability by exactly
-    /// nothing. The predicate warns anyway, because its exemption asks "is this the very host you
-    /// already sync with?" and `na` is not `eu`.
-    ///
-    /// Recorded as the shipped behaviour rather than asserted as the desired one — whether this
-    /// case should warn (truthful: "your migration broadcasts through zec.rocks too") or stay quiet
-    /// (it is noise: the user's action changed nothing) is a product call, filed as A20 on the
-    /// migration board. If it is ruled "quiet", widen the exemption to compare providers and flip
-    /// this expectation.
-    @Test func siblingOfBothSyncAndBroadcastStillWarns() {
-        #expect(Self.shouldWarn(picking: "na.zec.rocks", sync: "eu.zec.rocks", broadcast: "sa.zec.rocks"))
+    /// This flipped from warning to quiet deliberately. A warning that fires when nothing changed
+    /// is noise, and noise is what teaches people to dismiss the warnings that do matter — so the
+    /// truthful-but-useless reading ("your migration broadcasts through zec.rocks too") loses to
+    /// the one that keeps the alert meaningful.
+    @Test func siblingOfARunAlreadyOnOneProviderStaysQuiet() {
+        #expect(!Self.shouldWarn(picking: "na.zec.rocks", sync: "eu.zec.rocks", broadcast: "sa.zec.rocks"))
+    }
+
+    /// The case the exemption must NOT swallow: the run's two sides are with DIFFERENT operators,
+    /// and this pick is what would put them together. Same provider family as the previous test —
+    /// only the run's own shape differs.
+    @Test func siblingOfBroadcastWarnsWhenSyncIsElsewhere() {
+        #expect(Self.shouldWarn(picking: "na.zec.rocks", sync: "us.zec.stardust.rest", broadcast: "sa.zec.rocks"))
     }
 
     // MARK: - Several accounts migrating at once
