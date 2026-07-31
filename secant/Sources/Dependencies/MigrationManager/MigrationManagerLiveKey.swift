@@ -2271,6 +2271,29 @@ enum MigrationDerivations {
             return MigrationReentryRoute.recovery(isExpired: isExpired)
         }
 
+        // BEFORE `hasOverdue`, deliberately. During the split phase a transfer can pass its
+        // scheduled height while its PREPARATION has not yet mined: the transfer is then "overdue"
+        // by the clock and un-sendable by the engine, which refuses it on unmet dependencies.
+        //
+        // Ranked the other way round — as it was until the 07-31 test session — that routed the user
+        // to the Resume screen offering an ENABLED "Send now" for a transfer nothing could send,
+        // while the banner, which only consults `hasOverdue` inside `.inProgress`, read "Migration in
+        // Progress · 0 of 12" from the very same inputs. Two surfaces, one state, opposite stories.
+        //
+        // Safe because the route decides only WHICH SCREEN a banner tap opens. Delivery is driven by
+        // `runBroadcastSession` on every app open regardless of route, so a transfer that does become
+        // broadcastable mid-split still goes out headlessly — this costs no delivery and removes an
+        // action that could not succeed.
+        //
+        // Far likelier on testnet than mainnet: the 1/12 anchor-grid compression can put a transfer's
+        // window within a couple of blocks of its preparation's broadcast, where mainnet's 144-block
+        // grid leaves preparations hours to mine first.
+        if case MigrationState.splitPendingConfirmation = state {
+            // MOB-1513 (B4): the split phase re-enters on B10 Migration Progress — the "Splitting
+            // Funds" screen (and its dedicated route) no longer exist.
+            return MigrationReentryRoute.statusProgress
+        }
+
         if hasOverdue {
             return MigrationReentryRoute.statusResume
         }
@@ -2291,12 +2314,6 @@ enum MigrationDerivations {
 
         if case MigrationState.complete = state {
             return isCompleteAcknowledged ? MigrationReentryRoute.entry : MigrationReentryRoute.complete
-        }
-
-        if case MigrationState.splitPendingConfirmation = state {
-            // MOB-1513 (B4): the split phase re-enters on B10 Migration Progress — the "Splitting
-            // Funds" screen (and its dedicated route) no longer exist.
-            return MigrationReentryRoute.statusProgress
         }
 
         return MigrationReentryRoute.entry
