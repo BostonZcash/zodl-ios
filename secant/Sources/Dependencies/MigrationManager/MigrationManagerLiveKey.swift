@@ -1555,7 +1555,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // second foreground trigger, a raced scene-phase flip) must not submit twice.
             guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
 
-            LoggerProxy.event("\(Self.logTag) broadcasting transfer \(id) — headless send session")
+            LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
             pokeStateEvent(for: accountUUID)
             await broadcastOneTransfer(accountUUID: accountUUID)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
@@ -1588,6 +1588,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
                     _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
                 }
+                LoggerProxy.event("\(Self.logTag) broadcast result: \(result)")
                 await recordTransferBroadcast(accountUUID: accountUUID, result: result)
                 await reconcile()
                 guard case MigrationTransferResult.success = result else {
@@ -1598,6 +1599,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             case .nothingDue:
                 // The advance step said broadcast and the executor disagrees — a tip moved under
                 // us, or another lane got there first. Nothing was sent; let sync resume.
+                LoggerProxy.event("\(Self.logTag) broadcast result: nothing due — the executor disagreed with the step")
                 await refreshMigrationSyncGate()
 
             case .awaitingProof(let id):
