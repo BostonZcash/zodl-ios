@@ -170,6 +170,23 @@ extension Root {
                     }
                     : .none
 
+                // MOB-1466 (07-31, field-caught): `migrationReconcileEffect` must reach EVERY return
+                // below, not just this one. It used to be returned here and nowhere else — so the
+                // whole sync-complete migration edge (invalidation sweep, prove sweep, reconcile,
+                // notification arming) ran only when NO account was selected, which is precisely the
+                // case with nothing to migrate. On every real wallet the effect was built and thrown
+                // away by the next `return`.
+                //
+                // What that looked like on a device: the engine asked to prove preparation (0,0) at
+                // every open, forever. Nothing proved it, so nothing was ever broadcast, so the run
+                // sat at 0-of-12 with every preparation reading "Ready now" — a committed migration
+                // that could not take its first step. Giving the sweeps their callers (A24/A28) was
+                // necessary and not sufficient: the callers existed and their effect was discarded
+                // one line later.
+                //
+                // Merged into each return rather than hoisted, because the paths below legitimately
+                // return different things and each one is reachable at a sync-complete edge. The
+                // effect is `.none` unless this tick IS that edge, so merging costs nothing.
                 guard let account = state.selectedWalletAccount else {
                     return migrationReconcileEffect
                 }
@@ -197,7 +214,10 @@ extension Root {
 
                 // handle BCGTask
                 guard state.bgTask != nil else {
-                    return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                    return .merge(
+                        migrationReconcileEffect,
+                        .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                    )
                 }
                 
                 var finishBGTask = false
@@ -224,12 +244,16 @@ extension Root {
                     state.bgTask?.setTaskCompleted(success: successOfBGTask)
                     state.bgTask = nil
                     return .merge(
+                        migrationReconcileEffect,
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId)
                     )
                 }
 
-                return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                return .merge(
+                    migrationReconcileEffect,
+                    .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                )
                 
             case .initialization(.checkRestoreWalletFlag(let syncStatus)):
                 if state.isRestoringWallet && syncStatus == .upToDate {
