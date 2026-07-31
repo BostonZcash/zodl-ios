@@ -90,7 +90,13 @@ struct MigrationStatus {
         /// Computed off `rows` (same idiom as `remainingCount` above) rather than stored, so it
         /// can never go stale between a `statusLoaded`/`migrationStateChanged` refresh and a read.
         var isSendNowDisabled: Bool {
-            !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
+            // Disabled WHILE RESCHEDULING (field-caught 2026-07-31): the reschedule spinner leaves
+            // its own button disabled but left this one live, so both CTAs for the same transfer
+            // were tappable at once — asking the engine to move a transfer's window and to
+            // broadcast it in the same breath. The two race over one transaction, and the loser's
+            // outcome is whatever ordering the effects happen to take.
+            if isRescheduling { return true }
+            return !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
         }
 
         /// MOB-1513 (A2): mirrors `MigrationTransferPlan.State.splitRow` for this post-commit

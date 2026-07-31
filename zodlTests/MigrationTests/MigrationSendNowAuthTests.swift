@@ -75,3 +75,20 @@ import ComposableArchitecture
         await store.receive(.delegate(.reschedule))
     }
 }
+
+@Suite(.serialized) @MainActor struct MigrationSendNowMutualExclusionTests {
+    /// Field-caught: the reschedule spinner disabled its own button and left "Send now" live, so a
+    /// user could ask the engine to move a transfer's window and to broadcast it at the same time.
+    /// Two operations, one transaction, and the outcome decided by effect ordering.
+    @Test func sendNowIsDisabledWhileRescheduling() {
+        var state = MigrationStatus.State(presentation: .resume)
+        state.rows = [
+            MigrationTransferRow(id: "1", index: 0, amount: nil, status: .overdue, hoursFromNow: 0)
+        ]
+
+        #expect(!state.isSendNowDisabled, "an overdue row makes Send now available")
+
+        state.isRescheduling = true
+        #expect(state.isSendNowDisabled, "…until a reschedule is in flight for that same transfer")
+    }
+}
