@@ -122,6 +122,18 @@ struct MigrationCoordFlow {
     struct State: Equatable {
         var path = StackState<Path.State>()
         var entryState = MigrationEntry.State()
+        /// Whether re-entry routing has finished deciding which screen this flow opens on.
+        ///
+        /// Entry is the flow's ROOT screen, so it renders the instant the flow opens, while the real
+        /// destination is only APPENDED once `reentryPathState`'s async reads resolve. On a committed
+        /// run that means the fork — "migrate privately, or manually?" — flashes up before the status
+        /// screen replaces it, which is what a tester saw on 07-31. Worse than untidy: the fork
+        /// offers a CHOICE a committed run has already made, and a fast tap on it starts a second
+        /// flow over a live one.
+        ///
+        /// So the root renders nothing until this is true. The wait is identical either way; this
+        /// only stops the app asserting something it has not established yet.
+        var isReentryResolved = false
         /// The lane the user picked at the fork. Held here so a later hop in the same run doesn't
         /// need to re-read it. #1930 also persisted it via `migrationManager.setMigrationMode`;
         /// that persistence matters once a run can be COMMITTED (Phase 3) — Phase 2's manual lane
@@ -210,6 +222,8 @@ struct MigrationCoordFlow {
         /// Pushes a path state that had to be hydrated asynchronously first (the network snapshot
         /// must exist before anything downstream reads it), so the push itself stays synchronous.
         case pushHydratedPathState(Path.State)
+        /// Re-entry routing has decided — reveal the flow root. See `State.isReentryResolved`.
+        case reentryResolved
         /// PHASE 5: the `.notesSpent` recovery lane — a funding note was spent outside the run, so
         /// the whole step is re-planned from live balances. Also the fallback when an expired
         /// refresh fails.

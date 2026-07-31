@@ -48,11 +48,27 @@ extension MigrationCoordFlow {
                 // — a guard whose only consumer is the Phase 6 remainder evaluation. Re-entry
                 // routing itself IS wired: a flow opened over a committed run lands on its live
                 // screen rather than back at the fork.
-                guard state.path.isEmpty else { return .none }
-                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
-                    guard let pathState = await reentryPathState(accountUUID: accountUUID) else { return }
-                    await send(.pushHydratedPathState(pathState))
+                // A screen is already on the stack, so nothing is about to be decided and the root
+                // must not stay hidden behind a resolution that will never run — see
+                // `State.isReentryResolved`.
+                guard state.path.isEmpty else {
+                    state.isReentryResolved = true
+                    return .none
                 }
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    let pathState = await reentryPathState(accountUUID: accountUUID)
+                    // Resolve FIRST, push second: the root is revealed in the same render as the
+                    // screen that belongs on top of it, so the fork never appears under a committed
+                    // run. `nil` means the fork IS the destination — reveal it and push nothing.
+                    await send(.reentryResolved)
+                    if let pathState {
+                        await send(.pushHydratedPathState(pathState))
+                    }
+                }
+
+            case .reentryResolved:
+                state.isReentryResolved = true
+                return .none
 
                 // MARK: - Sheet presentation bindings
 

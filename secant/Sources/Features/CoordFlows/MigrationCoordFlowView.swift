@@ -23,13 +23,22 @@ struct MigrationCoordFlowView: View {
     var body: some View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
-                MigrationEntryView(
-                    store:
-                        store.scope(
-                            state: \.entryState,
-                            action: \.entry
-                        )
-                )
+                // Held blank until re-entry routing has decided (`State.isReentryResolved`). Entry is
+                // this stack's ROOT, so rendering it eagerly flashed the "privately or manually?"
+                // fork on every committed run — offering a choice already made, and tappable while
+                // it showed. The pause is the same wait either way; it just no longer asserts a
+                // state the app has not established.
+                if store.isReentryResolved {
+                    MigrationEntryView(
+                        store:
+                            store.scope(
+                                state: \.entryState,
+                                action: \.entry
+                            )
+                    )
+                } else {
+                    Color.clear
+                }
             } destination: { store in
                 switch store.case {
                 case let .complete(store):
