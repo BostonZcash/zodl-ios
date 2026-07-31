@@ -760,7 +760,7 @@ struct MigrationTransferPlan {
     /// The Keystone `confirmTapped` fork: proposes ALL of the schedule's PCZTs — led by any
     /// preparation (note-split) PCZTs the engine still needs — and hands the whole batch to the
     /// coordinator for ONE batched QR-signing session (rounds are the coordinator's business; see
-    /// `KeystoneBatchChunking`).
+    /// the SDK's action-budget packer).
     ///
     /// Delegates a `MigrationKeystoneBatch`, not a bare array: the prep/transfer boundary is
     /// positional in this SDK and the count has to survive the round trip so the two store calls can

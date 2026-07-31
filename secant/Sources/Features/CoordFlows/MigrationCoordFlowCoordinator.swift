@@ -617,17 +617,16 @@ extension MigrationCoordFlow {
                 let preparationCount: Int
                 if var rounds = state.keystoneBatchRounds {
                     rounds.accumulatedSigned.append(contentsOf: signed)
-                    let totalRounds = KeystoneBatchChunking.totalRounds(itemCount: rounds.allPczts.count)
+                    let totalRounds = rounds.rounds.count
                     let nextRoundIndex = rounds.roundIndex + 1
                     if nextRoundIndex < totalRounds {
                         rounds.roundIndex = nextRoundIndex
                         state.keystoneBatchRounds = rounds
-                        let slice = KeystoneBatchChunking.roundSlice(roundIndex: nextRoundIndex, itemCount: rounds.allPczts.count)
                         state.path.removeLast(state.path.last?.is(\.scan) == true ? 2 : 1)
                         state.path.append(
                             .keystoneSign(
                                 MigrationKeystoneSign.State(
-                                    pczts: Array(rounds.allPczts[slice]),
+                                    pczts: rounds.rounds[nextRoundIndex],
                                     roundIndex: nextRoundIndex,
                                     totalRounds: totalRounds
                                 )
@@ -937,28 +936,29 @@ extension MigrationCoordFlow {
         return (Array(signed[..<boundary]), Array(signed[boundary...]))
     }
 
-    /// Starts the BATCH signing ceremony, capped at `KeystoneBatchChunking.maxItemsPerRound` PCZTs
-    /// per animated-QR round trip — the device-safety cap (Android observed a real Keystone OOM on
-    /// an oversized batch).
+    /// Starts the BATCH signing ceremony over the rounds the SDK already packed by ACTION budget
+    /// (`MigrationKeystoneBatch.rounds`, 96 actions per Keystone round).
     ///
-    /// A batch within the cap is ONE animated QR session over every PCZT. A larger batch signs
-    /// across several rounds, each a full self-contained ceremony over its `roundSlice` with a fresh
-    /// request id; the applied signatures accumulate in `state.keystoneBatchRounds` and nothing
-    /// stores until the last round lands. Within a round, `buildKeystoneSignBatchQRParts` is a
-    /// fountain encoder and the SDK decides the frame count.
+    /// A batch that fits one round is ONE animated QR session. A larger batch signs across several,
+    /// each a full self-contained ceremony over its own round with a fresh request id; the applied
+    /// signatures accumulate in `state.keystoneBatchRounds` and nothing stores until the last round
+    /// lands. Within a round, `buildKeystoneSignBatchQRParts` is a fountain encoder and the SDK
+    /// decides the frame count.
+    ///
+    /// The action budget also subsumes the old device-safety ITEM cap this used to enforce (Android
+    /// observed a real Keystone OOM at 50 items): 96 actions can never exceed 32 items, since the
+    /// lightest transaction — a transfer — weighs 3.
     private func beginKeystoneCeremony(batch: MigrationKeystoneBatch, state: inout State) {
-        let totalRounds = KeystoneBatchChunking.totalRounds(itemCount: batch.pczts.count)
         state.keystoneBatchRounds = KeystoneBatchRounds(
-            allPczts: batch.pczts,
+            rounds: batch.rounds,
             preparationCount: batch.preparationCount
         )
-        let slice = KeystoneBatchChunking.roundSlice(roundIndex: 0, itemCount: batch.pczts.count)
         state.path.append(
             .keystoneSign(
                 MigrationKeystoneSign.State(
-                    pczts: Array(batch.pczts[slice]),
+                    pczts: batch.rounds.first ?? [],
                     roundIndex: 0,
-                    totalRounds: totalRounds
+                    totalRounds: batch.rounds.count
                 )
             )
         )

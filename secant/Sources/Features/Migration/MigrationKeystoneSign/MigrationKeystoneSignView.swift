@@ -52,7 +52,7 @@ struct MigrationKeystoneSignView: View {
                             .zFont(.medium, size: 16, style: Design.Text.primary)
                             .padding(.top, 32)
 
-                        // MOB-1513 (R9): a capped multi-round ceremony (see `KeystoneBatchChunking`)
+                        // MOB-1513 (R9): a multi-round ceremony (packed by action budget in the SDK)
                         // tells the user where they are; the common single-round ceremony shows
                         // nothing new.
                         if store.totalRounds > 1 {

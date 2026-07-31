@@ -50,7 +50,7 @@ struct MigrationCoordFlow {
 
     /// PHASE 7: the batch ceremony's multi-round bookkeeping.
     ///
-    /// A batch beyond `KeystoneBatchChunking.maxItemsPerRound` signs across several QR round trips:
+    /// A batch beyond one signing round's action budget signs across several QR round trips:
     /// each round is a full, self-contained ceremony (own request id, own build → scan → decode →
     /// apply), and the rounds' applied signatures accumulate HERE — nothing stores until the last
     /// round lands, preserving the all-or-nothing invariant (an abandon mid-sequence discards
@@ -60,11 +60,12 @@ struct MigrationCoordFlow {
     /// 0 is then also the last round); `nil` for the immediate lane's single-PCZT ceremony, which
     /// never chunks. Cleared at the last round's store handoff and by every ceremony-ending route.
     struct KeystoneBatchRounds: Equatable {
-        /// The ceremony's FULL ordered batch — preparation PCZTs first, then the schedule's
-        /// transfers: the order both the stores and `preparationCount` depend on. Rounds slice this
-        /// via `KeystoneBatchChunking.roundSlice`.
-        var allPczts: [MigrationUnsignedTransferPczt]
-        /// How many leading entries of `allPczts` are preparation transactions — carried over from
+        /// The ceremony's rounds, already packed by ACTION budget by the SDK at propose time
+        /// (`MigrationKeystoneBatch.rounds`). Concatenated they are the full ordered batch —
+        /// preparation PCZTs first, then the schedule's transfers — the order both the stores and
+        /// `preparationCount` depend on.
+        var rounds: [[MigrationUnsignedTransferPczt]]
+        /// How many leading entries of the concatenated `rounds` are preparation transactions — from
         /// `MigrationKeystoneBatch` so the signed result splits the same way. See
         /// `MigrationCoordFlow.splitKeystoneBatch`.
         var preparationCount: Int

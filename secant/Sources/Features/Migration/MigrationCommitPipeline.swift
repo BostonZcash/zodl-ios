@@ -93,6 +93,16 @@ struct MigrationKeystoneBatch: Equatable {
     /// How many leading entries of `pczts` are preparation (note-split) transactions. `0` when the
     /// run needs no preparation layer.
     let preparationCount: Int
+    /// `pczts` split into device-sized signing sessions by ACTION budget, computed by the SDK's
+    /// exact packer (`batchMigrationPcztsForSigning`) at propose time. Order-preserving, so
+    /// concatenating the rounds reproduces `pczts` exactly and `preparationCount` still indexes it.
+    ///
+    /// Batching by actions rather than by transaction count is the correctness fix: a preparation
+    /// weighs 16 Orchard actions and a transfer 3, against a Keystone budget of 96. The old
+    /// count-based cap of 32 items was derived offline as "96 ÷ ~3" and is right ONLY for a
+    /// pure-transfer batch — a batch containing preparations could reach 32 × 16 = 512 actions in
+    /// one round, five rounds' worth of work the device would refuse.
+    let rounds: [[MigrationUnsignedTransferPczt]]
 }
 
 /// Shared commit-lane pipelines for the migration flow's software- and Keystone-signing paths (see
@@ -241,7 +251,12 @@ enum MigrationCommitPipeline {
             throw MigrationCommitError.emptyPcztBatch
         }
 
-        return MigrationKeystoneBatch(pczts: pczts, preparationCount: preps.count)
+        // Batch BEFORE signing, never after: rows returned by `applyKeystoneBatchSignatures` carry
+        // `actions == 0` (reconstructed from retained bytes, no engine context) and the packer
+        // throws on them rather than mis-packing a session.
+        let rounds = try await sdkSynchronizer.batchMigrationPcztsForSigning(pczts, MigrationSigningBudget.keystone)
+
+        return MigrationKeystoneBatch(pczts: pczts, preparationCount: preps.count, rounds: rounds)
     }
 
     /// Used by the immediate submit path above (and by the Keystone one): the broadcast already landed by the time this

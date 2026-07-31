@@ -6,7 +6,7 @@
 //  mirrors `SignWithKeystoneView`'s composition exactly (SendConfirmation cannot host this — its
 //  PCZT pipeline is single-PCZT and proposal-centric). Batched signing: this screen carries the
 //  current ROUND's slice of the signing context's batch — MOB-1513 (R9) caps a round at
-//  `KeystoneBatchChunking.maxItemsPerRound` PCZTs (device safety; see that file's doc), so a large
+//  one signing round's ACTION budget (96 for Keystone; a preparation weighs 16, a transfer 3), so a large
 //  batch signs across several sign→scan round trips driven by `MigrationCoordFlowCoordinator`,
 //  while a batch within the cap remains ONE animated QR per ceremony (within a round the SDK's
 //  fountain encoder still decides the frame count). `roundIndex`/`totalRounds` surface "Round X of
@@ -37,7 +37,7 @@ import ComposableArchitecture
 @Reducer
 struct MigrationKeystoneSign {
     /// MOB-1513: the animated QR's maximum per-frame payload length. Android parity
-    /// (`KeystoneBatchChunking`'s equivalent constant on that platform).
+    /// (the equivalent budget on that platform).
     static let maxFragmentLen = 150
 
     @ObservableState
@@ -70,7 +70,7 @@ struct MigrationKeystoneSign {
         /// bookkeeping (`MigrationCoordFlow.State.keystoneBatchRounds`).
         let roundIndex: Int
         /// MOB-1513 (R9): how many rounds the whole ceremony needs
-        /// (`KeystoneBatchChunking.totalRounds`). 1 — the common case — hides the indicator.
+        /// (the SDK packer's round count). 1 — the common case — hides the indicator.
         let totalRounds: Int
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
