@@ -149,6 +149,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
             visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
+            runBroadcastSession: { await impl.runBroadcastSession() },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -320,6 +321,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.notStarted` seed: a first real reconcile reading `.notStarted`/no-balance pushes nothing
     /// (value unchanged).
     private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
+    /// A13: accounts whose broadcast is IN FLIGHT right now, in this app session
+    /// (`runBroadcastSession`). Read by `bannerVariant` to raise `.transferSending`.
+    ///
+    /// Deliberately in-memory and NOT persisted: it describes a live submission, so a process that
+    /// dies mid-broadcast must come back with it clear — a persisted flag would strand the "sending,
+    /// keep the app open" banner forever, asking the user to keep alive a session that no longer
+    /// exists. It is also the re-entrancy guard: a second driver call for the same account while one
+    /// is running is a no-op rather than a double submit.
+    private let broadcastsInFlight = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
 
     /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
     /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration
@@ -405,6 +415,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
             // .torHoldActive`'s doc.
             isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID),
+            // A13: purely in-session — see `broadcastsInFlight`'s doc. Read last, after every async
+            // read above has settled, so the answer is as close to "now" as this function gets.
+            isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
             round: roundContext.round,
             totalRounds: roundContext.totalRounds
         )
@@ -1361,6 +1374,108 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return proved
     }
 
+    /// THE BROADCAST SESSION — see `MigrationManagerClient.runBroadcastSession`.
+    ///
+    /// Follows `MigrationSendingStore.executeNextTransfer`'s ENGINE lane step for step (stop sync,
+    /// read the run's pinned network snapshot, submit against the estimated tip, classify, record,
+    /// reconcile, reopen the gate) and diverges in exactly one way, which is the whole reason both
+    /// exist: this lane has NO SCREEN. There is no failure sheet to present and no Retry to offer,
+    /// so a classified failure is routed for its PERSISTENT effects only — the Tor-hold indicator
+    /// and the pending-prompt latch, i.e. the state the banner and the flow read on the next
+    /// visit — and the returned route is dropped. Nothing here presents, alerts, or navigates.
+    ///
+    /// Deliberately OUTSIDE `serialExecutor`, same reasoning as `runProveSweep`: a submission is a
+    /// long network operation (Tor bootstrap included), and holding the mutex that serializes
+    /// reconcile/commit across it would block the very `reconcile()` that runs at the end of it.
+    func runBroadcastSession() async -> Bool {
+        guard isIronwoodActivated() else { return false }
+
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+
+        for accountUUID in accountUUIDs {
+            guard case let MigrationAdvanceStep.broadcast(id)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) else {
+                continue
+            }
+            // The user asked to press Send themselves. `visitKind()` still suppressed sync for this
+            // session — the engine says a broadcast is due, and that is what makes the session a
+            // send one regardless of who presses the button — so the transfer stays deliverable the
+            // moment they tap. This lane simply never taps for them.
+            guard !gateStorage.isManualDelivery(for: accountUUID) else {
+                LoggerProxy.event("migration: broadcast \(id) is due but delivery is manual — leaving it to the user")
+                continue
+            }
+            // Re-entrancy: a driver call arriving while this account is already mid-broadcast (a
+            // second foreground trigger, a raced scene-phase flip) must not submit twice.
+            guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
+
+            LoggerProxy.event("migration: broadcasting transfer \(id) — headless send session")
+            pokeStateEvent(for: accountUUID)
+            await broadcastOneTransfer(accountUUID: accountUUID)
+            broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+            pokeStateEvent(for: accountUUID)
+
+            // ZIP 318: a session carries ONE broadcast. A second account's due transfer waits for
+            // the next app-open, which is also the next delivery window the user gives us.
+            return true
+        }
+
+        return false
+    }
+
+    /// One account's submission, from `runBroadcastSession`. Every exit path either ends in a
+    /// landed broadcast (the SDK's own migration gate transitions, and nothing needs nudging) or
+    /// reopens the app-side sync gate — sync was stopped for a broadcast that did not land, and
+    /// without the nudge nothing else would ever restart it.
+    private func broadcastOneTransfer(accountUUID: AccountUUID) async {
+        let options = await migrationNetworkOptions(accountUUID: accountUUID)
+        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+
+        do {
+            // `useEstimatedTip: true` for exactly the reason the foreground lane passes it: this
+            // session deliberately did not sync, so the scanned tip is stale by construction and
+            // would report "nothing due" for a transfer that genuinely is.
+            let attempt = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options, true)
+
+            switch attempt {
+            case .executed(let result):
+                if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
+                    _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+                }
+                await recordTransferBroadcast(accountUUID: accountUUID, result: result)
+                await reconcile()
+                guard case MigrationTransferResult.success = result else {
+                    await refreshMigrationSyncGate()
+                    return
+                }
+
+            case .nothingDue:
+                // The advance step said broadcast and the executor disagrees — a tip moved under
+                // us, or another lane got there first. Nothing was sent; let sync resume.
+                await refreshMigrationSyncGate()
+
+            case .awaitingProof(let id):
+                // Proving is sync-bound, so it must NOT happen in a send session. Reopening the
+                // gate IS the fix: the next sync visit's prove sweep produces the proof, and a
+                // later send visit delivers it.
+                LoggerProxy.event("migration: transfer \(id) due but awaiting proof — deferring to the next sync visit")
+                await refreshMigrationSyncGate()
+            }
+        } catch ZcashError.migrationRecordFailedAfterBroadcast {
+            // The broadcast LANDED and only recording it failed (the engine self-heals later) —
+            // treated exactly as a success: not a failure to route, and no gate nudge.
+            await reconcile()
+        } catch {
+            if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
+                _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+            }
+            LoggerProxy.event("migration: headless broadcast failed — \(error.toZcashError())")
+            await refreshMigrationSyncGate()
+        }
+    }
+
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 
@@ -1799,6 +1914,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         lastPushedHasBalance.withLock { $0[accountUUID] = hasBalanceToMigrate }
         subject.send(state)
     }
+
+    /// A13: re-delivers an account's CURRENT state to `stateEvents` subscribers without changing it
+    /// — the escape hatch for something that changes what the banner should SAY without changing
+    /// the `MigrationState` it derives from. Today that is a broadcast starting and finishing:
+    /// `pushStateIfChanged` above would dedupe both, and the banner would keep reading
+    /// "Transfer N is waiting" through the whole submission.
+    ///
+    /// Only pokes a subject that ALREADY exists. `subject(for:)` would create one seeded
+    /// `.notStarted`, and subscribers would read that seed as a real state change — closing the
+    /// banner instead of refreshing it.
+    private func pokeStateEvent(for accountUUID: AccountUUID) {
+        guard let subject = stateSubjects.withLock({ $0[accountUUID] }) else { return }
+        subject.send(subject.value)
+    }
 }
 
 // MARK: - Pure derivations (table-testable, no SDK dependency)
@@ -1861,6 +1990,7 @@ enum MigrationDerivations {
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
         isTorHoldActive: Bool = false,
+        isBroadcastInFlight: Bool = false,
         round: Int = 1,
         totalRounds: Int? = nil
     ) -> MigrationBannerVariant? {
@@ -1895,6 +2025,16 @@ enum MigrationDerivations {
             // unaffected.
             if progress.isImmediate {
                 return nil
+            }
+            // A13: a broadcast is happening RIGHT NOW, in this session, with no screen in front of
+            // the user (`MigrationManagerImpl.runBroadcastSession`). Checked ahead of `hasOverdue`
+            // because both are true at once during a broadcast — a due transfer is exactly what is
+            // being sent — and "Transfer N is waiting" while it is actually going out is the wrong
+            // half of that truth. The banner's own copy asks the user to keep the app open, which is
+            // the one thing that keeps the session (and so the delivery) alive; a waiting banner
+            // asks for nothing.
+            if isBroadcastInFlight {
+                return MigrationBannerVariant.transferSending(number: progress.completedTransfers + 1)
             }
             if hasOverdue {
                 return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1, torHold: isTorHoldActive)

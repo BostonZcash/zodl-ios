@@ -299,6 +299,11 @@ extension Root {
                         // moment sync connects. See `MigrationVisit`.
                         if await migrationManager.visitKind() == .send {
                             LoggerProxy.event("migration: skipping sync start — broadcast session")
+                            // A13: and then USE the session for what it was claimed for. With no
+                            // background lane on iOS this open IS the delivery window — suppressing
+                            // sync without broadcasting would just stall a schedule the user
+                            // already confirmed.
+                            _ = await migrationManager.runBroadcastSession()
                         } else {
                             try await sdkSynchronizer.start(true)
                         }
@@ -562,6 +567,7 @@ extension Root {
                             // `MigrationVisit`.
                             if await migrationManager.visitKind() == .send {
                                 LoggerProxy.event("migration: skipping sync start on launch — broadcast session")
+                                _ = await migrationManager.runBroadcastSession()
                             } else {
                                 try await sdkSynchronizer.start(false)
                             }

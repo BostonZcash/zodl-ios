@@ -100,6 +100,21 @@ struct MigrationManagerClient: Sendable {
     /// Returns the number of transactions proved across all accounts (0 is the normal case).
     var runProveSweep: @Sendable () async -> Int = { 0 }
 
+    /// THE BROADCAST SESSION — the other half of `visitKind() == .send`. Discharges the engine's
+    /// `.broadcast` step headlessly, without the user ever navigating into the migration flow.
+    ///
+    /// With no background lane on iOS, an app-open IS the delivery window: if nothing drives the
+    /// broadcast here, a scheduled transfer waits for the user to find the flow, and a schedule the
+    /// user already confirmed silently stops advancing. This is what the retired BG task used to do.
+    ///
+    /// Broadcasts AT MOST ONE transfer per call (ZIP 318: a session carries one broadcast, and the
+    /// engine's own contract for `.broadcast` is "broadcast it and end the session") — a second
+    /// account with a due transfer waits for the next app-open. Skips manual-delivery accounts: the
+    /// user asked to press the button themselves, and this must never press it for them.
+    ///
+    /// Returns true iff something was actually broadcast.
+    var runBroadcastSession: @Sendable () async -> Bool = { false }
+
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
