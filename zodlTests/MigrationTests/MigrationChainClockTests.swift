@@ -68,6 +68,42 @@ import ZcashLightClientKit
         #expect(MigrationETA.minutesFromNow(scheduledHeight: 1048, clock: clock) == 60)
     }
 
+    // MARK: - The notification buffer
+
+    /// Two blocks at target spacing IS 150 s, so on a healthy chain both readings of "add two
+    /// blocks" agree.
+    @Test func theBufferIsTwoBlocksAtTargetSpacing() {
+        #expect(MigrationChainClock(tip: 1000).notificationBuffer == 150)
+    }
+
+    /// A slow chain gets two REAL blocks, not two nominal ones — the whole point of a block-denominated
+    /// buffer.
+    @Test func aSlowChainGetsTwoRealBlocks() {
+        #expect(MigrationChainClock(tip: 1000, secondsPerBlock: 150).notificationBuffer == 300)
+    }
+
+    /// A fast chain keeps the 150 s floor. Two blocks at 5 s is 10 s of slack, which is no slack at
+    /// all against estimator error — and firing early is the failure mode that costs the user
+    /// something.
+    @Test func aFastChainKeepsTheFloor() {
+        #expect(MigrationChainClock(tip: 1000, secondsPerBlock: 5).notificationBuffer == 150)
+    }
+
+    @Test func aNotificationLandsAfterTheHeightItNames() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let clock = MigrationChainClock(tip: 100, secondsPerBlock: 75)
+        let height: BlockHeight = 180
+
+        #expect(clock.notificationDate(atHeight: height, now: now) == clock.date(atHeight: height, now: now).addingTimeInterval(150))
+    }
+
+    /// Even a height already at the tip is poked about slightly late rather than instantly — the
+    /// estimate that produced "now" is itself approximate.
+    @Test func aDueHeightIsStillBuffered() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(MigrationChainClock(tip: 1000).notificationDate(atHeight: 900, now: now) == now.addingTimeInterval(150))
+    }
+
     // MARK: - Bucketing through the frame
 
     @Test func minutesFloorRatherThanRound() {

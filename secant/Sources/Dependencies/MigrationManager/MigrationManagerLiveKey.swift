@@ -147,6 +147,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
+            migrationPrepareBalanceRows: { await impl.migrationPrepareBalanceRows(accountUUID: $0) },
             visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
             runBroadcastSession: { await impl.runBroadcastSession() },
@@ -1313,9 +1314,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let now = Date()
 
         // A SYNC step: the earliest height at which the engine wants the wallet woken and proved.
-        // No privacy buffer applies — a sync visit is the thing the buffer separates a SEND from.
+        // No privacy buffer applies — a sync visit is the thing THAT buffer separates a SEND from.
+        // The two-block notification slack does apply; see `MigrationChainClock.notificationBuffer`.
         let proveDate = (try? await sdkSynchronizer.migrationSyncWakeups(resolvedAccountUUID))?
-            .map { clock.date(atHeight: $0.height, now: now) }
+            .map { clock.notificationDate(atHeight: $0.height, now: now) }
             .min()
 
         // A SEND step: the first row not yet sent...
@@ -1325,7 +1327,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // ...at the later of its own window and the privacy buffer's expiry. A sync that just
             // completed pushes it out: sending on its heels is exactly the adjacency the buffer
             // exists to prevent, so poking at the window would invite an action the gate refuses.
-            var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60)
+            //
+            // The row carries MINUTES (its displayed ETA), not a height, so the two-block slack is
+            // added here rather than through `notificationDate` — same number, same reason.
+            var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60 + clock.notificationBuffer)
             if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > date {
                 date = gateUntil
             }
@@ -1721,6 +1726,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         return MigrationDerivations.preparationRows(
+            statuses: statuses,
+            clock: await chainClock(accountUUID: resolvedAccountUUID)
+        )
+    }
+
+    /// A14: the "Prepare Your Balance" sheet's real per-step ladder — see
+    /// `MigrationDerivations.prepareBalanceRows`. Sibling of `migrationPreparationRows` above: same
+    /// source statuses, different renderer (the sheet's step list rather than the timeline's rows).
+    func migrationPrepareBalanceRows(accountUUID: AccountUUID?) async -> [MigrationPrepareBalanceRow]? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+        return MigrationDerivations.prepareBalanceRows(
             statuses: statuses,
             clock: await chainClock(accountUUID: resolvedAccountUUID)
         )
@@ -2678,6 +2695,80 @@ enum MigrationDerivations {
     /// Returns `nil` — not `[]` — when the statuses carry no preparation at all, so a caller can
     /// tell "no preparation data available, fall back to the synthesized row" apart from "this run
     /// genuinely has no preparation step".
+    /// A14: the "Prepare Your Balance" sheet's real per-step ladder, replacing
+    /// `MigrationPrepareBalanceRow.interimLadder`'s shaped placeholder. `nil` when the run reports
+    /// no preparation statuses — the caller falls back to the placeholder, so a read that has not
+    /// arrived yet never empties a sheet the user already opened.
+    ///
+    /// Ordered by (layer, index), the same order `preparationRows` uses, so a step's number here is
+    /// the same step's number on the timeline.
+    ///
+    /// DEPENDENCIES ARE RENUMBERED. `dependsOn` carries the engine's own ids; the sheet says
+    /// "Waits on steps 1 & 2", meaning DISPLAY positions. Mapping one to the other is this
+    /// function's real work — and it is why an id that is not itself a preparation (a transfer this
+    /// step somehow depended on) is dropped rather than rendered as a number pointing at nothing.
+    ///
+    /// State mapping, in precedence order — terminal facts first, then actionability, then the
+    /// reason for waiting:
+    /// - `.mined` -> `.done`
+    /// - `.broadcast` -> `.preparing` (in flight)
+    /// - `isReady` -> `.readyToSend`, whatever the next action is (prove or broadcast — the sheet
+    ///   does not distinguish, and neither does the user's decision)
+    /// - `blockedOn == .dependencies` with known predecessors -> `.waitsOn([display numbers])`
+    /// - anything else still waiting (its scheduled height, an anchor, a signature) -> `.preparing`:
+    ///   work is under way and there is nothing for the user to do, which is exactly what that
+    ///   caption says. `.waitsOn([])` would render as "waits on nothing".
+    static func prepareBalanceRows(
+        statuses: [MigrationTransactionStatus],
+        clock: MigrationChainClock
+    ) -> [MigrationPrepareBalanceRow]? {
+        let ordered = statuses
+            .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
+                guard case let MigrationTransactionStatus.Kind.preparation(layer, index) = status.kind else { return nil }
+                return (layer, index, status)
+            }
+            .sorted { ($0.layer, $0.index) < ($1.layer, $1.index) }
+            .map { $0.status }
+
+        guard !ordered.isEmpty else { return nil }
+
+        // Engine id -> 1-based display number, built from the same order the rows render in.
+        var displayNumber: [UInt32: Int] = [:]
+        for (offset, status) in ordered.enumerated() {
+            displayNumber[status.id] = offset + 1
+        }
+
+        return ordered.enumerated().map { index, status in
+            let state: MigrationPrepareBalanceRow.State
+            switch status.state {
+            case MigrationTransactionStatus.State.mined:
+                state = MigrationPrepareBalanceRow.State.done
+
+            case MigrationTransactionStatus.State.broadcast:
+                state = MigrationPrepareBalanceRow.State.preparing
+
+            default:
+                if status.isReady {
+                    state = MigrationPrepareBalanceRow.State.readyToSend
+                } else if status.blockedOn == MigrationTransactionStatus.Blocker.dependencies {
+                    let waitsOn = status.dependsOn.compactMap { displayNumber[$0] }.sorted()
+                    state = waitsOn.isEmpty
+                        ? MigrationPrepareBalanceRow.State.preparing
+                        : MigrationPrepareBalanceRow.State.waitsOn(waitsOn)
+                } else {
+                    state = MigrationPrepareBalanceRow.State.preparing
+                }
+            }
+
+            return MigrationPrepareBalanceRow(
+                id: String(status.id),
+                index: index,
+                state: state,
+                minutesFromNow: MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+            )
+        }
+    }
+
     static func preparationRows(
         statuses: [MigrationTransactionStatus],
         clock: MigrationChainClock

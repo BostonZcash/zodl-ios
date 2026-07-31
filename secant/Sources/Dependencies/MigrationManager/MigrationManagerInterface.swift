@@ -78,6 +78,11 @@ struct MigrationManagerClient: Sendable {
     // state and ETA. `nil` when no preparation statuses are readable — the caller then falls back
     // to the single synthesized row, preserving pre-D14 behavior.
     var migrationPreparationRows: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationTransferRow]? = { _ in nil }
+    /// A14: the "Prepare Your Balance" sheet's real per-step ladder — each preparation's own state
+    /// and, when it is dependency-blocked, the DISPLAY numbers of the steps it waits on. `nil` when
+    /// the run reports no preparation statuses, which keeps the interim placeholder in play rather
+    /// than emptying a sheet the user already opened.
+    var migrationPrepareBalanceRows: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationPrepareBalanceRow]? = { _ in nil }
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.

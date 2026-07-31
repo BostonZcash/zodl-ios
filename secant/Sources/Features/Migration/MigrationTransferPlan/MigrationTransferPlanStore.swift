@@ -178,6 +178,10 @@ struct MigrationTransferPlan {
         /// MEASURED block rate (see `MigrationChainClock`). Hydrated by `.onAppear`; until it
         /// arrives, rows are laid out against the target-spacing default, then re-applied.
         var chainClock = MigrationChainClock.unknown
+        /// A14: the run's REAL per-step preparation ladder, when the engine has statuses to give.
+        /// `nil` before the read lands (and for a plan not yet committed, which has no per-step
+        /// state to report) — `preparationSteps` then falls back to the shaped placeholder.
+        var loadedPrepareBalanceRows: [MigrationPrepareBalanceRow]?
         /// `false` for the rescheduled variant only (MOB-1466): its transfers are already signed at
         /// the original plan commit, so `confirmTapped` is a plain acknowledgment — `false` skips
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
@@ -293,12 +297,12 @@ struct MigrationTransferPlan {
 
         /// The rows the "Prepare Your Balance" sheet renders.
         ///
-        /// Interim: shaped from the count alone (see `MigrationPrepareBalanceRow.interimLadder`)
-        /// until the FFI for `MigrationState::transaction_statuses` lands and can supply each
-        /// step's real state and `depends_on`. The sheet renders whatever it is handed, so only
-        /// this one line changes when the engine data arrives.
+        /// A14: the engine's REAL per-step states and dependencies once a run is committed and
+        /// reporting statuses. The interim ladder survives as the fallback for a plan that has not
+        /// been committed yet — there is no per-step state to report before the split exists, and a
+        /// shaped placeholder is a better answer there than an empty card.
         var preparationSteps: [MigrationPrepareBalanceRow] {
-            MigrationPrepareBalanceRow.interimLadder(count: preparationCount)
+            loadedPrepareBalanceRows ?? MigrationPrepareBalanceRow.interimLadder(count: preparationCount)
         }
 
         /// The split row's caption: the shared ETA phrasing on its own for a single-transaction
@@ -413,6 +417,7 @@ struct MigrationTransferPlan {
         /// D14: the engine's preparation-transaction estimate for this run — how many
         /// "Split Balance" rows the plan shows. Loaded alongside the round context.
         case chainClockLoaded(MigrationChainClock)
+        case prepareBalanceRowsLoaded([MigrationPrepareBalanceRow]?)
         case preparationCountLoaded(Int)
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
@@ -619,6 +624,9 @@ struct MigrationTransferPlan {
                     // P3: the ETA frame. Loaded on the same appearance path for the same reason —
                     // it depends on live wallet state, not on where the rows came from.
                     await send(.chainClockLoaded(await migrationManager.migrationChainClock(accountUUID)))
+                    // A14: the sheet's real per-step ladder. Same appearance path, same reasoning —
+                    // and `nil` here simply leaves the placeholder in place.
+                    await send(.prepareBalanceRowsLoaded(await migrationManager.migrationPrepareBalanceRows(accountUUID)))
                 }
                 if let injectedSchedule = state.injectedSchedule {
                     apply(injectedSchedule, to: &state)
@@ -652,6 +660,12 @@ struct MigrationTransferPlan {
                 if let schedule = state.schedule {
                     apply(schedule, to: &state)
                 }
+                return .none
+
+            case .prepareBalanceRowsLoaded(let rows):
+                // An empty array is not "no steps" — it is a read that found nothing to say, and it
+                // must not blank a sheet the placeholder was correctly filling.
+                state.loadedPrepareBalanceRows = (rows?.isEmpty ?? true) ? nil : rows
                 return .none
 
             case .preparationCountLoaded(let count):

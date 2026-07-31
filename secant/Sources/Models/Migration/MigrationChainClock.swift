@@ -62,4 +62,23 @@ struct MigrationChainClock: Equatable, Sendable {
     func date(atHeight height: BlockHeight, now: Date) -> Date {
         now.addingTimeInterval(secondsUntil(height: height))
     }
+
+    /// The slack added to a height before it is used as a NOTIFICATION time — two blocks, never
+    /// less than 150 s (which is two blocks at target spacing, so the two readings agree on a
+    /// healthy chain and the slower one wins on a slow one).
+    ///
+    /// Asymmetric on purpose. A poke that fires LATE costs nothing — the step is still there, and
+    /// the user takes it whenever they open the app. A poke that fires EARLY is a wasted
+    /// interruption: the user opens Zodl, the engine says `Waiting`, and nothing happens. Since a
+    /// projected height is an estimate either way, the error belongs on the harmless side.
+    var notificationBuffer: TimeInterval {
+        max(2 * secondsPerBlock, 150)
+    }
+
+    /// `height` as a wall-clock date for a scheduled NOTIFICATION — `date(atHeight:now:)` plus
+    /// `notificationBuffer`. Applied only to pokes, never to a displayed ETA: a caption reading
+    /// "in ~6 hours" should say when the step becomes possible, not when we intend to mention it.
+    func notificationDate(atHeight height: BlockHeight, now: Date) -> Date {
+        date(atHeight: height, now: now).addingTimeInterval(notificationBuffer)
+    }
 }
