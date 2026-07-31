@@ -241,13 +241,23 @@ struct MigrationSending {
                 return .none
 
             case .broadcastFailureRouted(let route):
+                // WHY it failed. The sheet says "The transaction couldn't be broadcast" and nothing
+                // more, which is right for a user and useless for a tester — a repeated failure was
+                // indistinguishable from a different failure each time.
+                LoggerProxy.event("\(MigrationManagerImpl.logTag) send screen: broadcast failed — route \(route)")
                 state.failureKind = route
                 return .none
 
             case .cancelTapped:
+                // Cancel must LEAVE the screen, not merely dismiss the sheet. `.sending` renders a
+                // Lottie and two labels and NOTHING else — no button, no back affordance — so
+                // dismissing in place stranded the user on a progress screen that could never
+                // progress, and the only way out was killing the app. Field-caught 2026-07-31,
+                // during a real broadcast failure, which is exactly when a user is least willing to
+                // believe that force-quitting a wallet is safe.
                 state.isFailurePresented = false
                 state.failureKind = nil
-                return .none
+                return .send(.delegate(.closed))
 
             case .closeTapped:
                 return .send(.delegate(.closed))
