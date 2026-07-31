@@ -303,7 +303,7 @@ extension Root {
                         // below) is too late for the privacy property — the correlation exists the
                         // moment sync connects. See `MigrationVisit`.
                         if await migrationManager.visitKind() == .send {
-                            LoggerProxy.event("migration: skipping sync start — broadcast session")
+                            LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start — broadcast session")
                             // A13: and then USE the session for what it was claimed for. With no
                             // background lane on iOS this open IS the delivery window — suppressing
                             // sync without broadcasting would just stall a schedule the user
@@ -571,7 +571,7 @@ extension Root {
                             // lands in a due broadcast window must not sync either. See
                             // `MigrationVisit`.
                             if await migrationManager.visitKind() == .send {
-                                LoggerProxy.event("migration: skipping sync start on launch — broadcast session")
+                                LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start on launch — broadcast session")
                                 _ = await migrationManager.runBroadcastSession()
                             } else {
                                 try await sdkSynchronizer.start(false)

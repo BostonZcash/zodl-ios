@@ -285,6 +285,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         static let timeToSyncLead: TimeInterval = 2 * 60 * 60
     }
 
+    /// The migration lane's log tag. Deliberately NOT the word "migration": that string appears in
+    /// enough surrounding context (file names, paths, type names) that filtering a console on it
+    /// selects far more than this lane — which cost a tester a testing session. `[MIG]` collides
+    /// with nothing. Every migration log line in the app starts with it.
+    static let logTag = "[MIG]"
+
     let gateStorage: MigrationGateStorage
     /// MOB-1496 (W2): per-account persisted committed schedule — see `MigrationScheduleStorage`.
     let scheduleStorage: MigrationScheduleStorage
@@ -379,7 +385,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
     /// uses.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
+            LoggerProxy.event("\(Self.logTag) no banner: no account selected")
+            return nil
+        }
         // MOB-1513 (B2 fix wave): pre-activation there is no migration banner to derive — the pure
         // `MigrationDerivations.bannerVariant` already returns nil for `isIronwoodActivated == false`
         // (checked ahead of every row). Short-circuit BEFORE the five async reads below (rust
@@ -387,8 +396,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // them and discarding the result: each is a pure read, so moving the exit earlier only saves
         // work and the return value is unchanged. Callers consume the returned variant only, never a
         // side effect of those reads.
-        guard isIronwoodActivated() else { return nil }
-        guard let rawState = await migrationState(accountUUID: resolvedAccountUUID) else { return nil }
+        guard isIronwoodActivated() else {
+            LoggerProxy.event(
+                "\(Self.logTag) no banner: ironwood NOT activated — tip \(sdkSynchronizer.latestState().latestBlockHeight)"
+                + ", activation \(zcashSDKEnvironment.ironwoodActivationHeight())"
+            )
+            return nil
+        }
+        guard let rawState = await migrationState(accountUUID: resolvedAccountUUID) else {
+            // `migrationState` has already logged WHY it could not answer.
+            return nil
+        }
 
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
@@ -411,7 +429,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
         let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
 
-        return MigrationDerivations.bannerVariant(
+        let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
             hasOverdue: hasOverdue,
@@ -433,6 +451,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
             round: roundContext.round,
             totalRounds: roundContext.totalRounds
         )
+
+        // The decision, always, with the two inputs that explain a surprising one. "No banner" was
+        // silent through four separate exits before the 07-31 test session, and a silent decision is
+        // untestable: a tester who sees nothing cannot tell "correctly quiet" from "broken".
+        if let variant {
+            LoggerProxy.event("\(Self.logTag) banner: \(variant) — state \(state), orchard \(balance.decimalString())")
+        } else {
+            LoggerProxy.event("\(Self.logTag) no banner: state \(state), orchard \(balance.decimalString())")
+        }
+
+        return variant
     }
 
     /// R7 final review, Important-1 (spec §G): per-account read of the persisted Tor-hold indicator
@@ -1375,7 +1404,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
         let visit = MigrationVisit.decide(advanceSteps: steps)
         if visit == .send {
-            LoggerProxy.event("migration: broadcast due — this session will NOT sync")
+            LoggerProxy.event("\(Self.logTag) broadcast due — this session will NOT sync")
         }
         return visit
     }
@@ -1404,11 +1433,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // Includes `migrationProvingUnavailable` (ZRUST0127), the one HARD proving error:
                 // the ironwood tree is not queryable yet. Nothing the app can do but try at the
                 // next sync visit, so log and carry on to the next account.
-                LoggerProxy.event("migration prove sweep failed for one account: \(error.toZcashError())")
+                LoggerProxy.event("\(Self.logTag) prove sweep failed for one account: \(error.toZcashError())")
             }
         }
         if proved > 0 {
-            LoggerProxy.event("migration prove sweep: proved \(proved) transaction(s)")
+            LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
         }
         return proved
     }
@@ -1452,11 +1481,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             do {
                 didInvalidate = try await sdkSynchronizer.reconcileMigrationInvalidations(accountUUID) || didInvalidate
             } catch {
-                LoggerProxy.event("migration invalidation sweep failed for one account: \(error.toZcashError())")
+                LoggerProxy.event("\(Self.logTag) invalidation sweep failed for one account: \(error.toZcashError())")
             }
         }
         if didInvalidate {
-            LoggerProxy.event("migration invalidation sweep: a transfer's funding note was spent elsewhere")
+            LoggerProxy.event("\(Self.logTag) invalidation sweep: a transfer's funding note was spent elsewhere")
         }
         return didInvalidate
     }
@@ -1498,14 +1527,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // send one regardless of who presses the button — so the transfer stays deliverable the
             // moment they tap. This lane simply never taps for them.
             guard !gateStorage.isManualDelivery(for: accountUUID) else {
-                LoggerProxy.event("migration: broadcast \(id) is due but delivery is manual — leaving it to the user")
+                LoggerProxy.event("\(Self.logTag) broadcast \(id) is due but delivery is manual — leaving it to the user")
                 continue
             }
             // Re-entrancy: a driver call arriving while this account is already mid-broadcast (a
             // second foreground trigger, a raced scene-phase flip) must not submit twice.
             guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
 
-            LoggerProxy.event("migration: broadcasting transfer \(id) — headless send session")
+            LoggerProxy.event("\(Self.logTag) broadcasting transfer \(id) — headless send session")
             pokeStateEvent(for: accountUUID)
             await broadcastOneTransfer(accountUUID: accountUUID)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
@@ -1554,7 +1583,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // Proving is sync-bound, so it must NOT happen in a send session. Reopening the
                 // gate IS the fix: the next sync visit's prove sweep produces the proof, and a
                 // later send visit delivers it.
-                LoggerProxy.event("migration: transfer \(id) due but awaiting proof — deferring to the next sync visit")
+                LoggerProxy.event("\(Self.logTag) transfer \(id) due but awaiting proof — deferring to the next sync visit")
                 await refreshMigrationSyncGate()
             }
         } catch ZcashError.migrationRecordFailedAfterBroadcast {
@@ -1565,7 +1594,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
                 _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             }
-            LoggerProxy.event("migration: headless broadcast failed — \(error.toZcashError())")
+            LoggerProxy.event("\(Self.logTag) headless broadcast failed — \(error.toZcashError())")
             await refreshMigrationSyncGate()
         }
     }
@@ -1982,12 +2011,26 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// The app's lifecycle state, derived from the engine's advance step plus the composable reads
     /// (`MigrationState.derive`) — the SDK stopped handing a state over whole on
-    /// `michal/migration-parity-fixes`. `nil` only when the advance-step read itself throws; a
-    /// healthy account with no run derives `.notStarted`.
+    /// `michal/migration-parity-fixes`. `nil` only when the advance-step read itself THROWS; a
+    /// healthy account with no run reads a successful `nil` step and derives `.notStarted`.
+    ///
+    /// The `do`/`catch` is load-bearing and must not be "tidied" back into `try?`. `migrationAdvanceStep`
+    /// returns `MigrationAdvanceStep?`, and since SE-0230 `try?` FLATTENS a throwing optional call
+    /// into a single optional — so `try? await …` collapses "threw" and "no run" into the same `nil`,
+    /// and a `guard let … else { return nil }` on it treats a perfectly healthy no-run account as a
+    /// failed read. That is exactly what happened: a freshly restored wallet has no run, so every
+    /// `bannerVariant` call returned nil and the migration banner could never appear — which made the
+    /// feature's own entry point unreachable, since starting a run is what the banner is FOR.
+    /// `MigrationState.derive`'s documented `advanceStep == nil` arm was live-unreachable; only tests
+    /// (which pass the optional directly) ever exercised it, which is why 778 of them stayed green.
     private func migrationState(accountUUID: AccountUUID) async -> MigrationState? {
-        guard let advanceStep = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) else {
-            // The read itself failed (not "no run" — that is a successful `nil`). Degrade to no
-            // state so callers keep their previous value rather than flipping to `.notStarted`.
+        let advanceStep: MigrationAdvanceStep?
+        do {
+            advanceStep = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+        } catch {
+            // The read itself failed. Degrade to no state so callers keep their previous value
+            // rather than flipping to `.notStarted`.
+            LoggerProxy.event("\(Self.logTag) advance-step read FAILED — \(error.toZcashError()); state unknown, keeping previous")
             return nil
         }
         return MigrationState.derive(

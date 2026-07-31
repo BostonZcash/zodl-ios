@@ -549,7 +549,7 @@ struct MigrationSending {
                         // (`finalizeReadyMigrationTransfers`), after which a later send visit
                         // broadcasts. `nil` takes exactly that path: it falls through to the
                         // `didStopSyncForBroadcast` nudge below, which reopens the sync gate.
-                        LoggerProxy.event("migration: transfer \(id) due but awaiting proof — deferring to the next sync visit")
+                        LoggerProxy.event("\(MigrationManagerImpl.logTag) transfer \(id) due but awaiting proof — deferring to the next sync visit")
                         result = nil
                     }
                 }
