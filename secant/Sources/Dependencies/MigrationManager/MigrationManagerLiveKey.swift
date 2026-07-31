@@ -1382,6 +1382,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         guard let nextStepDate = [proveDate, sendDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire the poke rather than leaving a stale one armed.
+            LoggerProxy.event("\(Self.logTag) notification: none armed — no prove wake-up and no unsent row")
             await userNotifications.cancelMigrationNotifications()
             return
         }
@@ -1394,6 +1395,27 @@ final class MigrationManagerImpl: @unchecked Sendable {
             MigrationNotification.stepReady,
             nextStepDate,
             Data(resolvedAccountUUID.id).hexEncodedString()
+        )
+
+        // WHEN, and WHICH of the two candidates won. A poke is the one part of this lane the user
+        // meets while the app is closed, so "did it arm, and for when" cannot be answered by
+        // watching the app — and §7 of the scenario sheet is untestable without it. Both candidate
+        // dates are printed, not just the winner: a poke firing at the wrong moment is almost
+        // always the other candidate having been the one that mattered.
+        // Authorization, every time. A denied/undetermined status makes every arm below a silent
+        // no-op, and that is the first thing to check when a poke never arrives.
+        let authorization = await userNotifications.authorizationStatus()
+        if authorization != .authorized {
+            LoggerProxy.event("\(Self.logTag) notification: authorization is \(authorization) — NOTHING will be delivered")
+        }
+
+        let inSeconds = Int(nextStepDate.timeIntervalSince(now).rounded())
+        let source = nextStepDate == proveDate ? "prove wake-up" : "send window"
+        LoggerProxy.event(
+            "\(Self.logTag) notification ARMED for \(nextStepDate) (in \(inSeconds)s) — \(source)"
+            + "; prove \(proveDate.map(String.init(describing:)) ?? "none")"
+            + ", send \(sendDate.map(String.init(describing:)) ?? "none")"
+            + "; buffer \(Int(clock.notificationBuffer))s at \(Int(clock.secondsPerBlock))s/block"
         )
     }
 

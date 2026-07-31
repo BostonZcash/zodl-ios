@@ -60,7 +60,14 @@ extension UserNotificationsClient: DependencyKey {
                     trigger: trigger
                 )
 
-                try? await UNUserNotificationCenter.current().add(request)
+                // NOT `try?`. `add` throws when authorization was never granted or was revoked,
+                // and swallowing that made "no notification ever arrived" indistinguishable from
+                // "the app never asked to send one" — which cost real testing time on 07-31.
+                do {
+                    try await UNUserNotificationCenter.current().add(request)
+                } catch {
+                    LoggerProxy.event("\(MigrationManagerImpl.logTag) notification FAILED to schedule — \(error)")
+                }
             },
             cancelMigrationNotifications: {
                 let center = UNUserNotificationCenter.current()
