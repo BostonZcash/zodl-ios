@@ -441,13 +441,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
             isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
-            transferRows: rows,
+            transferRows: rows.transfers,
+            preparationRows: rows.preparations,
             // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
             // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
             // .torHoldActive`'s doc.
             isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID),
             // A13: purely in-session — see `broadcastsInFlight`'s doc. Read last, after every async
             // read above has settled, so the answer is as close to "now" as this function gets.
+            // MOB-1466: now only an ACCELERATOR — the durable `.broadcast` row is checked first.
             isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
             round: roundContext.round,
             totalRounds: roundContext.totalRounds
@@ -668,12 +670,27 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// independent reads unchanged; only the W1-fallback synthesis is shared, via
     /// `synthesizedTransferRows`, to avoid coupling the two methods' read patterns together).
     ///
-    /// MOB-1513 (W1 fallback wave 2): `async` now — the no-committed-schedule branch reads live
-    /// transfer statuses itself, LAZILY (only when actually taking that branch), rather than being
-    /// handed a caller-prefetched value: `bannerVariant`'s committed-schedule path never needed
-    /// this read before (it still doesn't derive its OWN rows from live statuses — see
-    /// `transferRows`'s call below, `statuses:` omitted), so prefetching it unconditionally at the
-    /// call site would add a wasted SDK round-trip to the common (schedule-present) case.
+    /// MOB-1513 (W1 fallback wave 2): `async` — it reads the engine's live per-transaction
+    /// statuses itself rather than being handed a caller-prefetched value.
+    ///
+    /// MOB-1466 (smart-banner pass) — THE FIX for the banner/timeline desync, and the reason that
+    /// read is now unconditional. The committed-schedule branch below used to call `transferRows`
+    /// with `statuses:` OMITTED. It is a defaulted argument, so the call compiled and read as
+    /// complete; what it meant was that the BANNER derived its rows purely from the persisted
+    /// schedule's position table while the TIMELINE (`migrationTransfers`, sixty lines above) fed
+    /// the identical function the engine's live statuses.
+    ///
+    /// Two surfaces, one derivation, different inputs. The banner could not see `.broadcast` (so
+    /// `isBroadcasting` was never true for it, and `.transferSending` was unreachable by that
+    /// route), could not see live `.mined` ahead of the app's own sent-record bookkeeping, and
+    /// could not see `isReady`/`nextAction` at all. Every "the banner disagrees with the timeline"
+    /// report traces here: they were reading different clocks because one of them was handed a
+    /// stopped one. The extra round-trip the old lazy read saved is the price of the banner being
+    /// true.
+    ///
+    /// Returns both row lists: `transfers` (the numbered crossing transfers — the only ones the
+    /// banner ever counts) and `preparations` (the note-split transactions, which carry no display
+    /// number but are just as much work-in-flight — see `bannerVariant`'s `isPreparingRun`).
     ///
     /// P3: takes the caller's already-read `clock` rather than reading its own — same one-read-each
     /// discipline as `progress`/`hasOverdue` above. `bannerVariant` needs the clock for its own
@@ -684,23 +701,29 @@ final class MigrationManagerImpl: @unchecked Sendable {
         hasOverdue: Bool,
         progress: MigrationProgress?,
         clock: MigrationChainClock
-    ) async -> [MigrationTransferRow] {
+    ) async -> (transfers: [MigrationTransferRow], preparations: [MigrationTransferRow]) {
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+        let preparations = MigrationDerivations.preparationRows(statuses: statuses, clock: clock) ?? []
+
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
-            let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
             if let statusRows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, clock: clock) {
-                return statusRows
+                return (statusRows, preparations)
             }
-            guard let progress else { return [] }
-            return Self.synthesizedTransferRows(progress: progress)
+            guard let progress else { return ([], preparations) }
+            return (Self.synthesizedTransferRows(progress: progress), preparations)
         }
 
-        return MigrationDerivations.transferRows(
-            committedSchedule: committedSchedule,
-            state: state,
-            hasOverdueMigrationTransfers: hasOverdue,
-            now: Date(),
-            clock: clock
+        return (
+            MigrationDerivations.transferRows(
+                committedSchedule: committedSchedule,
+                state: state,
+                hasOverdueMigrationTransfers: hasOverdue,
+                now: Date(),
+                clock: clock,
+                statuses: statuses
+            ),
+            preparations
         )
     }
 
@@ -1467,6 +1490,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
             walletAccounts: walletAccounts
         )
         guard !accountUUIDs.isEmpty else { return 0 }
+
+        // MOB-1466 (smart-banner pass): poke BEFORE the sweep, not only after it. `isPreparing` is
+        // already true on the rows at this point — the engine has been saying "ready to prove"
+        // since the previous read — but nothing had asked the banner to look since then, so on a
+        // cold app-open the "Migration Progress · Keep Zodl open" banner would first render at the
+        // post-sweep `reconcile()`, i.e. exactly when it stopped being true. Proving is chunked
+        // (utility QoS) and takes seconds to tens of seconds; this is the window the banner exists
+        // for. A poke is a re-send of the account's current subject value — cheap, idempotent.
+        for accountUUID in accountUUIDs {
+            pokeStateEvent(for: accountUUID)
+        }
 
         var proved = 0
         for accountUUID in accountUUIDs {
@@ -2242,12 +2276,19 @@ enum MigrationDerivations {
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
+        preparationRows: [MigrationTransferRow] = [],
         isTorHoldActive: Bool = false,
         isBroadcastInFlight: Bool = false,
         round: Int = 1,
         totalRounds: Int? = nil
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
+
+        // MOB-1466 (smart-banner pass): "is the app doing work right now" is asked of the ROWS, and
+        // of both lists — a note-split preparation is work exactly as much as a crossing transfer
+        // is, and the split phase is where a large wallet spends its first minutes. Counts below
+        // still come from `transferRows` alone; preparations are never numbered transfers.
+        let isPreparingRun = (transferRows + preparationRows).contains { $0.isPreparing }
 
         switch state {
         case MigrationState.notStarted:
@@ -2261,6 +2302,13 @@ enum MigrationDerivations {
             // re-commit keeps its preserved prior-sent rows cumulative). The engine's own
             // `progress` isn't carried by this state, and the synthesized-row fallback already
             // covers the committed-but-app-record-failed edge with progress-derived rows.
+            // Preparations broadcast immediately at commit and the app must stay open for them —
+            // checked ahead of the progress readout for the same reason it is inside `.inProgress`
+            // below: a "we'll notify you" line during work that only runs on screen is the one
+            // message that can cost the user the work.
+            if isPreparingRun {
+                return MigrationBannerVariant.preparing
+            }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
             let splitDisplayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
             return MigrationBannerVariant.inProgress(
@@ -2279,21 +2327,45 @@ enum MigrationDerivations {
             if progress.isImmediate {
                 return nil
             }
-            // A13: a broadcast is happening RIGHT NOW, in this session, with no screen in front of
-            // the user (`MigrationManagerImpl.runBroadcastSession`). Checked ahead of `hasOverdue`
-            // because both are true at once during a broadcast — a due transfer is exactly what is
-            // being sent — and "Transfer N is waiting" while it is actually going out is the wrong
-            // half of that truth. The banner's own copy asks the user to keep the app open, which is
-            // the one thing that keeps the session (and so the delivery) alive; a waiting banner
-            // asks for nothing.
+            // A broadcast is in flight. Checked ahead of `hasOverdue` because both are true at once
+            // during a broadcast — a due transfer is exactly what is being sent — and "Transfer N is
+            // waiting" while it is actually going out is the wrong half of that truth. The sending
+            // banner's copy asks the user to keep the app open, which is the one thing that keeps
+            // the session (and so the delivery) alive; a waiting banner asks for nothing.
+            //
+            // MOB-1466 (smart-banner pass): the ROW is the source now, not `isBroadcastInFlight`.
+            // `.broadcast(txid:)` is durable engine state, so this arm is reachable from BOTH
+            // delivery lanes (the headless one and the user's own Send now, which never touched the
+            // in-memory flag and so could never raise this banner at all) and survives an app kill
+            // mid-broadcast. `isBroadcastInFlight` stays only as a same-session ACCELERATOR for the
+            // seconds between "we started submitting" and the engine writing `.broadcast`.
+            if let sendingRow = transferRows.first(where: { $0.isBroadcasting }) {
+                return MigrationBannerVariant.transferSending(number: sendingRow.index + 1)
+            }
             if isBroadcastInFlight {
-                return MigrationBannerVariant.transferSending(number: progress.completedTransfers + 1)
+                return MigrationBannerVariant.transferSending(number: nextTransferNumber(transferRows: transferRows, progress: progress))
+            }
+            // PREPARING, ahead of both waiting arms below, and this ordering is the field fix.
+            // A transfer whose window has passed while its proof is still outstanding is
+            // simultaneously overdue AND un-sendable: ranked the old way the banner read "Transfer N
+            // waiting · Tap to reschedule or send now", and tapping Send now returned "due but
+            // awaiting proof — deferring to the next sync visit". An action that cannot succeed,
+            // offered in place of the one behaviour that helps.
+            //
+            // The banner label is all that changes: `reentryRoute` still routes an overdue run to
+            // the Resume screen, so Reschedule and Send now remain one tap away for anyone who wants
+            // them — this stops ADVERTISING a dead end, it does not remove an exit.
+            if isPreparingRun {
+                return MigrationBannerVariant.preparing
             }
             if hasOverdue {
-                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1, torHold: isTorHoldActive)
+                return MigrationBannerVariant.transferWaiting(
+                    number: nextTransferNumber(transferRows: transferRows, progress: progress),
+                    torHold: isTorHoldActive
+                )
             }
             if isManualDelivery && isNextTransferDue {
-                return MigrationBannerVariant.transferReady(number: progress.completedTransfers + 1)
+                return MigrationBannerVariant.transferReady(number: nextTransferNumber(transferRows: transferRows, progress: progress))
             }
             // MOB-1511 (W2): the round label shows only for a genuinely multi-round migration —
             // a later round in flight, or a known engine estimate above one.
@@ -2395,6 +2467,27 @@ enum MigrationDerivations {
         }
 
         return MigrationReentryRoute.entry
+    }
+
+    /// The 1-based number of the transfer the banner is TALKING ABOUT — the first row that has not
+    /// sent, by its own position in the row list, falling back to `completedTransfers + 1` when
+    /// there are no rows to read.
+    ///
+    /// MOB-1466 (smart-banner pass). This is the "Transfer 1 finished but the banner still says
+    /// Transfer 1" bug, and it was not a refresh problem. `completedTransfers` counts MINED
+    /// transfers, and a transfer mines minutes after it sends — so for that whole window the old
+    /// `completedTransfers + 1` named the transfer that had already gone out, while the timeline
+    /// (which numbers rows by position) had correctly moved on to the next one. Two surfaces, one
+    /// run, off by one, for as long as a confirmation takes.
+    ///
+    /// Reading position from the same rows the timeline renders makes them agree by construction:
+    /// the row list is contiguous across prior-run sent rows and the current schedule, and display
+    /// numbers are `index + 1` in both places.
+    private static func nextTransferNumber(transferRows: [MigrationTransferRow], progress: MigrationProgress) -> Int {
+        guard let firstUnsent = transferRows.first(where: { $0.status != MigrationTransferRow.Status.sent }) else {
+            return progress.completedTransfers + 1
+        }
+        return firstUnsent.index + 1
     }
 
     /// Bounds for `.transfersExpired(first:last:)`: 1-based first/last position among rows whose
@@ -2651,9 +2744,23 @@ enum MigrationDerivations {
                 amount: seed.amount,
                 status: status,
                 hoursFromNow: minutesFromNow / 60,
-                minutesFromNow: minutesFromNow
+                minutesFromNow: minutesFromNow,
+                isPreparing: isPreparing(seed.liveStatus)
             )
         }
+    }
+
+    /// Whether the engine says this transaction can be PROVED right now — see
+    /// `MigrationTransferRow.isPreparing`'s doc for why readiness, not lifecycle state, is the
+    /// signal. `nil` (no joined live status) is `false`: a row the join could not match says
+    /// nothing about proving, and guessing "preparing" from position would put a "keep Zodl open"
+    /// ask on a row that may be hours from needing anything.
+    ///
+    /// MOB-1466: `nextAction` had no reader anywhere in the app before this — the engine has been
+    /// answering "prove or broadcast?" per transaction since the model landed and nothing asked.
+    private static func isPreparing(_ status: MigrationTransactionStatus?) -> Bool {
+        guard let status else { return false }
+        return status.isReady && status.nextAction == MigrationTransactionStatus.NextAction.prove
     }
 
     /// MOB-1513 (T-A fix wave 1): `hasLiveStatus` gates the aggregate-state `.expired` heuristic
@@ -2763,10 +2870,13 @@ enum MigrationDerivations {
     /// .minutesFromNow(scheduledHeight:currentTip:)` fed the row's own live `scheduledHeight` —
     /// never negative, never a fake future value for a past-due row (floors to `0`, "Ready now").
     ///
-    /// Deliberately NOT extracted from/sharing private helpers with `transferRows` above — that
-    /// function's committed-schedule behavior is out of scope for this fallback (reuse of its
-    /// PUBLIC conventions yes, restructuring its internals no); this stays a small, self-contained
-    /// function that mirrors those conventions by construction instead.
+    /// Deliberately NOT restructured around `transferRows`' internals above — that function's
+    /// committed-schedule behavior is out of scope for this fallback (reuse of its PUBLIC
+    /// conventions yes, restructuring its internals no); this stays a small, self-contained
+    /// function that mirrors those conventions by construction instead. The one shared private
+    /// helper is `isPreparing(_:)`, a two-line pure predicate over a single status — sharing it is
+    /// what keeps the two paths from drifting on the same question, which is the opposite of the
+    /// coupling this note guards against.
     static func statusOnlyTransferRows(
         statuses: [MigrationTransactionStatus],
         clock: MigrationChainClock
@@ -2852,7 +2962,8 @@ enum MigrationDerivations {
                 amount: nil,
                 status: rowStatus,
                 hoursFromNow: minutesFromNow / 60,
-                minutesFromNow: minutesFromNow
+                minutesFromNow: minutesFromNow,
+                isPreparing: isPreparing(status)
             )
         }
     }
@@ -3021,6 +3132,7 @@ enum MigrationDerivations {
                 status: MigrationTransferRow.Status.active,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
+                isPreparing: isPreparing(status),
                 kind: MigrationTransferRow.Kind.splitBalance
             )
         }

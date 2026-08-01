@@ -165,6 +165,13 @@ struct MigrationStatusView: View {
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationStatusSentRecently)
                 : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
+        case _ where row.isPreparing:
+            // MOB-1466 (smart-banner pass, Figma C5). Below `.sent` — a mined transfer is finished
+            // whatever else it says — and above EVERY other case, `.overdue` included. A transfer
+            // whose window has passed while its proof is still outstanding used to caption
+            // "Overdue Nh ago", which is true and useless: the run is not stuck waiting for the
+            // user, it is being prepared, and this is the phase that needs them to stay.
+            return String(localizable: .migrationStatusPreparing)
         case .overdue:
             // hoursFromNow is A3's forward ETA; overdue copy needs elapsed, which rows don't carry — 0 keeps it truthful-enough as "just overdue".
             return String(localizable: .migrationStatusOverdueAgo(0))

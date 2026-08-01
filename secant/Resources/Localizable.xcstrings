@@ -10008,6 +10008,74 @@
         }
       }
     },
+    "migrationBanner.idleInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "We'll notify you when to send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Te avisaremos cuándo enviar"
+          }
+        }
+      }
+    },
+    "migrationBanner.idleInfoRound": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Round %1$lld · We'll notify you"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ronda %1$lld · Te avisaremos"
+          }
+        }
+      }
+    },
+    "migrationBanner.idleInfoRoundTotal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Round %1$lld of %2$lld · We'll notify you"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ronda %1$lld de %2$lld · Te avisaremos"
+          }
+        }
+      }
+    },
+    "migrationBanner.keepOpenInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Zodl open on active phone screen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Mantén Zodl abierto con la pantalla activa"
+          }
+        }
+      }
+    },
     "migrationBanner.nextRoundInfo": {
       "extractionState": "manual",
       "localizations": {
@@ -10038,57 +10106,6 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Ronda %1$lld de %2$lld · Más fondos para migrar"
-          }
-        }
-      }
-    },
-    "migrationBanner.progressInfo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$lld of %2$lld transfers done · %3$lld%% complete"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%1$lld de %2$lld transferencias hechas · %3$lld%% completo"
-          }
-        }
-      }
-    },
-    "migrationBanner.progressInfoRound": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Round %1$lld · %2$lld of %3$lld transfers done"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Ronda %1$lld · %2$lld de %3$lld transferencias hechas"
-          }
-        }
-      }
-    },
-    "migrationBanner.progressInfoRoundTotal": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Round %1$lld of %2$lld · %3$lld of %4$lld transfers done"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Ronda %1$lld de %2$lld · %3$lld de %4$lld transferencias hechas"
           }
         }
       }
@@ -10174,23 +10191,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Migración requerida"
-          }
-        }
-      }
-    },
-    "migrationBanner.sendingInfo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keep Zodl open on active phone screen"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Mantén Zodl abierto con la pantalla activa"
           }
         }
       }
@@ -13132,6 +13132,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Atrasada · hace %1$lldh"
+          }
+        }
+      }
+    },
+    "migrationStatus.preparing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing transaction…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Preparando la transacción…"
           }
         }
       }

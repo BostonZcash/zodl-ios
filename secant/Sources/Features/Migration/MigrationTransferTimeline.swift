@@ -154,8 +154,24 @@ struct MigrationTransferTimeline: View {
                 .fill(Design.Surfaces.bgTertiary.color(colorScheme))
                 .frame(width: 60, height: 16)
         } else {
-            Text(caption(row))
-                .zFont(size: 12, style: captionStyle?(row) ?? Design.Text.tertiary)
+            // MOB-1466 (smart-banner pass, Figma C5 / B10): a row whose work is running RIGHT NOW —
+            // being proven, or being broadcast — carries a live spinner beside its caption. A row
+            // property, so every screen that renders this timeline gets it for free, and the one
+            // signal the user needs (something is moving, don't leave) is never only in the banner.
+            // A static caption alone reads the same whether the app is working or idle.
+            HStack(spacing: 6) {
+                Text(caption(row))
+                    .zFont(size: 12, style: captionStyle?(row) ?? Design.Text.tertiary)
+
+                if row.isInFlight {
+                    ProgressView()
+                        .progressViewStyle(
+                            CircularProgressViewStyle(tint: Design.Text.tertiary.color(colorScheme))
+                        )
+                        .scaleEffect(0.6)
+                        .frame(width: 12, height: 12)
+                }
+            }
         }
     }
 

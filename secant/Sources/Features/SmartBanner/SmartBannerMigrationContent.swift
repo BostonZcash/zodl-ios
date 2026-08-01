@@ -13,11 +13,37 @@ import ComposableArchitecture
 
 enum MigrationBannerVariant: Equatable {
     case required
+    /// The run is committed and IDLE — nothing due, nothing in flight, the next transfer is waiting
+    /// for its window. Figma 5139:35439: "Migration Progress" / "We'll notify you when to send".
+    ///
+    /// MOB-1466 (smart-banner pass): the second line used to be a progress readout ("3 of 12
+    /// transfers done · 25% complete"), which appears in no frame and — worse — was wrong in the
+    /// window that matters most. `done` is the MINED count, so a transfer that has been broadcast
+    /// and is waiting to mine still reads as not done: "0 of 12 · 0% complete" for the whole of the
+    /// first transfer's life. The designed line makes a promise the app actually keeps (the window
+    /// notifications are armed at every reconcile) instead of a number that lags reality by a
+    /// confirmation. `done`/`total` stay on the case — they still drive the progress ring.
+    ///
     /// MOB-1511 (W2): `round`/`totalRounds` carry the multi-round context — non-nil only when the
     /// display rule says a round label belongs on the banner (round ≥ 2, or a known total > 1);
     /// `totalRounds` additionally carries the SDK's real run-count estimate — `nil` when the
     /// estimate is unavailable.
     case inProgress(done: Int, total: Int, round: Int?, totalRounds: Int?)
+    /// Figma 5139:35270 — the run is PREPARING transfers: one or more transactions are ready to be
+    /// proven and this app-open is what proves them. Run-level, not per-transfer, because a single
+    /// prove sweep proves the whole run at once (`C5` shows Transfer 1 and Transfer 2 preparing
+    /// together).
+    ///
+    /// Shares its second line with `.transferSending` for a reason: both are the app doing work
+    /// that only survives while it is on screen, and "Keep Zodl open on active phone screen" is the
+    /// one thing either state needs from the user. Distinct from `.inProgress` above, which is the
+    /// opposite — nothing is running, leaving is free, and we will notify.
+    ///
+    /// Proving is the LONGEST phase of a run and, until this case existed, the phase where the
+    /// banner said the least: a run mid-prove rendered `.transferWaiting`'s alert-circle and
+    /// "Tap to reschedule or send now", which is an invitation to act on a transfer that cannot
+    /// move yet — and, on iOS, an invitation to leave.
+    case preparing
     /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
     /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
     case nextRoundRequired(round: Int, totalRounds: Int?)
@@ -46,7 +72,7 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
-        case .inProgress:
+        case .inProgress, .preparing:
             return String(localizable: .migrationBannerProgressTitle)
         case .transferWaiting(let number, _):
             return String(localizable: .migrationBannerWaitingTitle(number))
@@ -67,14 +93,16 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required:
             return String(localizable: .migrationBannerRequiredInfo)
-        case .inProgress(let done, let total, let round, let totalRounds):
+        case .inProgress(_, _, let round, let totalRounds):
             if let round {
                 if let totalRounds {
-                    return String(localizable: .migrationBannerProgressInfoRoundTotal(round, totalRounds, done, total))
+                    return String(localizable: .migrationBannerIdleInfoRoundTotal(round, totalRounds))
                 }
-                return String(localizable: .migrationBannerProgressInfoRound(round, done, total))
+                return String(localizable: .migrationBannerIdleInfoRound(round))
             }
-            return String(localizable: .migrationBannerProgressInfo(done, total, percent ?? 0))
+            return String(localizable: .migrationBannerIdleInfo)
+        case .preparing:
+            return String(localizable: .migrationBannerKeepOpenInfo)
         case .nextRoundRequired(let round, let totalRounds):
             if let totalRounds {
                 return String(localizable: .migrationBannerNextRoundInfoTotal(round, totalRounds))
@@ -85,7 +113,7 @@ enum MigrationBannerVariant: Equatable {
                 ? String(localizable: .migrationFailureTorHoldBannerInfo)
                 : String(localizable: .migrationBannerWaitingInfo)
         case .transferSending:
-            return String(localizable: .migrationBannerSendingInfo)
+            return String(localizable: .migrationBannerKeepOpenInfo)
         case .updatePlan:
             return String(localizable: .migrationBannerUpdatePlanInfo)
         case .transfersExpired:
@@ -176,10 +204,18 @@ struct MigrationBannerContentView: View {
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:
+            // DELIBERATE DEVIATION from Figma 5139:35439, which draws `coins-swap-02` here — the
+            // same glyph `.required` uses. A committed, idle run and a run that has not started
+            // would then be distinguishable only by their second line, and "in progress looks
+            // exactly like not started" is the confusion class MOB-1513 (B4) already fixed once (a
+            // `.splitting` variant that shared `.required`'s title). The ring says "started, this
+            // far in" in the same 20pt slot. One line to revert if design disagrees.
             migrationProgressRing()
-        case .transferSending:
-            // No static "sending" glyph in the catalogue, and a live spinner says the thing the
-            // banner is asking for (the session is running, keep it running) better than one would.
+        case .preparing, .transferSending:
+            // No static "working" glyph in the catalogue, and a live spinner says the thing both
+            // states are asking for (a session is running, keep it running) better than one would.
+            // Figma draws `loading-01` here in both frames — an animated spinner is that glyph's
+            // whole intent.
             ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: titleStyle))
                 .frame(width: 20, height: 20)

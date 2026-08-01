@@ -106,8 +106,30 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// True for the row currently broadcasting to the network — same `.active` badge as a
     /// merely-queued row, captioned "Sending now" instead of an ETA.
     var isBroadcasting: Bool
+    /// MOB-1466 (smart-banner pass): true for a row the engine says the wallet can PROVE right now
+    /// — `MigrationTransactionStatus.isReady` with `nextAction == .prove`. Captioned "Preparing
+    /// transaction…" instead of an ETA (Figma C5), and it is what raises the run-level
+    /// `.preparing` banner.
+    ///
+    /// Deliberately the engine's own readiness verdict rather than the lifecycle state: a `.signed`
+    /// transfer whose anchor boundary the wallet has not scanned yet reports `isReady == false` /
+    /// `blockedOn == .anchorBoundary`, and that row is NOT preparing — nothing the user does by
+    /// staying in the app makes it prove. Only a row the app can act on this second earns the
+    /// "keep Zodl open" ask.
+    ///
+    /// Unlike `status`, this is a FLAG because preparing is plural: `C5` shows Transfer 1 and
+    /// Transfer 2 both preparing at once (one prove sweep proves the whole run), while `.active` is
+    /// by construction the single first non-sent row. Mutually exclusive with `isBroadcasting` in
+    /// practice — a broadcast transfer is already proved.
+    var isPreparing: Bool
     /// See `Kind`'s doc.
     var kind: Kind
+
+    /// Whether this row is work IN FLIGHT right now — the two states whose whole message is "the
+    /// app is doing something, keep it open". Drives the timeline's inline spinner.
+    var isInFlight: Bool {
+        isPreparing || isBroadcasting
+    }
 
     /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
     /// else the coarse `hoursFromNow` promoted to minutes (the synthetic-cadence surfaces).
@@ -124,6 +146,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         minutesFromNow: Int? = nil,
         sentMinutesAgo: Int? = nil,
         isBroadcasting: Bool = false,
+        isPreparing: Bool = false,
         kind: Kind = .transfer
     ) {
         self.id = id
@@ -134,6 +157,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.minutesFromNow = minutesFromNow
         self.sentMinutesAgo = sentMinutesAgo
         self.isBroadcasting = isBroadcasting
+        self.isPreparing = isPreparing
         self.kind = kind
     }
 }
