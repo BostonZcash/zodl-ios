@@ -1482,7 +1482,65 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // asking to prove IS the signal — and staying quiet about it made a stalled run look
         // identical to a healthy idle one.
         LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
+        if proved == 0 {
+            await logProveStall(accountUUIDs: accountUUIDs)
+        }
         return proved
+    }
+
+    /// WHY a sweep proved nothing, in the app's own log.
+    ///
+    /// The engine does explain itself — `prove_due_transaction` emits a `deferred (transient)`
+    /// warning naming the exact prover error — but that line goes to the Rust `tracing` → os_log
+    /// bridge (subsystem `co.electriccoin.ios`, category `rust`), NOT through `LoggerProxy`, so it
+    /// never reaches the stream anyone reads while testing. Field-caught 2026-08-01: a run sat at
+    /// 0-of-12 for a day with `prove sweep: proved 0` next to `advance step: prove(id: 0)` and
+    /// nothing anywhere naming the reason.
+    ///
+    /// The three heights are the reading, and they separate the two candidate causes without
+    /// another build:
+    ///
+    /// - `anchor <= scanned` — the wallet HAS scanned the boundary, so failing to prove there
+    ///   means the checkpoint is gone (retention/pruning) or the note is not witnessable at it.
+    /// - `scanned < anchor <= tip` — the engine judged the boundary settled against the CHAIN
+    ///   tip while the wallet has not scanned that far. Upstream's `next_step` is documented as
+    ///   taking `scanned_tip + 1` ("must rest on data the wallet has actually seen"), and a
+    ///   transfer's anchor-boundary settledness is judged on the scanned target ALONE — so this
+    ///   reading means proving can never succeed, however often it is retried.
+    ///
+    /// Only at `proved == 0`, and only the first few non-mined rows: a healthy sweep says nothing
+    /// extra, and a 12-transfer run must not turn one stall into twelve log lines.
+    private func logProveStall(accountUUIDs: [AccountUUID]) async {
+        let syncState = sdkSynchronizer.latestState()
+        let estimatedTip = try? await sdkSynchronizer.estimatedMigrationChainTip()
+
+        for accountUUID in accountUUIDs {
+            guard let rows = try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID), !rows.isEmpty else {
+                continue
+            }
+
+            let pending = rows
+                .filter { row in
+                    if case MigrationTransactionStatus.State.mined = row.state { return false }
+                    return true
+                }
+                .prefix(3)
+                .map { row in
+                    let anchor = row.anchorBoundaryHeight.map(String.init) ?? "none"
+                    let blocked = row.blockedOn.map { String(describing: $0) } ?? "-"
+                    return "#\(row.id) \(row.state) anchor \(anchor) sched \(row.scheduledHeight) blocked \(blocked)"
+                }
+                .joined(separator: " | ")
+            guard !pending.isEmpty else { continue }
+
+            LoggerProxy.event(
+                """
+                \(Self.logTag) prove stall: scanned \(syncState.fullyScannedHeight), \
+                chain tip \(syncState.latestBlockHeight), \
+                est \(estimatedTip.map(String.init) ?? "n/a") — \(pending)
+                """
+            )
+        }
     }
 
     /// A12 — see `MigrationManagerClient.shouldWarnBeforeManualSend`.
