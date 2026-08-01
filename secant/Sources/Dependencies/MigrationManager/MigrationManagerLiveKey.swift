@@ -1554,6 +1554,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         return MigrationManualSendRisk.shouldWarn(
             hasActiveRun: MigrationManualSendRisk.isActiveRun(state),
+            proposalSpendsOrchard: nil,
             hasUnmigratedOrchard: await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID) > Zatoshi.zero
         )
     }

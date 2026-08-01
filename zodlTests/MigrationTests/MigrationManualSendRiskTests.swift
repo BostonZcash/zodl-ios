@@ -47,25 +47,58 @@ import ZcashLightClientKit
         #expect(MigrationManualSendRisk.isActiveRun(state))
     }
 
-    // MARK: - The predicate
+    // MARK: - The predicate — proposal truth is primary now that B6 has landed
 
-    @Test func aLiveRunWithOrchardLeftWarns() {
-        #expect(MigrationManualSendRisk.shouldWarn(hasActiveRun: true, hasUnmigratedOrchard: true))
+    /// THE headline case: a live run, and this send's own proposal reaches into legacy Orchard.
+    /// `hasUnmigratedOrchard` is deliberately the opposite of the answer to prove the proposal's
+    /// verdict is what decides this — not the wallet-wide approximation.
+    @Test func aLiveRunWithASpendingProposalWarns() {
+        #expect(MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: true,
+            proposalSpendsOrchard: true,
+            hasUnmigratedOrchard: false
+        ))
     }
 
-    /// The self-retiring half: once the run has swept the Orchard balance, there is nothing left
-    /// for a send to reach into and the warning stops on its own.
-    @Test func aLiveRunWithNothingLeftInOrchardIsQuiet() {
-        #expect(!MigrationManualSendRisk.shouldWarn(hasActiveRun: true, hasUnmigratedOrchard: false))
+    /// The §10.3 case dying: before B6, a live run with unmigrated Orchard SOMEWHERE in the wallet
+    /// warned on every manual send, transparent-only sends included. Now the proposal itself says
+    /// this send does not touch Orchard, so it is quiet — `hasUnmigratedOrchard: true` proves the
+    /// leftover balance elsewhere no longer matters once the proposal has answered.
+    @Test func aTransparentOnlySendDuringALiveRunIsNowQuiet() {
+        #expect(!MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: true,
+            proposalSpendsOrchard: false,
+            hasUnmigratedOrchard: true
+        ))
     }
 
-    /// Orchard funds with NO migration scheduled are just funds. Nothing is at stake, so an
-    /// ordinary send is an ordinary send.
-    @Test func orchardFundsWithNoRunAreJustFunds() {
-        #expect(!MigrationManualSendRisk.shouldWarn(hasActiveRun: false, hasUnmigratedOrchard: true))
+    /// A spending proposal with no run to protect is just an ordinary send: nothing is at stake.
+    @Test func aSpendingProposalWithNoRunIsJustFunds() {
+        #expect(!MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: false,
+            proposalSpendsOrchard: true,
+            hasUnmigratedOrchard: true
+        ))
     }
 
-    @Test func neitherConditionIsQuiet() {
-        #expect(!MigrationManualSendRisk.shouldWarn(hasActiveRun: false, hasUnmigratedOrchard: false))
+    /// The nil-proposal fallback, warn half: no proposal to ask yet, so this falls back to the
+    /// pre-B6 approximation — a live run plus unmigrated Orchard still on the books.
+    @Test func aLiveRunWithOrchardLeftWarnsWhenNoProposalIsKnown() {
+        #expect(MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: true,
+            proposalSpendsOrchard: nil,
+            hasUnmigratedOrchard: true
+        ))
+    }
+
+    /// The nil-proposal fallback, quiet half — the self-retiring case: once the run has swept the
+    /// Orchard balance, there is nothing left for a send to reach into and the fallback goes quiet
+    /// on its own, same as before B6.
+    @Test func aLiveRunWithNothingLeftInOrchardIsQuietWhenNoProposalIsKnown() {
+        #expect(!MigrationManualSendRisk.shouldWarn(
+            hasActiveRun: true,
+            proposalSpendsOrchard: nil,
+            hasUnmigratedOrchard: false
+        ))
     }
 }
