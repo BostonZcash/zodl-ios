@@ -291,7 +291,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// enough surrounding context (file names, paths, type names) that filtering a console on it
     /// selects far more than this lane — which cost a tester a testing session. `[MIG]` collides
     /// with nothing. Every migration log line in the app starts with it.
-    static let logTag = "[MIG]"
+    /// MOB-1466: the session-stamped prefix — `[MIG s3 +12.34s]`. Computed rather than constant so
+    /// EVERY pre-existing `LoggerProxy.event("\(Self.logTag) …")` line in this file gains its
+    /// session ordinal and elapsed time without a single call site changing. See `MigrationTrace`.
+    static var logTag: String { MigrationTrace.tag() }
 
     let gateStorage: MigrationGateStorage
     /// MOB-1496 (W2): per-account persisted committed schedule — see `MigrationScheduleStorage`.
@@ -459,11 +462,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // The decision, always, with the two inputs that explain a surprising one. "No banner" was
         // silent through four separate exits before the 07-31 test session, and a silent decision is
         // untestable: a tester who sees nothing cannot tell "correctly quiet" from "broken".
-        if let variant {
-            LoggerProxy.event("\(Self.logTag) banner: \(variant) — state \(state), orchard \(balance.decimalString())")
-        } else {
-            LoggerProxy.event("\(Self.logTag) no banner: state \(state), orchard \(balance.decimalString())")
-        }
+        //
+        // MOB-1466: routed through `MigrationTrace.banner` rather than logged raw, so this prints on
+        // CHANGE only, carries how long the value it replaces was on screen, and flags anything that
+        // held for less than a readable moment. `bannerVariant` is recomputed on every poke and on
+        // every screen appearance — forty identical lines used to be indistinguishable from forty
+        // flickers, and it is the flickers that get reported as bugs.
+        MigrationTrace.banner(
+            variant,
+            why: bannerReason(
+                state: state,
+                rows: rows.transfers,
+                preparations: rows.preparations,
+                hasOverdue: hasOverdue,
+                isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) }
+            ),
+            detail: "state \(state), orchard \(balance.decimalString())"
+        )
+        MigrationTrace.rows(transfers: rows.transfers, preparations: rows.preparations)
 
         return variant
     }
@@ -536,9 +552,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // whether the STATE had changed or the ROUTING was wrong. Deciding which is not the
         // tester's job; the app should say. `state` and `hasOverdue` are the pair that flips this
         // route, so they are named rather than left to be inferred.
-        LoggerProxy.event(
-            "\(Self.logTag) route: \(route) — state \(state), hasOverdue \(hasOverdue)"
-            + ", hasInvalid \(hasInvalid), activated \(isIronwoodActivated())"
+        // MOB-1466: on CHANGE only, with dwell — see `MigrationTrace.route`. A route that moves
+        // while the banner's words stay put means the same sentence now opens a different screen,
+        // which the user experiences as the app having lied to them.
+        MigrationTrace.route(
+            route,
+            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated())"
         )
 
         return route
@@ -696,6 +715,38 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// P3: takes the caller's already-read `clock` rather than reading its own — same one-read-each
     /// discipline as `progress`/`hasOverdue` above. `bannerVariant` needs the clock for its own
     /// due-ness check anyway, so a second read here would be a wasted pair of round-trips per pass.
+    /// WHY the banner is what it is — the deciding input, named, not a restatement of the variant.
+    ///
+    /// MOB-1466. A transition line without a reason is a fact ("it changed"); with one it is a
+    /// diagnosis ("it changed because the submit finished"). The order here mirrors
+    /// `MigrationDerivations.bannerVariant`'s own precedence exactly, so the reason is always the
+    /// arm that actually fired rather than a plausible-looking guess assembled separately.
+    private func bannerReason(
+        state: MigrationState,
+        rows: [MigrationTransferRow],
+        preparations: [MigrationTransferRow],
+        hasOverdue: Bool,
+        isBroadcastInFlight: Bool
+    ) -> String {
+        if case MigrationState.notStarted = state {
+            return "no run"
+        }
+        if isBroadcastInFlight {
+            return "submitting now"
+        }
+        if (rows + preparations).contains(where: { $0.isPreparing }) {
+            return "provable now — the prove sweep will run this session"
+        }
+        if let sending = (preparations + rows).first(where: { $0.isBroadcasting }) {
+            return "on the wire (\(sending.kind == .splitBalance ? "split" : "transfer") \(sending.index + 1)), awaiting mining"
+        }
+        if hasOverdue {
+            return "window passed"
+        }
+        let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }.count
+        return "idle — \(done)/\(rows.count) mined, waiting on the next window"
+    }
+
     private func bannerTransferRows(
         resolvedAccountUUID: AccountUUID,
         state: MigrationState,
@@ -1266,6 +1317,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.synchronizerStateChanged`, the false->true transition into `.upToDate` — the same edge
     /// `reconcile()` fires on) so this updates once per completed sync, never per tick.
     func recordSyncCompleted() {
+        MigrationTrace.recordSyncCompleted()
         gateStorage.recordSyncCompleted(at: Date())
     }
 
@@ -1432,7 +1484,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         guard let nextStepDate = [proveDate, sendDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire the poke rather than leaving a stale one armed.
-            LoggerProxy.event("\(Self.logTag) notification: none armed — no prove wake-up and no unsent row")
+            MigrationTrace.notificationCancelled("no prove wake-up and no unsent row")
             await userNotifications.cancelMigrationNotifications()
             return
         }
@@ -1461,6 +1513,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         let inSeconds = Int(nextStepDate.timeIntervalSince(now).rounded())
         let source = nextStepDate == proveDate ? "prove wake-up" : "send window"
+        // MOB-1466: remembered ACROSS sessions, so the next app-open can say whether it was manual,
+        // on schedule, or late relative to this poke — see `MigrationTrace.pokeRelation`.
+        MigrationTrace.notificationArmed(at: nextStepDate, source: source)
         LoggerProxy.event(
             "\(Self.logTag) notification ARMED for \(nextStepDate) (in \(inSeconds)s) — \(source)"
             + "; prove \(proveDate.map(String.init(describing:)) ?? "none")"
@@ -1542,6 +1597,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // Logged even at ZERO. A sweep that proves nothing, over and over, while the engine keeps
         // asking to prove IS the signal — and staying quiet about it made a stalled run look
         // identical to a healthy idle one.
+        MigrationTrace.recordProveSweep(proved: proved)
         LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
         if proved == 0 {
             await logProveStall(accountUUIDs: accountUUIDs)
@@ -1710,6 +1766,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // second foreground trigger, a raced scene-phase flip) must not submit twice.
             guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
 
+            MigrationTrace.recordBroadcast()
             LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
             pokeStateEvent(for: accountUUID)
             await broadcastOneTransfer(accountUUID: accountUUID)
@@ -2135,6 +2192,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// alone on purpose). Conflating them would have made the debug reset silently start cancelling
     /// notifications too.
     func wipeAllMigrationState() async {
+        MigrationTrace.notificationCancelled("wallet reset")
         await userNotifications.cancelMigrationNotifications()
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
