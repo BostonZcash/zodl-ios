@@ -55,9 +55,10 @@ struct SendConfirmation {
         var isKeystoneCodeFound = false
         var isQRCodeEnlarged = false
         var isSending = false
-        /// A12: the Orchard-spend warning (Figma 5139:23856) is up. Set only by `.sendTapped` when
-        /// the account has a live migration run with unmigrated Orchard left — see
-        /// `MigrationManualSendRisk`.
+        /// A12/B6: the Orchard-spend warning (Figma 5139:23856) is up. Set only by `.sendTapped`
+        /// when there is a live migration run AND this send's own proposal spends legacy Orchard
+        /// funds (or, absent a proposal, when the account has unmigrated Orchard left at all) —
+        /// see `MigrationManualSendRisk`.
         var isOrchardWarningPresented = false
         var isShielding = false
         var isTransparentAddress = false
@@ -291,8 +292,11 @@ struct SendConfirmation {
                 // A12: ask BEFORE Face ID. Warning the user after they have authenticated reads as
                 // "too late" — the decision the sheet is asking them to reconsider is whether to
                 // send at all, not whether they are themselves.
-                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
-                    await send(.orchardRiskResolved(migrationManager.shouldWarnBeforeManualSend(accountUUID)))
+                // B6: the proposal is already built by push time (`State.proposal`) — passing it
+                // lets the manager ask the proposal's own `spendsLegacyOrchardFunds` instead of
+                // inferring risk from wallet-wide Orchard balance.
+                return .run { [accountUUID = state.selectedWalletAccount?.id, proposal = state.proposal] send in
+                    await send(.orchardRiskResolved(migrationManager.shouldWarnBeforeManualSend(accountUUID, proposal)))
                 }
 
             case .orchardRiskResolved(let shouldWarn):

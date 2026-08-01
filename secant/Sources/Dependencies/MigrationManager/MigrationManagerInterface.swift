@@ -136,10 +136,12 @@ struct MigrationManagerClient: Sendable {
     /// spacing. `nil` accountUUID resolves the selected account.
     var migrationChainClock: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationChainClock = { _ in .unknown }
 
-    /// A12: whether a manual send from `accountUUID` should show the Orchard-spend warning — see
-    /// `MigrationManualSendRisk` for what it approximates and why the approximation is the
-    /// conservative direction.
-    var shouldWarnBeforeManualSend: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
+    /// A12/B6: whether a manual send from `accountUUID` should show the Orchard-spend warning.
+    /// `proposal` is this send's own built proposal when one is available — its
+    /// `spendsLegacyOrchardFunds` is the primary, authoritative answer. `nil` (no proposal built
+    /// yet, or none to offer) falls back to the coarser wallet-wide approximation. See
+    /// `MigrationManualSendRisk` for the exact rule and why the fallback stays conservative.
+    var shouldWarnBeforeManualSend: @Sendable (_ accountUUID: AccountUUID?, _ proposal: Proposal?) async -> Bool = { _, _ in false }
 
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual

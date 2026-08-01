@@ -21,11 +21,11 @@
 //  PRESENTED by `SendConfirmation`, before authentication rather than after — the sheet asks the
 //  user to reconsider WHETHER to send, and asking that after Face ID reads as too late.
 //
-//  Its trigger is an approximation. The precise question, "does THIS proposal spend Orchard?", is
-//  one the SDK cannot answer today (`Proposal` exposes only a transaction count and a fee), so the
-//  app asks the coarser one it can: is a run live, and is there unmigrated Orchard left to reach?
-//  See `MigrationManualSendRisk` for why over-warning is the right side to err on here — and why
-//  that is the opposite call from the server-switch warning (board A20).
+//  Its trigger is the proposal's own answer: is a run live, and does THIS proposal spend legacy
+//  Orchard funds (`Proposal.spendsLegacyOrchardFunds`)? When no proposal is available yet, it falls
+//  back to the coarser "is a run live, and is there unmigrated Orchard left to reach at all?" See
+//  `MigrationManualSendRisk` for the fallback's over-warning stance, and why that is the opposite
+//  call from the server-switch warning (board A20).
 //
 
 import SwiftUI
