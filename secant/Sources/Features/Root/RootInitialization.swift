@@ -334,7 +334,25 @@ extension Root {
                             // already confirmed.
                             _ = await migrationManager.runBroadcastSession()
                         } else {
-                            try await sdkSynchronizer.start(true)
+                            do {
+                                try await sdkSynchronizer.start(true)
+                            } catch ZcashError.migrationSyncBlocked {
+                                // Same signal as the cold-launch site in `.initializeSDK`: the gate
+                                // refusing start() up front IS the send-visit signal — `visitKind()`
+                                // classifies from the SCANNED-tip-only `migrationAdvanceStep()` and
+                                // can still lag this gate's (`isMigrationSyncBlocked`) ESTIMATED-tip
+                                // view right after a no-sync broadcast session. Treat the refusal
+                                // like a `.send` visit rather than a `.synchronizerStartFailed` dead
+                                // end: run the broadcast session, then fall through unchanged into
+                                // the same post-start code below. `.registerForSynchronizersUpdate`
+                                // subscribes the gate stream, and `.migrationSyncGateChanged(false)`
+                                // resumes with another `.retryStart` once the gate reopens. The
+                                // broadcast lane itself reads `useEstimatedTip: true`, so it sees
+                                // exactly what the gate saw when it refused.
+                                let refusalReason = "start refused — migration gate active; running broadcast session"
+                                LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
+                                _ = await migrationManager.runBroadcastSession()
+                            }
                         }
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
@@ -598,7 +616,29 @@ extension Root {
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start on launch — broadcast session")
                                 _ = await migrationManager.runBroadcastSession()
                             } else {
-                                try await sdkSynchronizer.start(false)
+                                do {
+                                    try await sdkSynchronizer.start(false)
+                                } catch ZcashError.migrationSyncBlocked {
+                                    // The gate refusing start() up front IS the send-visit signal:
+                                    // `visitKind()` classifies from `migrationAdvanceStep()`, which
+                                    // reflects the SCANNED tip, while this gate
+                                    // (`isMigrationSyncBlocked`) reads the ESTIMATED tip — so a
+                                    // launch right after a no-sync broadcast session can see
+                                    // `visitKind() == .sync` here yet still get refused. Treat the
+                                    // refusal exactly like a `.send` visit rather than a fatal
+                                    // `initializationFailed` (which has no retry action): run the
+                                    // broadcast session, then fall through unchanged into the same
+                                    // post-start code below. `.registerForSynchronizersUpdate`
+                                    // (reached via `.initializationSuccessfullyDone`) subscribes the
+                                    // gate stream, and `.migrationSyncGateChanged(false)` resumes
+                                    // with `.retryStart` once the gate reopens — see that case for
+                                    // the resume. The broadcast lane itself reads
+                                    // `useEstimatedTip: true`, so it sees exactly what the gate saw
+                                    // when it refused.
+                                    let refusalReason = "start refused — migration gate active; treating launch as broadcast session"
+                                    LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
+                                    _ = await migrationManager.runBroadcastSession()
+                                }
                             }
 
                             var selectedAccount: WalletAccount?
