@@ -2378,7 +2378,26 @@ enum MigrationDerivations {
         // still come from `transferRows` alone; preparations are never numbered transfers.
         let workingRows = transferRows + preparationRows
         let isPreparingRun = workingRows.contains { $0.isPreparing }
-        let isBroadcastingRun = workingRows.contains { $0.isBroadcasting }
+
+        // "The app is doing this RIGHT NOW, so stay" is `isBroadcastInFlight` — the in-session flag
+        // `runBroadcastSession` holds for the seconds it is actually submitting — and NOT the
+        // durable `.broadcast` row state.
+        //
+        // Field-caught 2026-08-01, one build after this pass gained a broadcast check that read the
+        // ROW instead. `.broadcast(txid:)` means SUBMITTED and awaiting mining, which is minutes:
+        // the submission had already returned success, the SDK's post-broadcast privacy buffer then
+        // holds sync for 180 s (600 s on mainnet) so the wallet cannot even observe the mining, and
+        // for that entire window the banner sat on "Keep Zodl open on active phone screen" with a
+        // spinner while the app was deliberately doing nothing. The tester watched it for three
+        // minutes and concluded the run had hung.
+        //
+        // That is the precise inversion of what these variants exist for. A keep-open ask is a
+        // claim that leaving costs the user something; once the transaction is on the wire, leaving
+        // costs nothing — mining is the chain's job, not the session's. The rule this restores:
+        // ONLY work that dies when the app closes may ask the user to stay.
+        //
+        // A `.broadcast` row is still the right source for the timeline's "Sending now" caption and
+        // for the banner's transfer NUMBER. It is only the keep-open ASK it must not raise.
 
         switch state {
         case MigrationState.notStarted:
@@ -2414,7 +2433,7 @@ enum MigrationDerivations {
             // `isBroadcastInFlight` is read here too, not just the durable row: it is set the
             // instant `runBroadcastSession` starts and pokes, so it covers the seconds before the
             // engine has written `.broadcast` — which is exactly the window the field log caught.
-            if isPreparingRun || isBroadcastingRun || isBroadcastInFlight {
+            if isPreparingRun || isBroadcastInFlight {
                 return MigrationBannerVariant.preparing
             }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
@@ -2447,11 +2466,15 @@ enum MigrationDerivations {
             // in-memory flag and so could never raise this banner at all) and survives an app kill
             // mid-broadcast. `isBroadcastInFlight` stays only as a same-session ACCELERATOR for the
             // seconds between "we started submitting" and the engine writing `.broadcast`.
-            if let sendingRow = transferRows.first(where: { $0.isBroadcasting }) {
-                return MigrationBannerVariant.transferSending(number: sendingRow.index + 1)
-            }
             if isBroadcastInFlight {
-                return MigrationBannerVariant.transferSending(number: nextTransferNumber(transferRows: transferRows, progress: progress))
+                // The number still comes from the rows — that half of the row-truth pass stands, and
+                // it is what makes the banner and the timeline agree on WHICH transfer. A row the
+                // engine has already marked `.broadcast` is preferred (it names the one actually on
+                // the wire); otherwise the first unsent row, which is what is about to be.
+                let sendingRow = transferRows.first { $0.isBroadcasting }
+                return MigrationBannerVariant.transferSending(
+                    number: sendingRow.map { $0.index + 1 } ?? nextTransferNumber(transferRows: transferRows, progress: progress)
+                )
             }
             // PREPARING, ahead of both waiting arms below, and this ordering is the field fix.
             // A transfer whose window has passed while its proof is still outstanding is

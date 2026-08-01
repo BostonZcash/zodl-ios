@@ -51,6 +51,12 @@ extension Root {
         Reduce { state, action in
             switch action {
             case .initialization(.appDelegate(.didFinishLaunching)):
+                // MOB-1466: the LIFECYCLE MARKERS. Every migration step on iOS happens inside one
+                // app-open — proving, broadcasting, the sync that observes a mining — so a `[MIG]`
+                // log without open/background boundaries reads as one undifferentiated stream and
+                // "what did THIS session actually do" cannot be answered from it. These three lines
+                // are the sequencing spine every other `[MIG]` line hangs off.
+                LoggerProxy.event("[MIG] app open (cold launch)")
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
@@ -61,6 +67,10 @@ extension Root {
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
             case .initialization(.appDelegate(.willEnterForeground)):
+                // See the cold-launch marker above. The tip rides along because it is the one piece
+                // of context that decides what this session is allowed to do, and it survives
+                // backgrounding in memory, so it is truthful at this exact moment.
+                LoggerProxy.event("[MIG] app open (foreground) — tip \(sdkSynchronizer.latestState().latestBlockHeight)")
                 if state.featureFlags.appLaunchBiometric {
                     let now = Date()
                     let before = Date.init(timeIntervalSince1970: TimeInterval(state.lastAuthenticationTimestamp))
@@ -99,6 +109,12 @@ extension Root {
                 return openMigrationCoordFlow(state: &state)
 
             case .initialization(.appDelegate(.didEnterBackground)):
+                // See the cold-launch marker above. `sdkSynchronizer.stop()` on the next line is
+                // why this boundary matters so much to a migration run: sync does not merely pause
+                // here, it STOPS, and nothing restarts it until the next foreground's `.retryStart`.
+                // Anything the run was waiting to observe — a preparation mining, a transfer
+                // confirming — waits for the user to come back.
+                LoggerProxy.event("[MIG] background — sync stopping")
                 sdkSynchronizer.stop()
                 state.bgTask?.setTaskCompleted(success: false)
                 state.bgTask = nil

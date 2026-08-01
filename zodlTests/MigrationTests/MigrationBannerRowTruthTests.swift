@@ -12,16 +12,22 @@
 //  transfer 2 ready but smart widget still writes transfer 1".
 //
 //  What these pin is the replacement rule — the banner reads the same live ROWS the timeline
-//  renders — and the three states that rule made reachable:
+//  renders — and the line that rule had to learn the hard way:
 //
-//  - SENDING from a durable `.broadcast` row, so the user's own "Send now" raises it (the old
-//    in-memory flag was written by the headless lane only) and it survives an app kill.
-//  - PREPARING, a state the banner had no word for at all, during the longest phase of a run.
-//  - The numbers, which now come from row position in both surfaces by construction.
+//  - The NUMBERS come from row position in both surfaces, so they agree by construction.
+//  - PREPARING exists, a state the banner had no word for at all, during the longest phase of a run.
+//  - A KEEP-OPEN ASK belongs only to work that dies when the app closes. The first cut raised it
+//    from the durable `.broadcast(txid:)` row, which means SUBMITTED and awaiting mining — minutes
+//    during which the SDK's own post-broadcast buffer holds sync so the wallet cannot even observe
+//    the mining. The banner asked the user to watch a spinner while the app did nothing, and the
+//    tester read three minutes of it as a hang. The row still names WHICH transfer; the in-session
+//    `isBroadcastInFlight` flag decides whether we may ask them to stay.
 //
 //  On iOS this is not decoration. Zodl has no background lane: proving and broadcasting happen only
-//  while the app is open and on screen. A banner that says nothing — or says "waiting" — during
-//  work that only runs on screen is what makes the user close the app and stop it.
+//  while the app is open and on screen. A banner that says nothing — or says "waiting" — during work
+//  that only runs on screen is what makes the user close the app and stop it. The mirror failure is
+//  just as bad: asking them to stay for work that is already out of our hands teaches them the ask
+//  means nothing.
 //
 
 import Foundation
@@ -113,11 +119,14 @@ import ZcashLightClientKit
 
     // MARK: - Sending, from durable row state
 
-    /// THE manual-lane fix. `isBroadcastInFlight` is written only by the headless broadcast session,
-    /// so a user who tapped Send now got no sending banner at all — during the one operation that
-    /// dies if they leave the app. The row's `.broadcast` state is written by the engine whoever
-    /// submitted, so this arm is now reachable from both lanes.
-    @Test func aBroadcastingRowRaisesSendingWithNoInFlightFlag() {
+    /// THE correction, field-caught 2026-08-01. A `.broadcast(txid:)` row means SUBMITTED and
+    /// awaiting mining — minutes, during which the SDK's post-broadcast buffer holds sync so the
+    /// wallet cannot even observe the mining. Raising the keep-open banner off it asked the user to
+    /// sit and watch a spinner while the app did nothing, and the tester read that as a hang.
+    ///
+    /// Leaving costs the user nothing once the transaction is on the wire. Only work that dies when
+    /// the app closes may ask them to stay.
+    @Test func aBroadcastRowAloneDoesNotAskTheUserToStay() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
@@ -125,32 +134,43 @@ import ZcashLightClientKit
                 Self.row(index: 1, status: .pending)
             ]
         )
+        #expect(variant != .transferSending(number: 1))
+        #expect(variant == .inProgress(done: 0, total: 6, round: nil, totalRounds: nil))
+    }
+
+    /// Same rule in the split phase, where it actually bit: a broadcast Split Balance awaiting its
+    /// mining is not a reason to keep the app open.
+    @Test func aBroadcastPreparationAloneDoesNotAskTheUserToStay() {
+        let variant = Self.variant(
+            state: .splitPendingConfirmation,
+            transferRows: [Self.row(index: 0, status: .pending)],
+            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
+        )
+        #expect(variant != .preparing)
+    }
+
+    /// The submission itself DOES ask — that window is seconds long and dies with the app.
+    @Test func anInFlightSubmissionAsksTheUserToStay() {
+        let variant = Self.variant(
+            state: .inProgress(Self.progress(completed: 0, total: 6)),
+            transferRows: [Self.row(index: 0, status: .active)],
+            isBroadcastInFlight: true
+        )
         #expect(variant == .transferSending(number: 1))
     }
 
-    /// And it survives a kill: nothing in this input is session-scoped, so a cold launch mid-flight
-    /// derives the same banner the pre-kill session showed.
-    @Test func sendingSurvivesWithoutAnySessionState() {
-        let rows = [
-            Self.row(index: 0, status: .sent),
-            Self.row(index: 1, status: .active, isBroadcasting: true)
-        ]
-        #expect(
-            Self.variant(state: .inProgress(Self.progress(completed: 1, total: 6)), transferRows: rows)
-                == .transferSending(number: 2)
-        )
-    }
-
-    /// The number comes from the row's OWN position, not from the mined count. Here the engine has
-    /// seen transfer 1 mined and transfer 2 broadcasting while `completedTransfers` still reads 0 —
-    /// the exact lag that produced "transfer 2 is going out but the banner says transfer 1".
+    /// The NUMBER still comes from row position — that half of the row-truth pass stands, and it is
+    /// what makes the banner and the timeline agree on WHICH transfer. Here the engine has seen
+    /// transfer 1 mined while `completedTransfers` still reads 0: the mined count would have said
+    /// Transfer 1, the rows correctly say Transfer 2.
     @Test func theSendingNumberIsThePositionNotTheMinedCount() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .sent),
                 Self.row(index: 1, status: .active, isBroadcasting: true)
-            ]
+            ],
+            isBroadcastInFlight: true
         )
         #expect(variant == .transferSending(number: 2), "the mined count would have said Transfer 1")
     }
@@ -237,7 +257,8 @@ import ZcashLightClientKit
             transferRows: [
                 Self.row(index: 0, status: .active, isBroadcasting: true),
                 Self.row(index: 1, status: .pending, isPreparing: true)
-            ]
+            ],
+            isBroadcastInFlight: true
         )
         #expect(variant == .transferSending(number: 1))
     }
@@ -272,11 +293,12 @@ import ZcashLightClientKit
     /// preparing check to that arm and left the broadcast check in `.inProgress` only, so the
     /// banner read "We'll notify you when to send" while the timeline one tap away read
     /// "Split Balance 1 · Sending now". Same disagreement, one arm later.
-    @Test func aBroadcastingPreparationRaisesPreparingNotIdle() {
+    @Test func aPreparationBeingSubmittedRaisesPreparingNotIdle() {
         let variant = Self.variant(
             state: .splitPendingConfirmation,
             transferRows: [Self.row(index: 0, status: .pending)],
-            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
+            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)],
+            isBroadcastInFlight: true
         )
         #expect(variant == .preparing)
     }
@@ -284,11 +306,12 @@ import ZcashLightClientKit
     /// `.preparing` and not `.transferSending`, deliberately: the thing going out is a Split
     /// Balance, not a numbered transfer, and "Transfer 1 is sending…" over a split would be a
     /// confident lie.
-    @Test func aBroadcastingPreparationIsNeverNumberedAsATransfer() {
+    @Test func aPreparationBeingSubmittedIsNeverNumberedAsATransfer() {
         let variant = Self.variant(
             state: .splitPendingConfirmation,
             transferRows: [Self.row(index: 0, status: .pending)],
-            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
+            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)],
+            isBroadcastInFlight: true
         )
         #expect(variant != .transferSending(number: 1))
     }
