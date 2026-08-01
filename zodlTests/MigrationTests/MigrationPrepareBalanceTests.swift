@@ -93,14 +93,19 @@ import ZcashLightClientKit
     // MARK: - Caption
 
     /// A one-transaction split reads exactly as it did before the collapse — no step suffix.
-    @Test func singleStepCaptionIsTheBareETA() {
+    ///
+    /// MOB-1466: `.plan`, not `.inPrefixed` — this state is ALWAYS the pre-commit Transfer Plan
+    /// screen (regardless of `variant`), so its split row takes the same committal, future-tense
+    /// phrasing every other caption on this screen does now. See `MigrationETAPhrasingTests` for
+    /// the phrasing itself; this only pins that `splitCaption` routes through it.
+    @Test func singleStepCaptionIsThePlanPhrasedETA() {
         let state = Self.state(rows: Self.threeRows, preparationCount: 1)
-        #expect(state.splitCaption == MigrationETA.caption(minutesFromNow: 0, phrasing: .inPrefixed))
+        #expect(state.splitCaption == MigrationETA.caption(minutesFromNow: 0, phrasing: .plan))
     }
 
     @Test func multiStepCaptionAppendsTheStepCount() {
         let state = Self.state(rows: Self.threeRows, preparationCount: 4)
-        let eta = MigrationETA.caption(minutesFromNow: 0, phrasing: .inPrefixed)
+        let eta = MigrationETA.caption(minutesFromNow: 0, phrasing: .plan)
         #expect(state.splitCaption == String(localizable: .migrationPlanSplitBalanceCaption(eta, 4)))
         #expect(state.splitCaption != eta)
     }

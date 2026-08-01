@@ -52,12 +52,20 @@ enum MigrationETA: Equatable, Sendable {
         return minutes < 60 ? .minutes(minutes) : .hours(minutes / 60)
     }
 
-    /// Whether a caption uses the Transfer Plan scheduled variant's "in ~…" phrasing or the bare
-    /// "~…" phrasing every other forward surface uses (Transfer Plan manual/recreated, Migration
-    /// Status/Progress, Resume).
+    /// Whether a caption uses the Transfer Plan scheduled variant's "in ~…" phrasing, the bare
+    /// "~…" phrasing every other POST-COMMIT forward surface uses (Transfer Plan manual/recreated,
+    /// Migration Status/Progress, Resume), or `.plan`'s own committal phrasing.
+    ///
+    /// MOB-1466 (field finding O5): `.plan` is unrelated to the other two cases' ETA framing — it's
+    /// the PRE-COMMIT Transfer Plan screen's own future/committal tense ("Starts right away" /
+    /// "Starts in ~N mins"), added because the screen's live-state language ("Ready now") read as
+    /// "migration already running" before Confirm was ever tapped, and an unconfirmed user was
+    /// indistinguishable from one who chose not to migrate. Every POST-COMMIT surface keeps
+    /// `.bare`/`.inPrefixed` completely unchanged — see `MigrationETAPhrasingTests`.
     enum Phrasing: Equatable, Sendable {
         case inPrefixed
         case bare
+        case plan
     }
 
     /// The localized forward-ETA caption for `minutesFromNow`, bucketed then rendered under the
@@ -66,15 +74,27 @@ enum MigrationETA: Equatable, Sendable {
     static func caption(minutesFromNow minutes: Int, phrasing: Phrasing) -> String {
         switch bucketed(minutesFromNow: minutes) {
         case .readyNow:
-            return String(localizable: .migrationPlanReadyNow)
+            return phrasing == .plan
+                ? String(localizable: .migrationPlanStartsRightAway)
+                : String(localizable: .migrationPlanReadyNow)
         case .minutes(let mins):
-            return phrasing == .inPrefixed
-                ? String(localizable: .migrationPlanEtaMinsIn(mins))
-                : String(localizable: .migrationPlanEtaMins(mins))
+            switch phrasing {
+            case .inPrefixed:
+                return String(localizable: .migrationPlanEtaMinsIn(mins))
+            case .bare:
+                return String(localizable: .migrationPlanEtaMins(mins))
+            case .plan:
+                return String(localizable: .migrationPlanStartsInMins(mins))
+            }
         case .hours(let hrs):
-            return phrasing == .inPrefixed
-                ? String(localizable: .migrationPlanEtaHoursIn(hrs))
-                : String(localizable: .migrationPlanEtaHours(hrs))
+            switch phrasing {
+            case .inPrefixed:
+                return String(localizable: .migrationPlanEtaHoursIn(hrs))
+            case .bare:
+                return String(localizable: .migrationPlanEtaHours(hrs))
+            case .plan:
+                return String(localizable: .migrationPlanStartsInHours(hrs))
+            }
         }
     }
 }

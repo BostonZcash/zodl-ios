@@ -112,7 +112,10 @@ struct MigrationPrepareBalanceSheet: View {
                 Text(String(localizable: .migrationPrepareTransactionNOfM(step.index + 1, steps.count)))
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
-                Text(MigrationETA.caption(minutesFromNow: step.minutesFromNow, phrasing: .inPrefixed))
+                // MOB-1466: `.plan`, not `.inPrefixed` — this sheet only ever opens from the
+                // pre-commit Transfer Plan screen's "Show details" disclosure, so its per-step
+                // captions take the same committal phrasing the rest of that screen does.
+                Text(MigrationETA.caption(minutesFromNow: step.minutesFromNow, phrasing: .plan))
                     .zFont(size: 12, style: Design.Text.tertiary)
             }
             .padding(.top, 2)

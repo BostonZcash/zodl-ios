@@ -206,16 +206,16 @@ struct MigrationTransferPlanView: View {
         }
     }
 
-    /// MOB-1513 (B3): the forward ETA, bucketed by the shared `MigrationETA` helper (Ready now / in
-    /// ~N mins / in ~N hours) off the row's minute-precise `forwardETAMinutes` — replacing the old
-    /// whole-hour `eta` that floored every future height to `0` and rendered the "~10 mins"
-    /// (`migrationPlanEtaFirst`) fallback. Scheduled/fresh plans use the "in ~…" phrasing; recreated
-    /// and manual plans keep the bare "~…" (frames differ — followed as drawn).
+    /// MOB-1513 (B3): the forward ETA, bucketed by the shared `MigrationETA` helper off the row's
+    /// minute-precise `forwardETAMinutes` — replacing the old whole-hour `eta` that floored every
+    /// future height to `0` and rendered the "~10 mins" (`migrationPlanEtaFirst`) fallback.
+    ///
+    /// MOB-1466 (field finding O5): always `.plan` now, regardless of `variant` — this whole screen
+    /// is the PRE-COMMIT review, so every caption on it takes the same committal, future-tense
+    /// phrasing ("Starts right away" / "Starts in ~N mins") rather than the scheduled-only "in ~…"
+    /// vs. bare "~…" split this used to make. See `MigrationETA.Phrasing.plan`'s doc.
     private func forwardETA(for row: MigrationTransferRow) -> String {
-        MigrationETA.caption(
-            minutesFromNow: row.forwardETAMinutes,
-            phrasing: store.variant == .scheduled ? .inPrefixed : .bare
-        )
+        MigrationETA.caption(minutesFromNow: row.forwardETAMinutes, phrasing: .plan)
     }
 
     // MARK: - Failure sheet

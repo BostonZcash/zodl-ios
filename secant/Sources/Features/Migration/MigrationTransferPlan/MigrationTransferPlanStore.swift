@@ -306,12 +306,16 @@ struct MigrationTransferPlan {
         }
 
         /// The split row's caption: the shared ETA phrasing on its own for a single-transaction
-        /// split, suffixed with the step count when there are several ("Ready now · 4 steps").
+        /// split, suffixed with the step count when there are several ("Starts right away ·
+        /// 4 steps").
+        ///
+        /// MOB-1466 (field finding O5): `.plan`, not the old `variant == .scheduled ? .inPrefixed :
+        /// .bare` split — this state is ALWAYS the pre-commit Transfer Plan screen regardless of
+        /// `variant`, and the split row is the single most prominent "Ready now" on it (always the
+        /// first row shown), so it takes the same committal phrasing every other caption on this
+        /// screen does now. See `MigrationETA.Phrasing.plan`'s doc.
         var splitCaption: String {
-            let eta = MigrationETA.caption(
-                minutesFromNow: 0,
-                phrasing: variant == .scheduled ? .inPrefixed : .bare
-            )
+            let eta = MigrationETA.caption(minutesFromNow: 0, phrasing: .plan)
             guard hasMultiStepSplit else { return eta }
             return String(localizable: .migrationPlanSplitBalanceCaption(eta, preparationCount))
         }

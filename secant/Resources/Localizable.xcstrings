@@ -12133,6 +12133,57 @@
         }
       }
     },
+    "migrationPlan.startsInHours": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starts in ~%1$lld hours"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Comienza en ~%1$lld horas"
+          }
+        }
+      }
+    },
+    "migrationPlan.startsInMins": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starts in ~%1$lld mins"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Comienza en ~%1$lld min"
+          }
+        }
+      }
+    },
+    "migrationPlan.startsRightAway": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starts right away"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Comienza de inmediato"
+          }
+        }
+      }
+    },
     "migrationPlan.titleConfirm": {
       "extractionState": "manual",
       "localizations": {
