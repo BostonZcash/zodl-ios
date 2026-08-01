@@ -29,6 +29,13 @@
 //  across color schemes with no fixed hex). `.sent`'s green check stays reserved for steps that have
 //  genuinely completed — never used for a merely-ready precondition.
 //
+//  MOB-1466 (DROPPABLE — Figma 4207:7394 specifies the checkmark above; pending design sign-off):
+//  `.neutral` renders the step NUMBER now (like `.pending`), not the inverse checkmark the MOB-1497
+//  paragraph above describes — colors are unchanged. Field finding O5: on the pre-commit Transfer
+//  Plan screen, the checkmark read as "already done" on a step that had not run yet, one of several
+//  cues that made the whole screen look already in progress before Confirm was ever tapped. Revert
+//  this one commit to restore the checkmark exactly, if design does not sign off.
+//
 
 import SwiftUI
 
@@ -43,7 +50,10 @@ struct MigrationStepBadge: View {
         /// Needs attention — amber filled exclamation (invalid/expired timeline rows).
         case warning
         /// MOB-1497 (T8): a precondition step that's ready to run as part of confirming, but hasn't
-        /// happened yet — adaptive neutral circle + inverse checkmark. See this file's header doc.
+        /// happened yet — adaptive neutral circle. MOB-1466 (DROPPABLE — pending design sign-off):
+        /// renders the step NUMBER, like `.pending`, instead of the inverse checkmark this case
+        /// originally shipped with — a checkmark read as "already done" on a step that had not run
+        /// yet. Colors are unchanged. See this file's header doc.
         case neutral
     }
 
@@ -76,9 +86,11 @@ struct MigrationStepBadge: View {
                 Asset.Assets.Icons.alertCircle.image
                     .zImage(size: 12, color: .white)
             case .neutral:
+                // MOB-1466 (DROPPABLE — pending design sign-off): the step number, like `.pending`,
+                // not the checkmark this case originally shipped with — see this file's header doc.
                 Circle().fill(Design.Surfaces.bgAlt.color(colorScheme))
-                Asset.Assets.check.image
-                    .zImage(size: size * 2 / 3, style: Design.Surfaces.bgPrimary)
+                Text("\(number)")
+                    .zFont(.semiBold, size: 10, style: Design.Surfaces.bgPrimary)
             }
 
             // MOB-1487: 2pt white ring on every state — a "cutout" against the connector line
