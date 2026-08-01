@@ -10110,6 +10110,23 @@
         }
       }
     },
+    "migrationBanner.preparingBalanceInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing your balance…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Preparando tu saldo…"
+          }
+        }
+      }
+    },
     "migrationBanner.progressTitle": {
       "extractionState": "manual",
       "localizations": {

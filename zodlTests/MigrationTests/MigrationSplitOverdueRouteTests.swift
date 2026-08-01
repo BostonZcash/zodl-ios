@@ -81,8 +81,11 @@ import ZcashLightClientKit
             transferRows: []
         )
 
-        // Banner says "running".
-        guard case .inProgress = banner else {
+        // Banner says "running" — asserted on the TITLE, which is the claim the user actually reads,
+        // rather than on the case. MOB-1466 (2026-08-01) moved the split phase from `.inProgress` to
+        // `.preparing(isWorkingNow:)` without changing that claim by a character, and pinning the
+        // case made a behaviour-preserving change look like a regression.
+        guard let banner, banner.title == MigrationBannerVariant.inProgress(done: 0, total: 1, round: nil, totalRounds: nil).title else {
             Issue.record("expected the split phase to read as progress, got \(String(describing: banner))")
             return
         }

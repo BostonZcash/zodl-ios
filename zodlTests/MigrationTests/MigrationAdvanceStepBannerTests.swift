@@ -164,6 +164,12 @@ import ZcashLightClientKit
     /// A run whose preparations have not all mined is still SPLITTING — and that reads as progress,
     /// not as "Migration Required" (which is what the retired `.splitting` variant said, and exactly
     /// the post-confirm confusion QA reported).
+    ///
+    /// MOB-1466 (2026-08-01): the variant moved from `.inProgress` to `.preparing(isWorkingNow:)`.
+    /// The INVARIANT this test exists for is untouched and is now asserted directly — the split
+    /// phase wears the run-level "Migration Progress" title, never the fresh-offer one. The old
+    /// expectation pinned the case rather than the claim, which is why a change that preserved the
+    /// claim exactly still broke it.
     @Test func anUnminedPreparationReadsAsProgressNotAsAFreshOffer() {
         let statuses = [
             Self.status(id: 1, kind: .preparation(layer: 0, index: 0), state: .mined(height: 100)),
@@ -176,7 +182,9 @@ import ZcashLightClientKit
             statuses: statuses,
             transferRows: rows
         )
-        #expect(variant == MigrationBannerVariant.inProgress(done: 0, total: 1, round: nil, totalRounds: nil))
+        #expect(variant == MigrationBannerVariant.preparing(isWorkingNow: false))
+        #expect(variant?.title == MigrationBannerVariant.inProgress(done: 0, total: 1, round: nil, totalRounds: nil).title)
+        #expect(variant?.title != MigrationBannerVariant.required.title, "never a fresh offer mid-split")
     }
 
     @Test func waitingWithAnOverdueTransferAsksTheUserToOpenTheApp() {

@@ -734,7 +734,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         if isBroadcastInFlight {
             return "submitting now"
         }
-        if (rows + preparations).contains(where: { $0.isPreparing }) {
+        let isProvable = (rows + preparations).contains { $0.isPreparing }
+
+        // The split phase has its OWN arm in `bannerVariant`, which never consults `hasOverdue` —
+        // so neither may this. Caught by reading the instrument's own output: a
+        // `splitPendingConfirmation` line printed `why: window passed` while the arm that fired had
+        // not looked at overdue-ness at all. A reason assembled from a different precedence than the
+        // decision is worse than no reason, because it reads like an explanation.
+        if case MigrationState.splitPendingConfirmation = state {
+            let mined = preparations.filter { $0.status == MigrationTransferRow.Status.sent }.count
+            return isProvable
+                ? "split phase — provable now, the prove sweep will run this session"
+                : "split phase — \(mined)/\(preparations.count) preparations mined, waiting on the next step"
+        }
+        if isProvable {
             return "provable now — the prove sweep will run this session"
         }
         if let sending = (preparations + rows).first(where: { $0.isBroadcasting }) {
@@ -2491,17 +2504,25 @@ enum MigrationDerivations {
             // `isBroadcastInFlight` is read here too, not just the durable row: it is set the
             // instant `runBroadcastSession` starts and pokes, so it covers the seconds before the
             // engine has written `.broadcast` — which is exactly the window the field log caught.
-            if isPreparingRun || isBroadcastInFlight {
-                return MigrationBannerVariant.preparing
-            }
-            let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
-            let splitDisplayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
-            return MigrationBannerVariant.inProgress(
-                done: doneRows,
-                total: transferRows.count,
-                round: splitDisplayRound,
-                totalRounds: splitDisplayRound != nil ? totalRounds : nil
-            )
+            // THE WHOLE SPLIT PHASE IS PREPARING. Field-caught 2026-08-01: this arm used to fall
+            // through to the idle banner whenever nothing was provable in that exact instant, and
+            // the engine's provable-now answer flips every few seconds during the split —
+            // schedule-blocked, then provable, then proved, then waiting for a broadcast window. The
+            // log shows it plainly: `BANNER: required → inProgress` at +271.13s, then
+            // `inProgress [held 12.69s] → preparing` at +283.82s, on a run that was doing exactly
+            // one continuous thing throughout.
+            //
+            // Two things were wrong with that fall-through, and both matter to a user. It CHURNED —
+            // "Migration Progress · We'll notify you when to send" replaced by "Migration Progress ·
+            // Keep Zodl open" and back, on a timescale nobody can read. And the idle copy was a
+            // false promise: `splitPendingConfirmation` means the preparations have not all mined,
+            // so there is nothing to SEND yet and no send to notify about.
+            //
+            // `isWorkingNow` now carries the only distinction the user should see — whether WE need
+            // them present — while the title and icon hold steady across the phase. `done`/`total`
+            // are dropped here on purpose: "0 of 12" counts TRANSFERS, none of which can start until
+            // this phase ends, so it was a zero that could not move.
+            return MigrationBannerVariant.preparing(isWorkingNow: isPreparingRun || isBroadcastInFlight)
 
         case let MigrationState.inProgress(progress):
             // MOB-1513 (B1): an immediate (send-max) sweep in flight shows NO banner during the
@@ -2545,7 +2566,7 @@ enum MigrationDerivations {
             // the Resume screen, so Reschedule and Send now remain one tap away for anyone who wants
             // them — this stops ADVERTISING a dead end, it does not remove an exit.
             if isPreparingRun {
-                return MigrationBannerVariant.preparing
+                return MigrationBannerVariant.preparing(isWorkingNow: true)
             }
             if hasOverdue {
                 return MigrationBannerVariant.transferWaiting(

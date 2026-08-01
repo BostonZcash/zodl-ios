@@ -43,7 +43,21 @@ enum MigrationBannerVariant: Equatable {
     /// banner said the least: a run mid-prove rendered `.transferWaiting`'s alert-circle and
     /// "Tap to reschedule or send now", which is an invitation to act on a transfer that cannot
     /// move yet — and, on iOS, an invitation to leave.
-    case preparing
+    ///
+    /// `isWorkingNow` decides only the SECOND LINE, never the title or the icon, and that is the
+    /// whole design (field-caught 2026-08-01). During the note-split phase the engine's answer to
+    /// "can you prove something this instant" flips on and off in seconds — schedule-blocked, then
+    /// provable, then proved, then waiting for a broadcast window — and a banner that followed it
+    /// literally would swap between "Migration Progress · Preparing your balance…" and "Migration
+    /// Progress · We'll notify you when to send" every few seconds while the user watched. The run
+    /// is preparing throughout; only whether WE need them present changes.
+    ///
+    /// - `true` — the app can prove or is submitting right now: "Keep Zodl open on active phone
+    ///   screen". Leaving costs the user the work.
+    /// - `false` — the run is between its own steps (a schedule window, a mining wait): "Preparing
+    ///   your balance…". Leaving costs nothing, and there is nothing to SEND, so the idle banner's
+    ///   "We'll notify you when to send" would promise the wrong thing.
+    case preparing(isWorkingNow: Bool)
     /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
     /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
     case nextRoundRequired(round: Int, totalRounds: Int?)
@@ -101,8 +115,10 @@ enum MigrationBannerVariant: Equatable {
                 return String(localizable: .migrationBannerIdleInfoRound(round))
             }
             return String(localizable: .migrationBannerIdleInfo)
-        case .preparing:
-            return String(localizable: .migrationBannerKeepOpenInfo)
+        case .preparing(let isWorkingNow):
+            return isWorkingNow
+                ? String(localizable: .migrationBannerKeepOpenInfo)
+                : String(localizable: .migrationBannerPreparingBalanceInfo)
         case .nextRoundRequired(let round, let totalRounds):
             if let totalRounds {
                 return String(localizable: .migrationBannerNextRoundInfoTotal(round, totalRounds))
@@ -216,6 +232,12 @@ struct MigrationBannerContentView: View {
             // states are asking for (a session is running, keep it running) better than one would.
             // Figma draws `loading-01` here in both frames — an animated spinner is that glyph's
             // whole intent.
+            //
+            // The spinner stays on for `.preparing(isWorkingNow: false)` too, deliberately. That
+            // state is not idle — the RUN is mid-step, it just does not need the user present for
+            // this particular one — and swapping the icon every time the engine's provable-now
+            // answer flips would be the visual churn this whole pass exists to remove. The second
+            // line carries the difference; the icon carries "your migration is moving".
             ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: titleStyle))
                 .frame(width: 20, height: 20)
