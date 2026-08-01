@@ -207,6 +207,15 @@ extension MigrationCoordFlow {
                     state: &state
                 )
 
+            case .path(.element(id: _, action: .transferPlan(.delegate(.leftWithoutConfirming)))):
+                // MOB-1466 (field finding O5): "Leave anyway" on the back-out guard, or the
+                // store's own silent pass-through — either way an ordinary pop, the same
+                // coordinator-side path mutation every other plain back/cancel in this file uses
+                // (e.g. `.scan(.cancelTapped)`, `.keystoneSignRejected` below). Nothing to undo:
+                // the guard's whole premise is that nothing was committed on this leg.
+                _ = state.path.popLast()
+                return .none
+
                 // MARK: - ReviewTransfer (#1930 :651)
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed)))):

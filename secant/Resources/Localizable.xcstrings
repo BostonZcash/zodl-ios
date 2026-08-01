@@ -11946,6 +11946,74 @@
         }
       }
     },
+    "migrationPlan.leaveGuard.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leaving now won't schedule any transfers. You can come back and start the plan whenever you're ready."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Salir ahora no programará ninguna transferencia. Puedes volver y comenzar el plan cuando estés listo."
+          }
+        }
+      }
+    },
+    "migrationPlan.leaveGuard.leave": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave anyway"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Salir de todos modos"
+          }
+        }
+      }
+    },
+    "migrationPlan.leaveGuard.stay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep reviewing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Seguir revisando"
+          }
+        }
+      }
+    },
+    "migrationPlan.leaveGuard.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your migration hasn't started yet"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu migración aún no ha comenzado"
+          }
+        }
+      }
+    },
     "migrationPlan.proposeFailedBody": {
       "extractionState": "manual",
       "localizations": {

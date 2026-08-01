@@ -135,7 +135,10 @@ struct MigrationTransferPlanView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .zashiBack()
+            // MOB-1466 (field finding O5): intercepted — an unconfirmed plan must not be left
+            // silently. See `MigrationTransferPlanStore`'s `.backTapped` doc, including its known
+            // limitation (interactive swipe-back is NOT covered by this hook).
+            .zashiBack(customDismiss: { store.send(.backTapped) })
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent
             }
@@ -144,6 +147,12 @@ struct MigrationTransferPlanView: View {
                     steps: store.preparationSteps,
                     amountBeingSplit: store.splitRows.first?.amount,
                     gotItTapped: { store.send(.prepareBalanceDismissed) }
+                )
+            }
+            .zashiSheet(isPresented: $store.isLeaveGuardPresented) {
+                MigrationLeaveGuardSheet(
+                    stayTapped: { store.send(.leaveGuardStayTapped) },
+                    leaveTapped: { store.send(.leaveGuardLeaveTapped) }
                 )
             }
         }

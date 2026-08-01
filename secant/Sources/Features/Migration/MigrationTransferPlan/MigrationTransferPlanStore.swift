@@ -221,6 +221,16 @@ struct MigrationTransferPlan {
         /// `.delegate(.keystoneSignRequested)` (so a pop-back after a rejected QR ceremony
         /// re-enables Confirm), `.transfersProposed`, and `.transferProposalFailed`.
         var isConfirming = false
+        /// MOB-1466 (field finding O5): true once Confirm has genuinely done its job THIS visit —
+        /// the software lane's sign+store (`.scheduleSigned`) or the acknowledge-only lane's no-op
+        /// "got it" (`.confirmAuthenticated`'s `.acknowledge` branch). Deliberately NOT set by the
+        /// Keystone lane's `.delegate(.keystoneSignRequested)`: that only PROPOSES the batch (the
+        /// engine persists a run, but nothing is signed yet), and if the QR ceremony is later
+        /// rejected/abandoned the coordinator explicitly cancels that run
+        /// (`restartCurrentMigrationStep`) — so a user who pops back down to this screen after an
+        /// abandoned ceremony genuinely has nothing committed, and `.backTapped`'s guard should
+        /// still apply. Read by `.backTapped` — see its doc for the full pass-through rule.
+        var hasConfirmed = false
         /// MOB-1478 (W4): failure sheet for the silent note-split step, presented over this screen
         /// instead of proceeding to sign+store — mirrors `MigrationNoteSplit.State.isFailurePresented`.
         /// MOB-1496 (R8-T1, S3): also covers a propose failure now — see `failureReason`.
@@ -232,6 +242,11 @@ struct MigrationTransferPlan {
         /// disclosure (Figma 5207:16024). Independent of `isFailurePresented` — the disclosure is
         /// only offered on a healthy plan, and the two are never up at once.
         var isPrepareBalancePresented = false
+        /// MOB-1466 (field finding O5): the back-out guard sheet — presented by `.backTapped`
+        /// instead of leaving, whenever the plan is not yet confirmed. Independent of the other two
+        /// sheet flags above; never up alongside them (the guard only ever presents from the
+        /// toolbar back button, which the failure/disclosure sheets don't intercept).
+        var isLeaveGuardPresented = false
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         /// MOB-1458 (Task 3): the app-wide toast idiom — `.planStaleRefreshed` uses it to tell the
@@ -382,6 +397,22 @@ struct MigrationTransferPlan {
 
     enum Action: BindableAction, Equatable {
         case binding(BindingAction<State>)
+        /// MOB-1466 (field finding O5): the toolbar back button, intercepted via `.zashiBack
+        /// (customDismiss:)`. Presents the leave-guard sheet unless the plan is either already
+        /// confirmed this visit (`State.hasConfirmed`) or genuinely has nothing to commit
+        /// (`!State.requiresSigning` — the acknowledge-only rescheduled/expired-recovery review
+        /// variants, whose Confirm is pure navigation over an already-committed schedule; see
+        /// `State.confirmIntent`'s `.acknowledge` doc) — either carve-out passes straight through,
+        /// via the SAME `.delegate(.leftWithoutConfirming)` an explicit "Leave anyway" sends.
+        /// Deliberately fires even while `isConfirming` is true — a commit in flight is not yet a
+        /// SUCCESSFUL one, so the guard still applies (TCA's automatic `StackState` teardown cancels
+        /// the in-flight commit effect when the coordinator pops this element in response).
+        ///
+        /// KNOWN LIMITATION: this only intercepts the toolbar back button. `zashiBack`'s
+        /// `customDismiss` has no hook for an interactive edge-swipe gesture, so a swipe-back still
+        /// leaves silently, unguarded — the exact gap this task set out to close stays open for
+        /// that one gesture. Flagged for a follow-up, not fixed here.
+        case backTapped
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         /// Signs and stores the active schedule (sign-only — the first prep broadcasts later, via
@@ -416,6 +447,12 @@ struct MigrationTransferPlan {
         /// "Got it" on the "Prepare Your Balance" sheet, or a swipe-dismiss. Read-only sheet, so
         /// this only closes it.
         case prepareBalanceDismissed
+        /// MOB-1466: "Keep reviewing" on the leave-guard sheet, or a swipe-dismiss. Closes the sheet
+        /// only — the user stays exactly where they were, nothing is sent anywhere.
+        case leaveGuardStayTapped
+        /// MOB-1466: "Leave anyway" on the leave-guard sheet — closes it and delegates the actual
+        /// pop to the coordinator.
+        case leaveGuardLeaveTapped
         /// MOB-1511 (W2): the round context loaded on appearance — see `State.round`'s doc.
         case roundContextLoaded(round: Int, totalRounds: Int?)
         /// D14: the engine's preparation-transaction estimate for this run — how many
@@ -448,6 +485,11 @@ struct MigrationTransferPlan {
             /// session. The `MigrationKeystoneBatch` wrapper carries the preparation count, which is
             /// what tells the two halves apart on the way back (see its doc).
             case keystoneSignRequested(MigrationKeystoneBatch)
+            /// MOB-1466: "Leave anyway" on the back-out guard sheet, or a silent pass-through when
+            /// nothing was at stake (`State.hasConfirmed`/`requiresSigning` — see `.backTapped`'s
+            /// doc) — either way the coordinator just pops this screen, exactly like an ordinary
+            /// back would have, had the guard not intercepted it.
+            case leftWithoutConfirming
         }
     }
 
@@ -486,6 +528,24 @@ struct MigrationTransferPlan {
             switch action {
             case .binding:
                 return .none
+
+            case .backTapped:
+                // MOB-1466 (field finding O5): see this case's doc on `Action` for the full rule.
+                // Both carve-outs leave via the identical delegate an explicit "Leave anyway" sends
+                // — the coordinator doesn't need to know which of the three reasons applied.
+                guard state.requiresSigning, !state.hasConfirmed else {
+                    return .send(.delegate(.leftWithoutConfirming))
+                }
+                state.isLeaveGuardPresented = true
+                return .none
+
+            case .leaveGuardStayTapped:
+                state.isLeaveGuardPresented = false
+                return .none
+
+            case .leaveGuardLeaveTapped:
+                state.isLeaveGuardPresented = false
+                return .send(.delegate(.leftWithoutConfirming))
 
             case .cancelTapped:
                 state.isFailurePresented = false
@@ -588,6 +648,10 @@ struct MigrationTransferPlan {
                     // (reading `state.path.last`'s `isExpiredRecoveryReview`) decides any further
                     // routing once `.delegate(.confirmed)` lands; this reducer needs no awareness
                     // of it (see `State.isExpiredRecoveryReview`'s own doc).
+                    //
+                    // MOB-1466: `hasConfirmed` set for consistency, though `.backTapped`'s own
+                    // `!requiresSigning` carve-out already passes this variant through unconditionally.
+                    state.hasConfirmed = true
                     return .send(.delegate(.confirmed))
 
                 case .keystone(let schedule, let account):
@@ -693,6 +757,9 @@ struct MigrationTransferPlan {
 
             case .scheduleSigned:
                 state.isConfirming = false
+                // MOB-1466: the software lane's genuine "Confirm has done its job" moment — signed
+                // AND stored. See `State.hasConfirmed`'s doc.
+                state.hasConfirmed = true
                 return .send(.delegate(.confirmed))
 
             case .planStaleRefreshed(let schedule):
