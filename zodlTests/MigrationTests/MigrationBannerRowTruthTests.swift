@@ -266,6 +266,45 @@ import ZcashLightClientKit
         #expect(variant == .preparing)
     }
 
+    /// FIELD-CAUGHT 2026-08-01. A note-split is proved at commit and BROADCAST later, in its own
+    /// scheduled window — ZIP 318 applies to preparations too — so the split's broadcast happens
+    /// inside `splitPendingConfirmation`, not `.inProgress`. The first cut of this pass added the
+    /// preparing check to that arm and left the broadcast check in `.inProgress` only, so the
+    /// banner read "We'll notify you when to send" while the timeline one tap away read
+    /// "Split Balance 1 · Sending now". Same disagreement, one arm later.
+    @Test func aBroadcastingPreparationRaisesPreparingNotIdle() {
+        let variant = Self.variant(
+            state: .splitPendingConfirmation,
+            transferRows: [Self.row(index: 0, status: .pending)],
+            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
+        )
+        #expect(variant == .preparing)
+    }
+
+    /// `.preparing` and not `.transferSending`, deliberately: the thing going out is a Split
+    /// Balance, not a numbered transfer, and "Transfer 1 is sending…" over a split would be a
+    /// confident lie.
+    @Test func aBroadcastingPreparationIsNeverNumberedAsATransfer() {
+        let variant = Self.variant(
+            state: .splitPendingConfirmation,
+            transferRows: [Self.row(index: 0, status: .pending)],
+            preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
+        )
+        #expect(variant != .transferSending(number: 1))
+    }
+
+    /// The in-session flag has to be read in this arm too. It is set the instant
+    /// `runBroadcastSession` starts and pokes — which is exactly the moment the field log caught,
+    /// seconds before the engine had written `.broadcast` to any row.
+    @Test func theInFlightFlagAloneRaisesPreparingDuringTheSplitPhase() {
+        let variant = Self.variant(
+            state: .splitPendingConfirmation,
+            transferRows: [Self.row(index: 0, status: .pending)],
+            isBroadcastInFlight: true
+        )
+        #expect(variant == .preparing)
+    }
+
     /// The immediate (send-max) lane keeps its deliberate silence — it runs behind its own
     /// full-screen Sending flow, so there is no banner to raise. The `isImmediate` guard stays
     /// ahead of every new arm.

@@ -2288,7 +2288,9 @@ enum MigrationDerivations {
         // of both lists — a note-split preparation is work exactly as much as a crossing transfer
         // is, and the split phase is where a large wallet spends its first minutes. Counts below
         // still come from `transferRows` alone; preparations are never numbered transfers.
-        let isPreparingRun = (transferRows + preparationRows).contains { $0.isPreparing }
+        let workingRows = transferRows + preparationRows
+        let isPreparingRun = workingRows.contains { $0.isPreparing }
+        let isBroadcastingRun = workingRows.contains { $0.isBroadcasting }
 
         switch state {
         case MigrationState.notStarted:
@@ -2302,11 +2304,29 @@ enum MigrationDerivations {
             // re-commit keeps its preserved prior-sent rows cumulative). The engine's own
             // `progress` isn't carried by this state, and the synthesized-row fallback already
             // covers the committed-but-app-record-failed edge with progress-derived rows.
-            // Preparations broadcast immediately at commit and the app must stay open for them —
-            // checked ahead of the progress readout for the same reason it is inside `.inProgress`
-            // below: a "we'll notify you" line during work that only runs on screen is the one
-            // message that can cost the user the work.
-            if isPreparingRun {
+            // WORK IN FLIGHT — proving OR broadcasting, transfer OR preparation — outranks the
+            // progress readout, because a "we'll notify you" line during work that only runs on
+            // screen is the one message that can cost the user the work.
+            //
+            // Field-caught 2026-08-01, and this arm's own half-fix was the cause: the smart-banner
+            // pass added the preparing check here and left the BROADCAST check in `.inProgress`
+            // only. A note-split is proved at commit and broadcast later, in a scheduled window,
+            // exactly like a transfer is (ZIP 318 applies to preparations too — an
+            // immediately-broadcast split would be trivially correlatable with the commit). That
+            // broadcast therefore happens HERE, in `splitPendingConfirmation`, and the banner read
+            // "Migration Progress · We'll notify you when to send" while the timeline one tap away
+            // read "Split Balance 1 · Sending now". The same two-surfaces-one-run disagreement this
+            // whole pass exists to remove, surviving in the one arm the pass did not finish.
+            //
+            // `.preparing` rather than `.transferSending`, deliberately: the thing going out is a
+            // Split Balance, not a numbered transfer, and "Transfer 1 is sending…" over a split
+            // would be a confident lie. The run-level frame (spinner + "Keep Zodl open on active
+            // phone screen") is true for both and asks for the one thing either needs.
+            //
+            // `isBroadcastInFlight` is read here too, not just the durable row: it is set the
+            // instant `runBroadcastSession` starts and pokes, so it covers the seconds before the
+            // engine has written `.broadcast` — which is exactly the window the field log caught.
+            if isPreparingRun || isBroadcastingRun || isBroadcastInFlight {
                 return MigrationBannerVariant.preparing
             }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
