@@ -67,8 +67,11 @@ struct Root {
         /// The last value `.migrationSyncGateChanged` saw, for dedupe — a genuine transition is what
         /// triggers a migration reconcile.
         var lastMigrationSyncGateBlocked = false
-        /// Set when a `.retryStart` ran WHILE the migration privacy gate was blocking, so the gate's
-        /// clearing edge knows to replay that deferred start.
+        /// Set when a start was refused by the migration privacy gate (`.migrationGateDeferredSyncStart`,
+        /// sent from both `start()` call sites' refusal handling), so the gate's clearing edge knows to
+        /// replay that deferred start. This is what makes the buffer-shape refusal — nothing due to
+        /// broadcast, so `migrationStoppedSyncForBroadcast` never gets set either — resume in the SAME
+        /// session instead of waiting for the next foreground.
         var syncDeferredByMigrationGate = false
         /// Edge detector for the sync-completion hooks below — reconcile and the send-gate re-key
         /// run ONCE per completed sync, not on every tick while already at the tip.
@@ -286,6 +289,11 @@ struct Root {
         /// The SDK's migration privacy gate flipped (or was re-pushed by the app-side feed). The
         /// clearing edge is what RESUMES a sync a migration broadcast stopped — see the handler.
         case migrationSyncGateChanged(Bool)
+        /// A `start()` was refused by the migration privacy gate — arms
+        /// `State.syncDeferredByMigrationGate` so the gate's clearing edge replays the start even
+        /// when no broadcast ran in between (the buffer-shape refusal). Sent from both refusal
+        /// handlers in RootInitialization before they run the broadcast session.
+        case migrationGateDeferredSyncStart
         case synchronizerStateChanged(RedactableSynchronizerState)
         case transactionDetailsOpen(String)
         case updateStateAfterConfigUpdate(WalletConfig)

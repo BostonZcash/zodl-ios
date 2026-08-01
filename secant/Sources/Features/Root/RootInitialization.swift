@@ -282,6 +282,14 @@ extension Root {
             //
             // `reconcile()` stays gated on a genuine change — it drives banner/re-entry derivation,
             // an unrelated concern that should not re-run on every re-push.
+            case .migrationGateDeferredSyncStart:
+                // The refusal handlers in `.initializeSDK`/`.retryStart` arm this BEFORE running
+                // their broadcast session, so the clearing edge below resumes even when that
+                // session finds nothing to broadcast (the buffer-shape refusal, where
+                // `migrationStoppedSyncForBroadcast` never gets set either).
+                state.syncDeferredByMigrationGate = true
+                return .none
+
             case .migrationSyncGateChanged(let isBlocked):
                 @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
 
@@ -351,6 +359,7 @@ extension Root {
                                 // exactly what the gate saw when it refused.
                                 let refusalReason = "start refused — migration gate active; running broadcast session"
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
+                                await send(.migrationGateDeferredSyncStart)
                                 _ = await migrationManager.runBroadcastSession()
                             }
                         }
@@ -637,6 +646,7 @@ extension Root {
                                     // when it refused.
                                     let refusalReason = "start refused — migration gate active; treating launch as broadcast session"
                                     LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
+                                    await send(.migrationGateDeferredSyncStart)
                                     _ = await migrationManager.runBroadcastSession()
                                 }
                             }

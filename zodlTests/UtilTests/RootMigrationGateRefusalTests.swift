@@ -240,6 +240,50 @@ import Testing
         await drain(store)
     }
 
+    // MARK: - Buffer-shape refusal: the refusal itself must arm the resume
+    //
+    // A relaunch inside the post-broadcast privacy buffer is refused by the gate while NOTHING is
+    // due to broadcast: `runBroadcastSession()` finds no `.broadcast` step, so it never stops sync
+    // and never sets `migrationStoppedSyncForBroadcast`. If the refusal path did not arm
+    // `syncDeferredByMigrationGate` itself, the gate's clearing edge would compute
+    // `shouldResume == false` and sync would stay off for the whole session (rescued only by the
+    // next foreground). The flag's own doc in RootStore.swift always promised this arming; nothing
+    // in production ever set it before this fix.
+    @Test func bufferShapeRefusalArmsTheResumeItself() async throws {
+        let calls = LockIsolated<[String]>([])
+        let store = makeStore(calls: calls, startError: ZcashError.migrationSyncBlocked, visitKind: .sync)
+
+        await store.send(.initialization(.initializeSDK(.existingWallet)))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        #expect(store.state.syncDeferredByMigrationGate, "the refusal itself must arm the deferred-start flag")
+
+        // Quiesce the post-init cascade so the resume below is driven by THIS test, not by the
+        // register-time seed read racing it.
+        await drain(store)
+
+        await store.send(.migrationSyncGateChanged(false)) { state in
+            state.syncDeferredByMigrationGate = false
+        }
+
+        await store.receive(
+            { action in
+                guard case .initialization(.retryStart) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        await drain(store)
+    }
+
     // MARK: - .retryStart: gate refusal also runs the broadcast session instead of failing the retry
 
     @Test func retryStartGateRefusalRunsBroadcastSessionInsteadOfFailingStart() async throws {
