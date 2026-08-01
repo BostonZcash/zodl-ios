@@ -151,7 +151,6 @@ extension MigrationManagerClient: DependencyKey {
             visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
             runBroadcastSession: { await impl.runBroadcastSession() },
-            runInvalidationSweep: { await impl.runInvalidationSweep() },
             migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
             shouldWarnBeforeManualSend: { accountUUID, proposal in
                 await impl.shouldWarnBeforeManualSend(accountUUID: accountUUID, proposal: proposal)
@@ -1565,46 +1564,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             proposalSpendsOrchard: proposal?.spendsLegacyOrchardFunds,
             hasUnmigratedOrchard: await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID) > Zatoshi.zero
         )
-    }
-
-    /// THE INVALIDATION SWEEP over every candidate account — see
-    /// `MigrationManagerClient.runInvalidationSweep`.
-    ///
-    /// Runs beside `runProveSweep` at the sync-complete edge, and BEFORE it: a transfer this
-    /// process submitted that mined without its broadcast being recorded (crash or failed persist
-    /// between submit and record) would otherwise be pointlessly proved. Local-database only, so
-    /// unlike proving it is cheap.
-    ///
-    /// The SDK member this wraps is the narrow unrecorded-broadcast repair — it promotes exactly
-    /// that one case and records no invalid marks. Invalidation discovery itself (a funding note
-    /// spent outside the migration) lives in the engine's satisfiability oracle and surfaces
-    /// through step/status reads, not through this call. The sweep keeps its historical app-side
-    /// name; the SDK member was renamed to match the engine.
-    ///
-    /// Outside `serialExecutor` for the same reason the prove sweep is: it is an engine-side probe
-    /// that mutates no app-side migration storage, and the app-level `reconcile()` running behind it
-    /// is what actually needs the mutex. Per-account failures degrade to "nothing repaired"
-    /// rather than aborting the sweep.
-    func runInvalidationSweep() async -> Bool {
-        guard isIronwoodActivated() else { return false }
-
-        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
-            selectedAccountUUID: selectedWalletAccount?.id,
-            walletAccounts: walletAccounts
-        )
-
-        var didRepair = false
-        for accountUUID in accountUUIDs {
-            do {
-                didRepair = try await sdkSynchronizer.reconcileUnrecordedMigrationBroadcasts(accountUUID) || didRepair
-            } catch {
-                LoggerProxy.event("\(Self.logTag) invalidation sweep failed for one account: \(error.toZcashError())")
-            }
-        }
-        if didRepair {
-            LoggerProxy.event("\(Self.logTag) invalidation sweep: promoted a broadcast this app never recorded")
-        }
-        return didRepair
     }
 
     /// See `MigrationManagerClient.migrationChainClock` — the public face of `chainClock`, with the

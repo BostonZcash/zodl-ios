@@ -9,7 +9,7 @@
 //  timed and denominated so their amounts are not linkable. A manual send that dips into Orchard
 //  crosses the turnstile on the USER's schedule, in the USER's amount — leaking exactly what the
 //  migration spends days hiding. Worse, it can spend the very notes the run's pre-signed transfers
-//  are built on, invalidating the plan (the condition `runInvalidationSweep` detects afterwards).
+//  are built on, invalidating the plan (a condition the engine's satisfiability oracle records).
 //
 //  B6 HAS LANDED, so the primary rule is now proposal truth: warn iff a live run exists AND THIS
 //  proposal spends legacy Orchard funds (`Proposal.spendsLegacyOrchardFunds`). No more inferring

@@ -150,11 +150,11 @@ extension Root {
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
                     ? .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         migrationManager.recordSyncCompleted()
-                        // P3: THE INVALIDATION SWEEP, first. It is the only thing that detects a
-                        // transfer whose funding note was spent elsewhere, and it runs ahead of
-                        // proving because proving such a transfer is work spent on a transaction
-                        // that has to be rebuilt rather than broadcast. Local reads only — cheap.
-                        _ = await migrationManager.runInvalidationSweep()
+                        // (P3's invalidation sweep used to run here, first. Both of its jobs are
+                        // the ENGINE's now: foreign-spent funding notes are recorded by the
+                        // engine's satisfiability oracle, and a broadcast this process submitted
+                        // but failed to record is promoted on every `migrationAdvanceStep` —
+                        // automatically, not only when this edge remembered to ask.)
                         // THE PROVE SWEEP, and this edge is the only correct place for it: sync
                         // has just reached the tip, so every settled anchor boundary is now
                         // witnessable. Runs BEFORE reconcile so the state reconcile derives already

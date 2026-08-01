@@ -6,7 +6,7 @@
 //
 //  Field-caught 2026-07-31, and the most consequential defect of the session. `Root`'s
 //  `.synchronizerStateChanged` case built `migrationReconcileEffect` on the edge into `.upToDate` —
-//  invalidation sweep, prove sweep, reconcile, notification arming — and then returned it from
+//  prove sweep, reconcile, notification arming — and then returned it from
 //  exactly ONE path:
 //
 //      guard let account = state.selectedWalletAccount else {
@@ -61,14 +61,12 @@ import ComposableArchitecture
     /// after the sweeps — a run whose proofs land but whose UI never updates is its own bug.
     private struct SweepSpy: Sendable {
         let proveSweeps = LockIsolated(0)
-        let invalidationSweeps = LockIsolated(0)
         let reconciles = LockIsolated(0)
 
         func install(_ values: inout DependencyValues) {
             var client = MigrationManagerClient.noOp
             client.recordSyncCompleted = { }
             client.runProveSweep = { proveSweeps.withValue { $0 += 1 }; return 0 }
-            client.runInvalidationSweep = { invalidationSweeps.withValue { $0 += 1 }; return false }
             client.reconcile = { reconciles.withValue { $0 += 1 } }
             client.armNextWindowNotifications = { _ in }
             values.migrationManager = client
@@ -78,7 +76,8 @@ import ComposableArchitecture
     // MARK: - The regression
 
     /// THE test. An account is selected — the ordinary case, and the one that was broken — and sync
-    /// reaches the tip. All three must run.
+    /// reaches the tip. Both must run. (The invalidation sweep used to be pinned here too; both of
+    /// its jobs are the engine's now, recorded/promoted on every `migrationAdvanceStep` read.)
     @Test func theSweepsRunWhenAnAccountIsSelected() async {
         let spy = SweepSpy()
         var initialState = Root.State.initial
@@ -90,10 +89,9 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.proveSweeps.value > 0 && spy.invalidationSweeps.value > 0 && spy.reconciles.value > 0 }
+        await waitUntil { spy.proveSweeps.value > 0 && spy.reconciles.value > 0 }
 
         #expect(spy.proveSweeps.value == 1, "the prove sweep is what produces the proofs the engine keeps asking for")
-        #expect(spy.invalidationSweeps.value == 1, "the invalidation sweep is the only detector of a foreign spend")
         #expect(spy.reconciles.value == 1, "without reconcile the proofs land and no surface ever says so")
     }
 
