@@ -61,6 +61,10 @@ struct MigrationStatusView: View {
                                 .padding(.bottom, 24)
                         }
 
+                        if store.isUpdating {
+                            updatingNote
+                        }
+
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
@@ -206,6 +210,27 @@ struct MigrationStatusView: View {
             // (no committed schedule yet), where `forwardETAMinutes` falls back to `hoursFromNow`.
             return MigrationETA.caption(minutesFromNow: row.forwardETAMinutes, phrasing: .bare)
         }
+    }
+
+    // MARK: - Updating note
+
+    /// Shown while the rows on screen came from the cache and a fresh read is still running — see
+    /// `MigrationStatus.State.isUpdating`.
+    ///
+    /// The screen draws instantly now, which is only honest if it also says the data is from a
+    /// moment ago. This is that sentence, and it is small on purpose: the rows below it are real,
+    /// not a placeholder, and the note is a caveat rather than a state of its own.
+    @ViewBuilder private var updatingNote: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: Design.Text.tertiary.color(.light)))
+                .scaleEffect(0.6)
+                .frame(width: 12, height: 12)
+
+            Text(localizable: .migrationStatusUpdating)
+                .zFont(size: 12, style: Design.Text.tertiary)
+        }
+        .padding(.bottom, 12)
     }
 
     // MARK: - Tor-hold note

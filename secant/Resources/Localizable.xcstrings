@@ -13323,6 +13323,23 @@
         }
       }
     },
+    "migrationStatus.updating": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updating…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Actualizando…"
+          }
+        }
+      }
+    },
     "migrationStatus.windowMissedNote": {
       "extractionState": "manual",
       "localizations": {

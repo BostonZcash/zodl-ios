@@ -52,6 +52,30 @@ struct MigrationSummary: Equatable, Sendable, Codable {
     }
 }
 
+/// The last rows a migration screen successfully derived, kept so the next visit can PAINT
+/// IMMEDIATELY instead of showing a spinner over nothing. Not part of the SDK surface. [ext]
+///
+/// MOB-1466, field-caught 2026-08-01: tapping the banner gave a blank screen with a spinner for
+/// ten seconds and more. The reads behind it are several FFI round trips over the same wallet
+/// database the prove sweep runs on, and the instrument measured them at 4.75 s on a quiet open and
+/// 18.3 s while a sweep held the database — a 4x spread on the identical call. Making the reads
+/// faster does not fix that: the screen would still be blank, just for less time.
+///
+/// So the screen stops waiting. It draws what it last knew the instant it opens, says "Updating…"
+/// while the fresh read runs, and swaps when it lands. `computedAt` is what makes that honest —
+/// the data is real, it is simply from a moment ago, and the screen says so rather than presenting
+/// it as current.
+struct MigrationRowsSnapshot: Equatable, Sendable {
+    var transfers: [MigrationTransferRow]
+    /// When this was derived. The claim the "Updating…" label is making.
+    var computedAt: Date
+
+    init(transfers: [MigrationTransferRow], computedAt: Date) {
+        self.transfers = transfers
+        self.computedAt = computedAt
+    }
+}
+
 /// A single row in the migration transfers list UI. Not part of the SDK surface. [ext]
 struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     enum Status: Equatable, Sendable, Codable {

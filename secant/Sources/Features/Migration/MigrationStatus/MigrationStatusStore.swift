@@ -76,6 +76,10 @@ struct MigrationStatus {
         /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
         /// off the SDK's real value instead of a hardcoded "10". `0` until `statusLoaded` arrives.
         var syncPrivacyBufferMinutes = 0
+        /// MOB-1466: true while the screen is showing CACHED rows and a fresh read is still in
+        /// flight — the "Updating…" label. Set only when the cache actually supplied something; a
+        /// first-ever visit has nothing to be stale about and keeps the ordinary empty state.
+        var isUpdating = false
         var cancelStateStreamId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -229,6 +233,22 @@ struct MigrationStatus {
 
             case .onAppear:
                 let accountUUID = state.selectedWalletAccount?.id
+                // PAINT FIRST, THEN LOAD. Field-caught 2026-08-01: tapping the banner gave a blank
+                // screen with a spinner for ten seconds and more, because this screen drew nothing
+                // until `loadStatus`' async read returned — and the instrument measured that read at
+                // 4.75 s on a quiet open and 18.3 s while the prove sweep held the wallet database.
+                //
+                // Making the read faster does not fix it; the screen would still be blank, just
+                // briefly. So it stops waiting: the last rows we derived go in synchronously, right
+                // here in the reducer, before the first frame — and `isUpdating` makes the claim
+                // honest rather than passing a-moment-ago data off as current.
+                //
+                // Guarded on `rows.isEmpty` so it never clobbers fresher rows the coordinator's own
+                // re-entry hydration already put in state.
+                if state.rows.isEmpty, let cached = migrationManager.cachedTransferRows(accountUUID) {
+                    state.rows = IdentifiedArrayOf(uniqueElements: cached.transfers)
+                    state.isUpdating = true
+                }
                 return .merge(
                     loadStatus(accountUUID: accountUUID),
                     .publisher {
@@ -267,6 +287,7 @@ struct MigrationStatus {
                 return .send(.delegate(.sendNow))
 
             case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes, let isTorHoldActive):
+                state.isUpdating = false
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
                 state.totalDurationHours = totalDurationHours
                 state.syncPrivacyBufferMinutes = syncPrivacyBufferMinutes

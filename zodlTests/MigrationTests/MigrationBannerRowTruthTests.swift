@@ -419,11 +419,19 @@ import ZcashLightClientKit
         #expect(rows?[0].status == .sent)
     }
 
-    /// `isInFlight` is what the timeline's spinner reads: the two states whose whole message is
-    /// "something is running, don't leave".
-    @Test func inFlightCoversExactlyPreparingAndBroadcasting() {
+    /// `isInFlight` is what the timeline's spinner reads, and it is PROVING ONLY.
+    ///
+    /// `isBroadcasting` was dropped from it 2026-08-01, with the caption, for one reason: a
+    /// `.broadcast(txid:)` row is submitted and awaiting mining — minutes — and a spinner over it
+    /// claims the app is working when the remaining work is the chain's. Field report that produced
+    /// this: "there is never ending sending of split 1." A spinner that never stops is how a wallet
+    /// teaches someone it is broken.
+    @Test func inFlightIsProvingOnly() {
         #expect(Self.row(index: 0, status: .active, isPreparing: true).isInFlight)
-        #expect(Self.row(index: 0, status: .active, isBroadcasting: true).isInFlight)
+        #expect(
+            !Self.row(index: 0, status: .active, isBroadcasting: true).isInFlight,
+            "a broadcast row is waiting on the chain, not on us"
+        )
         #expect(!Self.row(index: 0, status: .active).isInFlight)
         #expect(!Self.row(index: 0, status: .sent).isInFlight)
     }

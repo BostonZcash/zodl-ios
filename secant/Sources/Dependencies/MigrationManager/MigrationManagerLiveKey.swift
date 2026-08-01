@@ -198,6 +198,7 @@ extension MigrationManagerClient: DependencyKey {
             armNextWindowNotifications: { await impl.armNextWindowNotifications(accountUUID: $0) },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
+            cachedTransferRows: { impl.cachedTransferRows(accountUUID: $0) },
             wipeAllMigrationState: { await impl.wipeAllMigrationState() },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
@@ -629,8 +630,27 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// back to the W1 progress-only approximation, kept verbatim below.
     ///
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
-        await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
+        let rows = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
+        // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
+        // result is worth keeping: `[]` means "nothing derivable", and prefilling a screen with it
+        // would be the blank screen again, just without the spinner to explain itself.
+        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !rows.isEmpty {
+            rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: rows, computedAt: Date()) }
+        }
+        return rows
     }
+
+    /// See `MigrationManagerClient.cachedTransferRows` — SYNCHRONOUS by design, because a value a
+    /// reducer has to await is a value the screen has to draw a spinner for.
+    func cachedTransferRows(accountUUID: AccountUUID?) -> MigrationRowsSnapshot? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        return rowsCache.withLock { $0[resolvedAccountUUID] }
+    }
+
+    /// In-memory only, and deliberately so: it is a paint accelerator, not state. A cold launch has
+    /// nothing to show instantly and correctly falls back to the loading state; nothing here is ever
+    /// the source of truth for a decision.
+    private let rowsCache = OSAllocatedUnfairLock<[AccountUUID: MigrationRowsSnapshot]>(initialState: [:])
 
     /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
     /// screens behind the banner wait on THIS, and a blank screen with a spinner is this function
@@ -2218,6 +2238,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// notifications too.
     func wipeAllMigrationState() async {
         MigrationTrace.notificationCancelled("wallet reset")
+        rowsCache.withLock { $0.removeAll() }
         await userNotifications.cancelMigrationNotifications()
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
