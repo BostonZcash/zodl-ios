@@ -882,8 +882,21 @@ extension Root {
                     state = .initial
                 }
 
-                return .send(.resetZashiKeychainRequest)
-                
+                // MOB-1466 (N3, field-caught 2026-08-01): the migration wipe rides this same reset
+                // boundary as `clearDeviceScopedWalletState` above, for the identical reason that
+                // helper gives for its voting sweep — nothing from the previous owner of this device
+                // survives it. Without it, a notification armed by the DELETED wallet fires against
+                // a freshly restored one and invites the user into a migration run that is not
+                // theirs, backed by persisted state keyed to a wallet that no longer exists.
+                //
+                // Async, so it cannot ride `clearDeviceScopedWalletState` (a synchronous static);
+                // sequenced ahead of `.resetZashiKeychainRequest` so the reset chain continues only
+                // once the pokes have actually been withdrawn.
+                return .run { [migrationManager] send in
+                    await migrationManager.wipeAllMigrationState()
+                    await send(.resetZashiKeychainRequest)
+                }
+
             case .resetZashiKeychainRequest:
                 return .run { send in
                     do {

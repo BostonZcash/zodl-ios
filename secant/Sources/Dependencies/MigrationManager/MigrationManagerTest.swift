@@ -65,6 +65,7 @@ extension MigrationManagerClient: TestDependencyKey {
 
         // The run's pinned network identity, and the reset that wipes every persisted flag.
         client.markNetworkSnapshotCommitted = unimplemented("MigrationManagerClient.markNetworkSnapshotCommitted", placeholder: {}())
+        client.wipeAllMigrationState = unimplemented("MigrationManagerClient.wipeAllMigrationState", placeholder: {}())
         client.resetPersistedFlags = unimplemented("MigrationManagerClient.resetPersistedFlags", placeholder: {}())
 
         return client

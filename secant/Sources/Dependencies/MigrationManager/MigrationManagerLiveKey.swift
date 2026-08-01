@@ -198,6 +198,7 @@ extension MigrationManagerClient: DependencyKey {
             armNextWindowNotifications: { await impl.armNextWindowNotifications(accountUUID: $0) },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
+            wipeAllMigrationState: { await impl.wipeAllMigrationState() },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
     }
@@ -1387,10 +1388,35 @@ final class MigrationManagerImpl: @unchecked Sendable {
             .map { clock.notificationDate(atHeight: $0.height, now: now) }
             .min()
 
-        // A SEND step: the first row not yet sent...
-        let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
+        // A SEND step: the earliest row still needing a broadcast — across BOTH row lists.
+        //
+        // MOB-1466 (N1, field-caught 2026-08-01). This read `migrationTransfers` alone, which
+        // filters to `.transfer`-kind statuses: a note-split PREPARATION contributed nothing to the
+        // poke. `migrationSyncWakeups`' own doc spells the contract out — register wake-ups from
+        // those heights "plus each status row's `scheduledHeight` for the broadcast windows" — and
+        // we were doing the first half and a subset of the second.
+        //
+        // What that cost, from the device: with the run in `splitPendingConfirmation`, the arm
+        // predicted `prove 17:50:27, send 17:51:41` while preparation 0's window was ALREADY open
+        // at 17:33. Worse than a miss — the `send` date it did compute was the first TRANSFER's
+        // window, and no transfer can go until the preparations mine, so the arm predicted an event
+        // that could not happen and missed the one that could. The run only moved because the user
+        // opened the app manually, out of curiosity. On iOS with no background lane, a window
+        // nobody is poked about is a window that goes unused.
+        //
+        // `!isBroadcasting` on top of `status != .sent`: a row already on the wire needs no send
+        // window. Without it the arm treats a broadcast-but-unmined row as "next to send", whose
+        // ETA has by definition passed, and schedules a poke one notification-buffer later for
+        // work that is already done.
+        let transferRows = await migrationTransfers(accountUUID: resolvedAccountUUID)
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+        let preparationRows = MigrationDerivations.preparationRows(statuses: statuses, clock: clock) ?? []
+        let pendingBroadcast = (preparationRows + transferRows)
+            .filter { $0.status != MigrationTransferRow.Status.sent && !$0.isBroadcasting }
+            .min { $0.forwardETAMinutes < $1.forwardETAMinutes }
+
         var sendDate: Date?
-        if let next = rows.first(where: { $0.status != MigrationTransferRow.Status.sent }) {
+        if let next = pendingBroadcast {
             // ...at the later of its own window and the privacy buffer's expiry. A sync that just
             // completed pushes it out: sending on its heels is exactly the adjacency the buffer
             // exists to prevent, so poking at the window would invite an action the gate refuses.
@@ -1627,6 +1653,46 @@ final class MigrationManagerImpl: @unchecked Sendable {
             selectedAccountUUID: selectedWalletAccount?.id,
             walletAccounts: walletAccounts
         )
+
+        // MOB-1466 (N2, field-caught 2026-08-01): THE PRIVACY BUFFER, on the lane that never asked
+        // for it.
+        //
+        // `visitKind()` guarantees this SESSION does not sync — but the buffer is not about this
+        // session. It is about the last COMPLETED sync, whenever that was: an observer watching one
+        // circuit sees a restore finish and a migration transfer go out eight minutes later, and
+        // the app being backgrounded in between hides nothing. `MigrationGateStorage` has always
+        // persisted `migrationLastSyncCompletedAt` for exactly this, and `sendGate()` has always
+        // answered from it — the notification arming asks, the user's own Send now asks, and this
+        // lane, the only one that decides FOR the user, did not.
+        //
+        // 600 s on mainnet, 180 s on testnet. The field sequence (restore, background, foreground
+        // five minutes later, headless broadcast) cleared the testnet buffer by two minutes and
+        // would have broadcast five minutes INSIDE the mainnet one with nothing to stop it.
+        //
+        // Refusing means this app-open does nothing at all, and that is deliberate: reopening sync
+        // instead would re-stamp `lastSyncCompletedAt` and push the broadcast out again, so a user
+        // who opens often would never send. The already-armed poke is computed as
+        // `max(window, gateUntil)`, so it points past the buffer and brings them back at the first
+        // moment the send is permissible.
+        //
+        // Only `.waitUntil` is honoured. `.syncRequired` (a sync running right now) keeps its
+        // existing stop-then-broadcast handling — refusing on it would let an unrelated background
+        // sync stall a run indefinitely — but it is logged, because a broadcast on the heels of a
+        // live sync is the tightest adjacency of all and we currently have no field data on how
+        // often this lane meets one.
+        let gate = await sendGate()
+        switch gate {
+        case MigrationSendGate.waitUntil(let gateUntil):
+            LoggerProxy.event(
+                "\(Self.logTag) broadcast held by the privacy buffer until \(gateUntil)"
+                + " — \(Int(gateUntil.timeIntervalSinceNow))s to go; this session does nothing"
+            )
+            return false
+        case MigrationSendGate.syncRequired:
+            LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
+        case MigrationSendGate.allowed:
+            break
+        }
 
         for accountUUID in accountUUIDs {
             guard case let MigrationAdvanceStep.broadcast(id)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) else {
@@ -2053,6 +2119,28 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `gateStorage.resetPersistedFlags()` alone). MOB-1496: also clears each candidate account's
     /// own per-account remainder verdict — same rationale as the acknowledged flag, since a reset
     /// must leave no stale "more to migrate" verdict behind either.
+    /// THE WALLET-RESET WIPE (MOB-1466 N3, field-caught 2026-08-01): every scheduled migration
+    /// notification cancelled, every persisted migration key removed, every in-session flag
+    /// dropped. Called from Root's `.resetZashiSDKSucceeded`, alongside
+    /// `clearDeviceScopedWalletState`, and it belongs to the same rule that helper states in its own
+    /// comments: nothing from the previous owner of this device survives the reset boundary.
+    ///
+    /// The field report is the whole argument. Reset the wallet, restore a fresh one — and a
+    /// notification armed by the wallet that no longer exists fires, inviting the user into a
+    /// migration run that is not theirs. Every step after that tap reads state keyed to a wallet
+    /// that was deleted.
+    ///
+    /// Deliberately NOT folded into `resetPersistedFlags()` above, which is a different and much
+    /// narrower thing (a test-only flags reset, four keys, and it leaves the sync-completed stamp
+    /// alone on purpose). Conflating them would have made the debug reset silently start cancelling
+    /// notifications too.
+    func wipeAllMigrationState() async {
+        await userNotifications.cancelMigrationNotifications()
+        gateStorage.wipeEverything()
+        broadcastsInFlight.withLock { $0.removeAll() }
+        LoggerProxy.event("\(Self.logTag) wallet reset — notifications cancelled, every migration key wiped")
+    }
+
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
         let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
@@ -3395,6 +3483,36 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
     }
+
+    /// EVERY migration key this app has ever written, by prefix — the wallet-reset wipe (MOB-1466
+    /// N3, field-caught 2026-08-01: a notification armed by the previous wallet fired after a reset
+    /// and a fresh restore).
+    ///
+    /// Deliberately a prefix sweep and not a list. `resetPersistedFlags()` above is a list, and it
+    /// is exactly four of the eighteen `sharedStateKey_migration*` keys — the four someone
+    /// remembered. Every per-account key is that prefix plus an account-hex suffix, so a list
+    /// cannot name them at all, and every future key would have to be added by hand to a call site
+    /// nobody thinks about while adding one. A reset that misses a key does not fail loudly; it
+    /// hands the next wallet a stranger's state.
+    ///
+    /// This DOES clear `migrationLastSyncCompletedAt`, which `resetPersistedFlags()` deliberately
+    /// leaves alone. That reasoning ("a short-lived timing value that expires on its own") is right
+    /// for a flags reset and wrong here: across a wallet boundary the stamp describes a sync that,
+    /// as far as the new wallet is concerned, never happened — and leaving it makes the new
+    /// wallet's first send gate answer a question about someone else's traffic.
+    ///
+    /// Same shape as the voting wipe in `Root.clearDeviceScopedWalletState`, and for the same
+    /// stated reason: nothing from the previous owner of this device may survive the reset
+    /// boundary.
+    func wipeEverything() {
+        for key in userDefaults.dictionaryRepresentation().keys where key.hasPrefix(Self.migrationKeyPrefix) {
+            userDefaults.removeObject(forKey: key)
+        }
+    }
+
+    /// The prefix every `SharedStateKeys` migration constant starts with — per-account keys append
+    /// an account-hex suffix to one of them.
+    private static let migrationKeyPrefix = "sharedStateKey_migration"
 }
 
 // MARK: - Persistence: generic per-account Codable storage (R8-T3 #21)

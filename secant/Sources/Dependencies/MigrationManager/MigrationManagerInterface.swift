@@ -393,6 +393,10 @@ struct MigrationManagerClient: Sendable {
     // simulator debug panel) was removed by MOB-1458; today it's exercised solely by
     // `MigrationManagerTests`/`MigrationFailureRoutingTests`. MOB-1496 (W-A): no longer includes
     // dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
+    /// MOB-1466 (N3): the WALLET-RESET wipe — cancels every scheduled migration notification
+    /// and removes every persisted migration key. Distinct from `resetPersistedFlags` below,
+    /// which is the narrow test-only flags reset. See `MigrationManagerImpl.wipeAllMigrationState`.
+    var wipeAllMigrationState: @Sendable () async -> Void = { }
     var resetPersistedFlags: @Sendable () -> Void
 }
 
