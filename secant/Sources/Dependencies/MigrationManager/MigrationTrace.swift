@@ -302,7 +302,7 @@ enum MigrationTrace {
 
     private static func render(_ row: MigrationTransferRow, prefix: String) -> String {
         let number = "\(prefix)\(row.index + 1)"
-        if row.isBroadcasting { return "\(number):sending" }
+        if row.isBroadcasting { return "\(number):broadcast" }
         if row.isPreparing { return "\(number):preparing" }
         switch row.status {
         case .sent: return "\(number):done"

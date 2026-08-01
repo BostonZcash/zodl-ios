@@ -103,8 +103,15 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// Precise "sent N minutes ago" recency for a `.sent` row under an hour old; `nil` keeps the
     /// existing `hoursFromNow`-based caption (0 = "sent recently", otherwise "Sent Nh ago").
     var sentMinutesAgo: Int?
-    /// True for the row currently broadcasting to the network — same `.active` badge as a
-    /// merely-queued row, captioned "Sending now" instead of an ETA.
+    /// True for a row the engine has BROADCAST (`.broadcast(txid:)`) and not yet seen mined — same
+    /// `.active` badge as a merely-queued row, captioned "Sent recently" instead of an ETA.
+    ///
+    /// The name says "broadcasting" and the state means "broadcast". That is the distinction the
+    /// field caught on 2026-08-01 ("there is never ending sending of split 1"): the submit itself is
+    /// about two seconds, while this flag stays true for the minutes it takes to mine — plus the
+    /// SDK's post-broadcast privacy buffer, during which the wallet is not even allowed to look.
+    /// Anything reading this flag is describing a transaction ON THE WIRE, not one being typed onto
+    /// it.
     var isBroadcasting: Bool
     /// MOB-1466 (smart-banner pass): true for a row the engine says the wallet can PROVE right now
     /// — `MigrationTransactionStatus.isReady` with `nextAction == .prove`. Captioned "Preparing
@@ -125,10 +132,18 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// See `Kind`'s doc.
     var kind: Kind
 
-    /// Whether this row is work IN FLIGHT right now — the two states whose whole message is "the
-    /// app is doing something, keep it open". Drives the timeline's inline spinner.
+    /// Whether this row is work IN FLIGHT right now — the state whose whole message is "the app is
+    /// doing something". Drives the timeline's inline spinner.
+    ///
+    /// `isBroadcasting` was dropped from this 2026-08-01 for the same reason its caption changed
+    /// from "Sending now" to "Sent recently": a `.broadcast(txid:)` row is SUBMITTED and awaiting
+    /// mining, which is minutes, and a spinner over it claims the app is working when the work is
+    /// the chain's. A spinner that never stops is how a wallet teaches someone it is broken.
+    ///
+    /// Proving is the one row-level state that genuinely runs on this device, for tens of seconds,
+    /// and stops the moment the app closes — so it keeps the spinner.
     var isInFlight: Bool {
-        isPreparing || isBroadcasting
+        isPreparing
     }
 
     /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
