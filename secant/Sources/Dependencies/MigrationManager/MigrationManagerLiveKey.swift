@@ -2530,11 +2530,33 @@ enum MigrationDerivations {
             // false promise: `splitPendingConfirmation` means the preparations have not all mined,
             // so there is nothing to SEND yet and no send to notify about.
             //
-            // `isWorkingNow` now carries the only distinction the user should see — whether WE need
-            // them present — while the title and icon hold steady across the phase. `done`/`total`
-            // are dropped here on purpose: "0 of 12" counts TRANSFERS, none of which can start until
-            // this phase ends, so it was a zero that could not move.
-            return MigrationBannerVariant.preparing(isWorkingNow: isPreparingRun || isBroadcastInFlight)
+            // RESOLVED with the two DESIGNED states and nothing invented. The first attempt gave
+            // `.preparing` an `isWorkingNow` flag and a new "Preparing your balance…" line for the
+            // waiting half — copy that exists nowhere in Figma, under a spinner that stayed lit
+            // while the timeline showed none. Both were reported within the hour, and both were
+            // fair: undesigned copy is not ours to mint, and a banner spinner over a spinner-less
+            // list is the same contradiction this pass exists to remove, relocated.
+            //
+            // The churn it was smoothing was also smaller than feared. The field dwell times were
+            // 78 s and 12 s — neither close to a flicker. The complaint that DID hold up was
+            // latency (18 s blocked reads while the prove sweep held the database), which no banner
+            // copy can fix.
+            //
+            // So: `.preparing` (Figma 5139:35270, spinner + keep-open) while the app can genuinely
+            // prove or submit, and the designed idle banner otherwise. The split phase having no
+            // designed "waiting" state of its own is a real gap — one for the designers, recorded
+            // in SMART_BANNER_STATES §8, not one to paper over here.
+            if isPreparingRun || isBroadcastInFlight {
+                return MigrationBannerVariant.preparing
+            }
+            let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
+            let splitDisplayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
+            return MigrationBannerVariant.inProgress(
+                done: doneRows,
+                total: transferRows.count,
+                round: splitDisplayRound,
+                totalRounds: splitDisplayRound != nil ? totalRounds : nil
+            )
 
         case let MigrationState.inProgress(progress):
             // MOB-1513 (B1): an immediate (send-max) sweep in flight shows NO banner during the
@@ -2578,7 +2600,7 @@ enum MigrationDerivations {
             // the Resume screen, so Reschedule and Send now remain one tap away for anyone who wants
             // them — this stops ADVERTISING a dead end, it does not remove an exit.
             if isPreparingRun {
-                return MigrationBannerVariant.preparing(isWorkingNow: true)
+                return MigrationBannerVariant.preparing
             }
             if hasOverdue {
                 return MigrationBannerVariant.transferWaiting(

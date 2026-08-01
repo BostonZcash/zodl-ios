@@ -182,7 +182,7 @@ import ZcashLightClientKit
             statuses: statuses,
             transferRows: rows
         )
-        #expect(variant == MigrationBannerVariant.preparing(isWorkingNow: false))
+        #expect(variant == MigrationBannerVariant.inProgress(done: 0, total: 1, round: nil, totalRounds: nil))
         #expect(variant?.title == MigrationBannerVariant.inProgress(done: 0, total: 1, round: nil, totalRounds: nil).title)
         #expect(variant?.title != MigrationBannerVariant.required.title, "never a fresh offer mid-split")
     }
