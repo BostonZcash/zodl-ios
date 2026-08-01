@@ -356,6 +356,33 @@ extension Root {
                         // moment sync connects. See `MigrationVisit`.
                         if await migrationManager.visitKind() == .send {
                             LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start — broadcast session")
+                            // MOB-1466 (N4, field-caught 2026-08-01): ARM THE RESUME, exactly as the
+                            // refusal handler below does. This branch is the one that was missing it,
+                            // and it is the COMMON path — the planned broadcast session, the one
+                            // `visitKind()` classifies up front.
+                            //
+                            // Without it the run freezes for the rest of the app-open. The chain:
+                            // sync never starts here, so `syncDeferredByMigrationGate` stays false;
+                            // `stopSyncBeforeMigrationBroadcast()` then early-returns on
+                            // `guard isSyncing()` — correctly, there was nothing to stop — so
+                            // `migrationStoppedSyncForBroadcast` stays false too. The broadcast
+                            // succeeds, the SDK's post-broadcast buffer blocks sync for 180 s, and
+                            // when it clears `.migrationSyncGateChanged(false)` computes
+                            // `shouldResume = !isBlocked && (false || false)` and returns without
+                            // `.retryStart`. Sync never resumes. No polling, no sync-complete edge,
+                            // no reconcile, no pokes — the UI holds whatever it last rendered.
+                            //
+                            // On the device that was six minutes of "Preparing transaction…" with
+                            // spinners and an EMPTY LOG, cured only by backgrounding and
+                            // foregrounding (which reaches `.retryStart` by another road). The
+                            // tester's reading — "I assume it's finished but UI is stale" — was
+                            // exactly right.
+                            //
+                            // `.migrationGateDeferredSyncStart`'s own doc already describes this
+                            // shape ("even when that session finds nothing to broadcast … where
+                            // `migrationStoppedSyncForBroadcast` never gets set either"); it was
+                            // armed in the refusal handler and not here.
+                            await send(.migrationGateDeferredSyncStart)
                             // A13: and then USE the session for what it was claimed for. With no
                             // background lane on iOS this open IS the delivery window — suppressing
                             // sync without broadcasting would just stall a schedule the user

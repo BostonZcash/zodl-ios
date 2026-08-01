@@ -390,6 +390,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
     /// uses.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
+        await MigrationTrace.timed("bannerVariant") { await bannerVariantUntimed(accountUUID: accountUUID) }
+    }
+
+    /// See `bannerVariant` — the body, wrapped so a banner that takes seconds to decide says so.
+    private func bannerVariantUntimed(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
             LoggerProxy.event("\(Self.logTag) no banner: no account selected")
             return nil
@@ -624,6 +629,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// back to the W1 progress-only approximation, kept verbatim below.
     ///
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
+        await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
+    }
+
+    /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
+    /// screens behind the banner wait on THIS, and a blank screen with a spinner is this function
+    /// not having returned yet.
+    private func migrationTransfersUntimed(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {

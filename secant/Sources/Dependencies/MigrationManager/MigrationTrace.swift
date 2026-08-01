@@ -255,6 +255,32 @@ enum MigrationTrace {
         }
     }
 
+    // MARK: - Slow reads
+
+    /// Times a migration read and logs it ONLY when it crosses `slowReadThreshold`.
+    ///
+    /// Field-caught 2026-08-01: tapping the banner gave a blank screen with a spinner for ~10 s.
+    /// Every screen in this flow is assembled from several SDK round trips (state, progress,
+    /// statuses, overdue, clock, schedule), each of which crosses the FFI and touches the wallet
+    /// database — and the prove sweep runs on that same database. Which of them is slow, and whether
+    /// it is slow always or only under contention, is not answerable by staring at a spinner.
+    ///
+    /// Silent below the threshold on purpose: a line per read would drown the timeline this file
+    /// exists to keep readable, and a read that returns promptly is not information.
+    static func timed<T>(_ label: String, _ work: () async -> T) async -> T {
+        let started = Date()
+        let result = await work()
+        let elapsed = Date().timeIntervalSince(started)
+        if elapsed >= slowReadThreshold {
+            event("🐌 SLOW READ \(label) took \(seconds(elapsed))s")
+        }
+        return result
+    }
+
+    /// Half the shortest interval a person notices as a "wait". Anything under this is invisible;
+    /// anything over it is a spinner the user is watching.
+    private static let slowReadThreshold: TimeInterval = 1.0
+
     // MARK: - Counters
 
     static func recordProveSweep(proved: Int) {
