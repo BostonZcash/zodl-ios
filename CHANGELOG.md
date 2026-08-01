@@ -33,6 +33,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1581] The Activity list now shows a sent transaction immediately after sending, regardless of how the send flow is closed, instead of waiting for the next sync cycle.
 - [MOB-1593] Transaction detail no longer shows an extra, empty message bubble on sent transactions, and "Send again" prefills the actual message text again.
 - [MOB-1466] The migration plan review screen (before you confirm) now describes transfers in forward-looking terms — "Starts right away" / "Starts in ~N mins" / "Starts in ~N hours" — instead of "Ready now", so the screen doesn't read as if transfers are already under way before you've confirmed anything.
+- [MOB-1466] The migration plan review screen's action button now reads "Start migration" instead of "Confirm", making clear that tapping it is what actually starts your migration.
 
 ## 3.7.3 build 1 (20026-07-12)
 

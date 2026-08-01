@@ -106,9 +106,14 @@ struct MigrationTransferPlanView: View {
 
                 // MOB-1513 (B4): disabled+spinner while the commit is in flight (the established
                 // button-loading idiom — mirrors `SendConfirmationView`'s `isSending` button).
+                //
+                // MOB-1466 (field finding O5): this screen's own `migrationPlan.startCta` ("Start
+                // migration"), not `general.confirm` — "Confirm" read as acknowledge-and-leave
+                // rather than as the tap that actually starts the migration. `general.confirm`
+                // itself is untouched; other screens (e.g. `MigrationReviewTransferView`) keep it.
                 if store.isConfirming {
                     ZashiButton(
-                        String(localizable: .generalConfirm),
+                        String(localizable: .migrationPlanStartCta),
                         accessoryView:
                             ProgressView()
                             .progressViewStyle(
@@ -122,7 +127,7 @@ struct MigrationTransferPlanView: View {
                     .padding(.bottom, 24)
                     .disabled(store.isConfirming)
                 } else {
-                    ZashiButton(String(localizable: .generalConfirm)) {
+                    ZashiButton(String(localizable: .migrationPlanStartCta)) {
                         store.send(.confirmTapped)
                     }
                     .screenHorizontalPadding()
