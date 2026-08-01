@@ -144,8 +144,8 @@ extension SDKSynchronizerClient: DependencyKey {
             finalizeReadyMigrationTransfers: { accountUUID in
                 try await synchronizer.finalizeReadyMigrationTransfers(accountUUID: accountUUID)
             },
-            reconcileMigrationInvalidations: { accountUUID in
-                try await synchronizer.reconcileMigrationInvalidations(accountUUID: accountUUID)
+            reconcileUnrecordedMigrationBroadcasts: { accountUUID in
+                try await synchronizer.reconcileUnrecordedMigrationBroadcasts(accountUUID: accountUUID)
             },
             migrationSyncWakeups: { accountUUID in
                 try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)

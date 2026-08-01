@@ -133,7 +133,7 @@ struct SDKSynchronizerClient: Sendable {
     let finalizeReadyMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
     /// Detects externally-spent funding notes and resolves submit-crash limbo. `true` = something
     /// was invalidated, so route to the attention flow. Call on SYNC visits and app-open reconcile.
-    let reconcileMigrationInvalidations: @Sendable (AccountUUID) async throws -> Bool
+    let reconcileUnrecordedMigrationBroadcasts: @Sendable (AccountUUID) async throws -> Bool
     /// The minimal set of heights at which to wake, sync and prove. Jitter is re-drawn per call, so
     /// these must be recomputed after any state change rather than cached.
     let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]
