@@ -53,7 +53,12 @@ rbenv rehash
 #    fetches the bundler version pinned in Gemfile.lock, then the gems.
 bundle install
 
-# 6. (optional) the test runner for the wrapper scripts
+# 6. xcbeautify — required: the fastlane lanes pin it as the xcodebuild log
+#    formatter (the xcpretty fallback predates Swift Testing and would silently
+#    swallow its test output)
+brew install xcbeautify
+
+# 7. (optional) the test runner for the wrapper scripts
 brew install bats-core
 ```
 
