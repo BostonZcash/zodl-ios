@@ -361,6 +361,14 @@ import Testing
 
         #expect(!migrationStoppedSyncForBroadcast, "the resume must clear the flag it consumed")
 
+        // Parked-debt pin (2026-08-03): `.off` exhaustivity would silently swallow a SPURIOUS
+        // second resume — a duplicated `.retryStart` means a duplicated `.beforeSync` driver call
+        // (a second engine read and a second arming pass per resume). The spy counts the phase,
+        // so the pin is on the observable consequence rather than the action stream.
+        await waitUntil { spy.nonTickCalls >= 1 }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        #expect(spy.nonTickCalls == 1, "exactly ONE resume open — a second .beforeSync means a duplicated .retryStart")
+
         await drain(store)
     }
 
@@ -397,6 +405,11 @@ import Testing
             },
             timeout: .seconds(5)
         )
+
+        // Parked-debt pin (2026-08-03), same rationale as (a) above: exactly one resume open.
+        await waitUntil { spy.nonTickCalls >= 1 }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        #expect(spy.nonTickCalls == 1, "exactly ONE resume open — a second .beforeSync means a duplicated .retryStart")
 
         await drain(store)
     }
