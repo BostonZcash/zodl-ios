@@ -476,3 +476,112 @@ import ZcashLightClientKit
         #expect(omitted == .transferWaiting(number: 3, torHold: false))
     }
 }
+
+// MARK: - The stall verdict
+
+/// MOB-1466, field-caught 2026-08-02 on an overnight run.
+///
+/// Twelve transfers all reported `blocked -` — nil, i.e. the engine saying "actionable now" — with
+/// anchors ~800 blocks BEHIND the scanned tip, and every prove sweep produced zero. The app showed
+/// twelve "Preparing transaction…" spinners and a "Keep Zodl open on active phone screen" banner,
+/// and the tester sat there for minutes because that is what it asked for.
+///
+/// The rule these pin: THE APP MAY ONLY ASK THE USER TO STAY FOR WORK THAT IS ACTUALLY HAPPENING.
+/// The engine's readiness verdict is necessary but not sufficient — once sweeps have demonstrably
+/// produced nothing against that verdict, the claim is revoked, because a spinner over stopped work
+/// spends the credibility every future keep-open ask depends on.
+@Suite struct MigrationProveStallTests {
+    private static let clock = MigrationChainClock(tip: 3_000_000)
+
+    private static func provable(id: UInt32, crossing: Int) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: id,
+            kind: .transfer(crossing: crossing),
+            state: .signed,
+            scheduledHeight: 2_999_000,
+            expiryHeight: nil,
+            isReady: true,
+            nextAction: .prove,
+            blockedOn: nil,
+            dependsOn: [],
+            anchorBoundaryHeight: 2_998_000
+        )
+    }
+
+    /// The engine's verdict alone still drives the caption while proving is working.
+    @Test func aProvableRowPreparesWhileProvingWorks() {
+        let rows = MigrationDerivations.statusOnlyTransferRows(
+            statuses: [Self.provable(id: 1, crossing: 0)],
+            clock: Self.clock,
+            isProvingStalled: false
+        )
+        #expect(rows?[0].isPreparing == true)
+        #expect(rows?[0].isInFlight == true, "the spinner is on")
+    }
+
+    /// And is revoked once the app has watched proving produce nothing. Same engine answer, same
+    /// row — different claim, because the claim was about US, not about the engine.
+    @Test func aStalledSweepRevokesTheClaim() {
+        let rows = MigrationDerivations.statusOnlyTransferRows(
+            statuses: [Self.provable(id: 1, crossing: 0)],
+            clock: Self.clock,
+            isProvingStalled: true
+        )
+        #expect(rows?[0].isPreparing == false)
+        #expect(rows?[0].isInFlight == false, "no spinner over work that is not happening")
+    }
+
+    /// Which is what drops the banner's keep-open ask: `.preparing` derives from the rows, so
+    /// revoking the row flag revokes the ask with it — no separate gate to keep in step.
+    @Test func aStalledSweepDropsTheKeepOpenBanner() {
+        let stalledRows = MigrationDerivations.statusOnlyTransferRows(
+            statuses: [Self.provable(id: 1, crossing: 0)],
+            clock: Self.clock,
+            isProvingStalled: true
+        ) ?? []
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .inProgress(
+                MigrationProgress(
+                    completedTransfers: 0,
+                    totalTransfers: 12,
+                    remainingOrchard: Zatoshi(9_999_760_000),
+                    nextTransferReadyAtHeight: 2_999_000,
+                    isImmediate: false
+                )
+            ),
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(9_999_760_000),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: stalledRows
+        )
+
+        #expect(variant != .preparing, "never ask the user to stay for a sweep that produces nothing")
+        #expect(variant == .transferWaiting(number: 1, torHold: false))
+    }
+
+    /// The preparation rows take the same verdict — the split phase is where the first overnight
+    /// stall was seen, and its banner asks for the same thing.
+    @Test func preparationRowsTakeTheSameVerdict() {
+        let statuses = [
+            MigrationTransactionStatus(
+                id: 0,
+                kind: .preparation(layer: 0, index: 0),
+                state: .signed,
+                scheduledHeight: 2_999_000,
+                expiryHeight: nil,
+                isReady: true,
+                nextAction: .prove,
+                blockedOn: nil,
+                dependsOn: [],
+                anchorBoundaryHeight: nil
+            )
+        ]
+        #expect(MigrationDerivations.preparationRows(statuses: statuses, clock: Self.clock, isProvingStalled: false)?[0].isPreparing == true)
+        #expect(MigrationDerivations.preparationRows(statuses: statuses, clock: Self.clock, isProvingStalled: true)?[0].isPreparing == false)
+    }
+}

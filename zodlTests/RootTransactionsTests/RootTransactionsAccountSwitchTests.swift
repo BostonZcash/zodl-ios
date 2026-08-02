@@ -359,12 +359,12 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == "keystone-tx" } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == "keystone-tx" } }
         // `getAccountsBalances` is ALSO called independently by SmartBanner's own priority
         // evaluation (`SmartBannerStore.swift:551`), so `balanceRequests > 0` alone can't prove
         // `.home(.walletBalances(.updateBalances))` specifically fired -- wait for its OWN
         // observable effect (the balance actually landing in `walletBalancesState`) too.
-        await waitForRootStore { store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(!requestedAccounts.value.contains(zashiAccount.id))
@@ -456,7 +456,7 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == keystoneTxId } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == keystoneTxId } }
 
         guard let landedTransaction = store.state.transactions[id: keystoneTxId] else {
             Issue.record("expected the Keystone transaction to have landed in state.transactions")
@@ -540,10 +540,10 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == "keystone-settings-tx" } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == "keystone-settings-tx" } }
         // See the sibling test's comment: `getAccountsBalances` is ALSO called independently by
         // SmartBanner's own priority evaluation, so wait for the update to actually land too.
-        await waitForRootStore { store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(balanceRequests.value > 0)
@@ -610,12 +610,7 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.home(.walletAccountTapped(accountB)))
-
-        await waitForRootStore(timeoutNanoseconds: 3_000_000_000) {
-            !store.state.homeState.transactionListState.isInvalidated
-                && !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated
-        }
+        await store.send(.home(.walletAccountTapped(accountB))).finish()
 
         #expect(!store.state.homeState.transactionListState.isInvalidated)
         #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
@@ -646,11 +641,13 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.home(.walletAccountTapped(account)))
-
-        // A same-account "switch" must dispatch no effect at all -- give a wrongly-fired async
-        // fetch a brief moment to land, then confirm nothing changed.
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        // A same-account "switch" must dispatch no effect at all. `finish()` is the exact assertion
+        // that wants making: it returns immediately when the reducer returned `.none`, and if an
+        // effect WERE wrongly dispatched it waits for that effect to run to completion -- so
+        // `fetchCalls` below is read after any wrongly-fired fetch has necessarily landed. The old
+        // fixed 200ms sleep could only ever be too short, and a too-short sleep here passes the
+        // test while proving nothing.
+        await store.send(.home(.walletAccountTapped(account))).finish()
 
         #expect(fetchCalls.value == 0)
         #expect(store.state.transactions == existingTransactions)
@@ -661,6 +658,32 @@ import ComposableArchitecture
 /// Shared no-op dependency baseline for every test in this file. Kept as a private, file-scoped
 /// helper rather than something shared globally, the same way `FlexaTests/FlexaSecurityTests.swift`
 /// keeps its own private `waitForFlexaStore` helper local to that file.
+/// Event-driven wait on store state, for the dispatches where `StoreTask.finish()` cannot be used.
+///
+/// The plain account switch (`.home(.walletAccountTapped)`) does settle, so those tests can and do
+/// await the dispatch itself. The Keystone-connect and Settings arms cannot: on top of the same
+/// switch reaction they `.merge` `.loadContacts` with a `.concatenate` of
+/// `.resolveMetadataEncryptionKeys` and `.loadUserMetadata`, and that added tree never completes
+/// under this file's no-op dependencies. Awaiting the whole dispatch there hangs outright -- an
+/// earlier draft did exactly that and sat until the time limit -- so these tests await the state
+/// they actually assert on instead.
+///
+/// Still no clock: `Store.publisher` emits on every state change, so this resumes on the change
+/// itself, at whatever speed the machine happens to be running. The suite's `.timeLimit` is the
+/// only outer bound, and only a condition that never becomes true can reach it.
+@MainActor
+private func waitForRootState(
+    _ store: StoreOf<Root>,
+    until condition: @escaping @MainActor (Root.State) -> Bool
+) async {
+    if condition(store.state) {
+        return
+    }
+    for await state in store.publisher.values where condition(state) {
+        return
+    }
+}
+
 @MainActor
 private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.databaseFiles = .noOp
@@ -675,17 +698,4 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.userMetadataProvider.load = { _ in }
     values.walletStorage = .noOp
     values.zcashSDKEnvironment = .testnet
-}
-
-@MainActor
-private func waitForRootStore(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
-    sourceLocation: SourceLocation = #_sourceLocation,
-    condition: @escaping @MainActor () -> Bool
-) async {
-    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
-    #expect(condition(), "Timed out waiting for Root transactions/account-switch store state", sourceLocation: sourceLocation)
 }

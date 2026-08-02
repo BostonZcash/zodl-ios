@@ -668,7 +668,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
             if let statusRows = MigrationDerivations.statusOnlyTransferRows(
                 statuses: statuses,
-                clock: await chainClock(accountUUID: resolvedAccountUUID)
+                clock: await chainClock(accountUUID: resolvedAccountUUID),
+                isProvingStalled: isProvingStalled
             ) {
                 return statusRows
             }
@@ -691,7 +692,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             hasOverdueMigrationTransfers: hasOverdue,
             now: Date(),
             clock: await chainClock(accountUUID: resolvedAccountUUID),
-            statuses: statuses
+            statuses: statuses,
+            isProvingStalled: isProvingStalled
         )
     }
 
@@ -776,8 +778,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         if case MigrationState.splitPendingConfirmation = state {
             let mined = preparations.filter { $0.status == MigrationTransferRow.Status.sent }.count
             return isProvable
-                ? "split phase — provable now, the prove sweep will run this session"
-                : "split phase — \(mined)/\(preparations.count) preparations mined, waiting on the next step"
+                ? "split phase — provable now, the prove sweep will run this session"                : "split phase — \(mined)/\(preparations.count) preparations mined, waiting on the next step"
+        }
+        if isProvingStalled {
+            return "PROVE STALLED — the engine reports rows ready to prove and sweeps produce nothing"
         }
         if isProvable {
             return "provable now — the prove sweep will run this session"
@@ -800,11 +804,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         clock: MigrationChainClock
     ) async -> (transfers: [MigrationTransferRow], preparations: [MigrationTransferRow]) {
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
-        let preparations = MigrationDerivations.preparationRows(statuses: statuses, clock: clock) ?? []
+        let preparations = MigrationDerivations.preparationRows(statuses: statuses, clock: clock, isProvingStalled: isProvingStalled) ?? []
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
-            if let statusRows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, clock: clock) {
+            if let statusRows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, clock: clock, isProvingStalled: isProvingStalled) {
                 return (statusRows, preparations)
             }
             guard let progress else { return ([], preparations) }
@@ -818,7 +822,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 hasOverdueMigrationTransfers: hasOverdue,
                 now: Date(),
                 clock: clock,
-                statuses: statuses
+                statuses: statuses,
+                isProvingStalled: isProvingStalled
             ),
             preparations
         )
@@ -1645,9 +1650,57 @@ final class MigrationManagerImpl: @unchecked Sendable {
         MigrationTrace.recordProveSweep(proved: proved)
         LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
         if proved == 0 {
-            await logProveStall(accountUUIDs: accountUUIDs)
+            let anyRowClaimedProvable = await logProveStall(accountUUIDs: accountUUIDs)
+            // A FRUITLESS sweep is not the same as a quiet one. A sweep that proves nothing because
+            // nothing was ready is correct and expected; a sweep that proves nothing while the
+            // engine is reporting rows as ready-to-prove is a CONTRADICTION, and the user pays for
+            // it in a "Keep Zodl open" ask they cannot satisfy.
+            //
+            // Field-caught 2026-08-02, overnight run: every one of twelve transfers reported
+            // `blocked -` (nil, i.e. actionable) with anchors ~800 blocks BEHIND the scanned tip,
+            // and the sweep proved zero. The app asked the user to sit and watch, indefinitely,
+            // while nothing could move. §8 of SMART_BANNER_STATES asked whether `.preparing` should
+            // ever time out; the field has now answered yes.
+            if anyRowClaimedProvable {
+                let fruitless = fruitlessProveSweeps.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                if fruitless == Self.fruitlessSweepsBeforeStalled {
+                    LoggerProxy.event(
+                        "\(Self.logTag) 🛑 PROVE STALLED — \(fruitless) sweeps proved nothing while rows report ready-to-prove."
+                        + " Dropping the keep-open ask: staying in the app does not help."
+                    )
+                }
+            } else {
+                fruitlessProveSweeps.withLock { $0 = 0 }
+            }
+        } else {
+            fruitlessProveSweeps.withLock { $0 = 0 }
         }
         return proved
+    }
+
+    /// Consecutive prove sweeps that produced nothing WHILE the engine reported rows as
+    /// ready-to-prove. Reset by any successful proof, and by a sweep that correctly found nothing
+    /// ready. In-memory: a fresh app-open gets one honest attempt before the app is willing to call
+    /// proving stalled.
+    private let fruitlessProveSweeps = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    /// Two, not one. A single fruitless sweep can be a race — the statuses were read after the
+    /// sweep started, or a proof landed between the two reads. Two in a row on the same app-open is
+    /// the engine telling us the same impossible thing twice.
+    private static let fruitlessSweepsBeforeStalled = 2
+
+    /// See `fruitlessProveSweeps`. Read by the row derivations to suppress the "Preparing
+    /// transaction…" caption and its spinner, and so — through the rows — the `.preparing` banner
+    /// and its "Keep Zodl open" ask.
+    ///
+    /// The rule this enforces: THE APP MAY ONLY ASK THE USER TO STAY FOR WORK THAT IS ACTUALLY
+    /// HAPPENING. A spinner over work that has demonstrably stopped is worse than no spinner at
+    /// all — it spends the credibility every future keep-open ask depends on.
+    var isProvingStalled: Bool {
+        fruitlessProveSweeps.withLock { $0 } >= Self.fruitlessSweepsBeforeStalled
     }
 
     /// WHY a sweep proved nothing, in the app's own log.
@@ -1672,13 +1725,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///
     /// Only at `proved == 0`, and only the first few non-mined rows: a healthy sweep says nothing
     /// extra, and a 12-transfer run must not turn one stall into twelve log lines.
-    private func logProveStall(accountUUIDs: [AccountUUID]) async {
+    /// Returns whether ANY non-mined row reported itself ready-to-prove — the other half of the
+    /// stall verdict (see `fruitlessProveSweeps`). Reading it here reuses the status fetch this
+    /// function already makes rather than paying for a second one.
+    @discardableResult
+    private func logProveStall(accountUUIDs: [AccountUUID]) async -> Bool {
         let syncState = sdkSynchronizer.latestState()
         let estimatedTip = try? await sdkSynchronizer.estimatedMigrationChainTip()
 
+        var anyRowClaimedProvable = false
         for accountUUID in accountUUIDs {
             guard let rows = try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID), !rows.isEmpty else {
                 continue
+            }
+            if rows.contains(where: { $0.isReady && $0.nextAction == MigrationTransactionStatus.NextAction.prove }) {
+                anyRowClaimedProvable = true
             }
 
             let pending = rows
@@ -1703,6 +1764,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 """
             )
         }
+        return anyRowClaimedProvable
     }
 
     /// A12/B6 — see `MigrationManagerClient.shouldWarnBeforeManualSend`. A dumb assembler: every
@@ -2861,7 +2923,8 @@ enum MigrationDerivations {
         hasOverdueMigrationTransfers: Bool,
         now: Date,
         clock: MigrationChainClock,
-        statuses: [MigrationTransactionStatus] = []
+        statuses: [MigrationTransactionStatus] = [],
+        isProvingStalled: Bool = false
     ) -> [MigrationTransferRow] {
         struct RowSeed {
             let transferId: String
@@ -3010,7 +3073,7 @@ enum MigrationDerivations {
                 status: status,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
-                isPreparing: isPreparing(seed.liveStatus)
+                isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled)
             )
         }
     }
@@ -3023,8 +3086,13 @@ enum MigrationDerivations {
     ///
     /// MOB-1466: `nextAction` had no reader anywhere in the app before this — the engine has been
     /// answering "prove or broadcast?" per transaction since the model landed and nothing asked.
-    private static func isPreparing(_ status: MigrationTransactionStatus?) -> Bool {
-        guard let status else { return false }
+    private static func isPreparing(_ status: MigrationTransactionStatus?, isProvingStalled: Bool = false) -> Bool {
+        // A stalled sweep revokes the claim outright. The engine still says "ready to prove" — that
+        // is precisely the contradiction — but the app has watched proving produce nothing twice
+        // running, and a caption saying "Preparing transaction…" over work that is not progressing
+        // is a lie the user pays for by sitting and waiting. See `MigrationManagerImpl
+        // .isProvingStalled`.
+        guard !isProvingStalled, let status else { return false }
         return status.isReady && status.nextAction == MigrationTransactionStatus.NextAction.prove
     }
 
@@ -3144,7 +3212,8 @@ enum MigrationDerivations {
     /// coupling this note guards against.
     static func statusOnlyTransferRows(
         statuses: [MigrationTransactionStatus],
-        clock: MigrationChainClock
+        clock: MigrationChainClock,
+        isProvingStalled: Bool = false
     ) -> [MigrationTransferRow]? {
         let transferStatuses = statuses
             .compactMap { status -> (crossing: Int, status: MigrationTransactionStatus)? in
@@ -3228,7 +3297,7 @@ enum MigrationDerivations {
                 status: rowStatus,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
-                isPreparing: isPreparing(status)
+                isPreparing: isPreparing(status, isProvingStalled: isProvingStalled)
             )
         }
     }
@@ -3335,7 +3404,8 @@ enum MigrationDerivations {
 
     static func preparationRows(
         statuses: [MigrationTransactionStatus],
-        clock: MigrationChainClock
+        clock: MigrationChainClock,
+        isProvingStalled: Bool = false
     ) -> [MigrationTransferRow]? {
         let preparations = statuses
             .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
@@ -3397,7 +3467,7 @@ enum MigrationDerivations {
                 status: MigrationTransferRow.Status.active,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
-                isPreparing: isPreparing(status),
+                isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
                 kind: MigrationTransferRow.Kind.splitBalance
             )
         }
