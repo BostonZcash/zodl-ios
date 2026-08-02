@@ -49,9 +49,9 @@ extension Root {
         /// effect's leading guard), while the app-open pokes are a separate lane and keep working.
         /// Surfaced to reducers/tests as `DependencyValues.migrationTickInterval`.
         static let migrationTickInterval: Swift.Duration = .zero
-        /// The attribution probe's attempt budget — with the interval below, ~3.5 min covering the estimated-vs-scanned tip skew.
+        /// The attribution probe's attempt budget — 9 sleeps (none after the last) at the interval below is 3.0 min, covering the tip skew.
         static let migrationGateStopProbeAttempts = 10
-        /// The blocked-edge stop's attribution probe: wait between `migrationAdvanceStep` reads — 10 attempts at this interval is ~3.5 min.
+        /// The attribution probe's wait between `migrationAdvanceStep` reads — 9 of these between 10 attempts is 3.0 min.
         static let migrationGateStopProbeInterval: Swift.Duration = .seconds(20)
         /// How many ticks between "the loop is alive" heartbeat lines — ~10 minutes at the interval
         /// above. Approximate on purpose (see `migrationTickCount`'s doc): the log line only ever
@@ -546,7 +546,10 @@ extension Root {
                             // silence. Re-spawning here (idempotent — `cancelInFlight: true`
                             // restarts the 30 s countdown) pins the invariant instead of the
                             // schedule: whenever a stop can arm, the lane that consumes it is
-                            // running.
+                            // running. When the loop is ALREADY alive, this restarts its
+                            // countdown from zero rather than leaving the in-flight one be — a
+                            // bounded, accepted cost (worst case one extra ~30 s wait), not a
+                            // correctness issue.
                             migrationTickLoopEffect(state: state),
                             .run { [sdkSynchronizer, continuousClock] _ in
                                 // THE ATTRIBUTION PROBE. The SDK's gate is wallet-wide; a
@@ -562,8 +565,8 @@ extension Root {
                                 // Probed, not read once: the gate can flip on the wall-clock
                                 // ESTIMATED tip while the step still reads the scanned tip — sync
                                 // is still running while this probes, so the step catches up
-                                // within a block or two. Ten 20 s attempts (~3.5 min) cover that
-                                // skew with margin; exhausting them means the blocker belongs to
+                                // within a block or two. Ten attempts, 20 s apart (3.0 min total)
+                                // cover that skew with margin; exhausting them means the blocker belongs to
                                 // a non-deliverable account, and sync is deliberately left
                                 // running — today's behavior for exactly that case. Cancelled by
                                 // the gate's false edge (the probe's work is moot once unblocked).
@@ -571,6 +574,12 @@ extension Root {
                                     for accountUUID in stoppableCandidateUUIDs {
                                         let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
                                         if case .broadcast = step {
+                                            // RACE GUARD: `.cancel(id:)` is cooperative — it cannot abort the
+                                            // `migrationAdvanceStep` await already in flight above, and `try?`
+                                            // swallows any cancellation error that call itself might throw. Without
+                                            // this checkpoint, a false edge racing this exact read could land the
+                                            // stop AFTER the gate cleared and resume already restarted sync.
+                                            guard !Task.isCancelled else { return }
                                             await sdkSynchronizer.stopStartedSyncForMigrationGate()
                                             return
                                         }
@@ -580,7 +589,10 @@ extension Root {
                                     }
                                 }
                                 LoggerProxy.event(
-                                    "[MIG] blocked gate: no tick-deliverable account answers .broadcast after probing — leaving sync running (manual/immediate blocker)"
+                                    """
+                                    [MIG] blocked gate: no tick-deliverable account answers .broadcast after \
+                                    probing — leaving sync running (manual/immediate blocker)
+                                    """
                                 )
                             }
                             .cancellable(id: state.migrationGateStopProbeCancelId, cancelInFlight: true)

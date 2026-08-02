@@ -35,6 +35,16 @@
 //  unchanged and untouched here — see `RootMigrationGateRefusalTests`/`RootMigrationTickLoopTests`
 //  for its coverage.
 //
+//  FIX ROUND 1 (whole-branch review of the above): two gaps in the probe itself, both closed here.
+//  (a) CANCELLATION RACE — `.cancel(id:)` only sets the probe Task's cancelled flag; it cannot
+//  abort a `migrationAdvanceStep` await already in flight, so a step read that lands `.broadcast`
+//  after the false edge already cancelled the probe (and resume already restarted sync) used to
+//  stop that just-resumed sync anyway. Pinned by `stepReadLandingAfterTheFalseEdgeMustNotStop`,
+//  which holds the read open on a continuation for a deterministic interleaving. (b) COVERAGE —
+//  `aCandidateAccountEligibilityIsWalletWide` (the two-candidate wallet-wide attribution shape)
+//  was dropped when this suite was reworked around the probe; restored here against the probe's
+//  own per-candidate loop rather than the old unconditional stop.
+//
 //  `extension Root.State: @retroactive Equatable` already exists module-wide at
 //  RootInitializeSDKHealTests.swift — this file uses it rather than redeclaring (see
 //  RootMigrationGateRefusalTests's header for the duplicate-conformance rationale).
@@ -53,6 +63,10 @@ import Testing
 // `MigrationTickDriverTests`/`RootMigrationTickLoopTests` serialize their own suites over.
 @Suite(.serialized) @MainActor struct RootMigrationGateStopOnBlockTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x08, count: 16))
+    /// Only installed when a test passes `secondCandidateMode` to `makeStore` — the wallet-wide
+    /// attribution shape (`aCandidateAccountEligibilityIsWalletWide`), where the SELECTED account
+    /// is ineligible and a second, non-selected candidate is what the probe must attribute to.
+    private static let secondCandidateAccountUUID = AccountUUID(id: [UInt8](repeating: 0x09, count: 16))
 
     private static func account(_ uuid: AccountUUID) -> WalletAccount {
         WalletAccount(
@@ -86,9 +100,9 @@ import Testing
     /// self-cancel a freshly-spawned loop on its very first tick) but `.idle` — the quiet verdict —
     /// is what a test that does not care about tick-loop internals actually wants.
     ///
-    /// Always installs `accountUUID` as the selected account AND the sole entry of
-    /// `walletAccounts`, so `MigrationDerivations.candidateAccountUUIDs` has exactly one candidate
-    /// for every test.
+    /// Always installs `accountUUID` as the selected account. `walletAccounts` is just that one
+    /// entry unless `secondCandidateMode` is passed, in which case `secondCandidateAccountUUID` is
+    /// installed alongside it with its own independent mode — the wallet-wide attribution shape.
     private func makeStore(
         stopCalls: LockIsolated<Int>,
         syncStatus: SyncStatus,
@@ -97,7 +111,8 @@ import Testing
         advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep?,
         tickInterval: Swift.Duration = .seconds(30),
         lastMigrationSyncGateBlocked: Bool = false,
-        testClock: TestClock<Swift.Duration>? = nil
+        testClock: TestClock<Swift.Duration>? = nil,
+        secondCandidateMode: MigrationMode? = nil
     ) -> TestStore<Root.State, Root.Action> {
         var initialState = Root.State(
             destinationState: Root.DestinationState(internalDestination: .welcome),
@@ -109,9 +124,20 @@ import Testing
         )
         initialState.lastMigrationSyncGateBlocked = lastMigrationSyncGateBlocked
 
+        // Resolved here, in the suite's `@MainActor` context, rather than inside the `@Sendable`
+        // dependency closure below — a `@Sendable` closure literal cannot reach across the
+        // `@MainActor` isolation boundary to read a static member of this suite directly (mirrors
+        // `RootMigrationGateRefusalTests.makeStore`'s `seedDerivedAccount` rationale).
+        let secondAccountUUID = RootMigrationGateStopOnBlockTests.secondCandidateAccountUUID
+
         let selectedAccount = Self.account(Self.accountUUID)
         initialState.$selectedWalletAccount.withLock { $0 = selectedAccount }
-        initialState.$walletAccounts.withLock { $0 = [selectedAccount] }
+        if secondCandidateMode != nil {
+            let secondAccount = Self.account(secondAccountUUID)
+            initialState.$walletAccounts.withLock { $0 = [selectedAccount, secondAccount] }
+        } else {
+            initialState.$walletAccounts.withLock { $0 = [selectedAccount] }
+        }
 
         let store = TestStore(
             initialState: initialState
@@ -127,7 +153,12 @@ import Testing
             $0.migrationManager.reconcile = { }
             $0.migrationManager.isIronwoodActivated = { true }
             $0.migrationManager.advance = { _ in MigrationStepVerdict.idle }
-            $0.migrationManager.migrationMode = { _ in mode }
+            $0.migrationManager.migrationMode = { accountUUID in
+                if let secondCandidateMode, accountUUID == secondAccountUUID {
+                    return secondCandidateMode
+                }
+                return mode
+            }
             $0.migrationManager.isManualDelivery = { _ in isManualDelivery }
 
             $0.sdkSynchronizer = .mocked(
@@ -321,6 +352,92 @@ import Testing
         #expect(
             stepReads.value <= readsAtCancel + 1,
             "the false edge must cancel the pending probe — at most one already-in-flight read may land after it"
+        )
+
+        await teardown(store)
+    }
+
+    /// Reviewer-caught race (whole-branch review, fix round 1): `.cancel(id:)` is cooperative — it
+    /// cannot abort a `migrationAdvanceStep` await already in flight, and the `try?` around that
+    /// call swallows any cancellation error the call itself might throw. If the read lands
+    /// `.broadcast` AFTER the false edge already cancelled the probe (and, on a live app, resume
+    /// already restarted sync), the stop must not fire — it would pause the just-resumed sync and
+    /// re-arm the resume flag with no further edge guaranteed to consume it.
+    ///
+    /// The read is held open on a continuation so the interleaving is deterministic rather than a
+    /// real-time race — the mock parks on it instead of returning immediately, and this test
+    /// resumes it itself only after the false edge has already been sent, so "the read outlives
+    /// the cancel" holds by construction at any load. Same idiom as
+    /// `AddKeystoneHWWalletTests.unlockTappedIgnoresRetapsWhileImportInFlight`'s release stream.
+    @Test func stepReadLandingAfterTheFalseEdgeMustNotStop() async {
+        resetSharedResumeFlag()
+        let stopCalls = LockIsolated(0)
+        let testClock = TestClock()
+        let stepContinuation = LockIsolated<CheckedContinuation<MigrationAdvanceStep?, Never>?>(nil)
+        let store = makeStore(
+            stopCalls: stopCalls,
+            syncStatus: SyncStatus.upToDate,
+            mode: MigrationMode.privateScheduled,
+            isManualDelivery: false,
+            advanceStep: { _ in
+                await withCheckedContinuation { continuation in
+                    stepContinuation.setValue(continuation)
+                }
+            },
+            testClock: testClock
+        )
+
+        await store.send(.migrationSyncGateChanged(true))
+        await waitUntil { stepContinuation.value != nil }
+
+        // The false edge — cancels the probe's Task cooperatively while the read above is still
+        // parked on the continuation, exactly the interleaving the guard exists for.
+        await store.send(.migrationSyncGateChanged(false))
+
+        // Release the "late" read now — it resumes with a genuine `.broadcast`, same as if the
+        // engine had proved the transfer moments after the edge had already cleared.
+        stepContinuation.value?.resume(returning: MigrationAdvanceStep.broadcast(id: 9))
+
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        #expect(stopCalls.value == 0, "a step read that lands after the false edge must not stop the just-cleared/resumed sync")
+
+        await teardown(store)
+    }
+
+    // MARK: - Wallet-wide attribution with more than one candidate account
+
+    /// I4, restored: the SDK gate is WALLET-wide, not selected-account-scoped, so a second,
+    /// non-selected candidate's `.privateScheduled` run must be what the probe attributes the stop
+    /// to when the selected account itself is ineligible (`.immediate` here). The probe's
+    /// per-candidate loop (`for accountUUID in stoppableCandidateUUIDs`) is exercised by every
+    /// other test with exactly one candidate in the list — this is the only one where the upstream
+    /// `MigrationDerivations.candidateAccountUUIDs` fan-out and the eligibility `.filter` actually
+    /// narrow TWO wallet accounts down to the one the probe may read.
+    @Test func aCandidateAccountEligibilityIsWalletWide() async {
+        resetSharedResumeFlag()
+        let stopCalls = LockIsolated(0)
+        let queriedAccountUUIDs = LockIsolated<[AccountUUID]>([])
+        let store = makeStore(
+            stopCalls: stopCalls,
+            syncStatus: SyncStatus.upToDate,
+            mode: MigrationMode.immediate,
+            isManualDelivery: false,
+            advanceStep: { accountUUID in
+                queriedAccountUUIDs.withValue { $0.append(accountUUID) }
+                return MigrationAdvanceStep.broadcast(id: 9)
+            },
+            testClock: TestClock(),
+            secondCandidateMode: MigrationMode.privateScheduled
+        )
+
+        await store.send(.migrationSyncGateChanged(true))
+        await waitUntil { stopCalls.value == 1 }
+
+        #expect(stopCalls.value == 1, "a second candidate's privateScheduled run must stop sync although the selected account is immediate-mode")
+        #expect(
+            queriedAccountUUIDs.value == [RootMigrationGateStopOnBlockTests.secondCandidateAccountUUID],
+            "only the eligible second candidate may ever be read — the ineligible selected account must never reach the probe"
         )
 
         await teardown(store)
