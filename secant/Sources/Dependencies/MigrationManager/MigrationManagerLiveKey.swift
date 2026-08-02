@@ -593,6 +593,37 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func reentryRoute() async -> MigrationReentryRoute {
         guard let accountUUID = selectedWalletAccount?.id else { return MigrationReentryRoute.entry }
 
+        // MOB-1466 — THE THIRD OCCUPANT. The actor-starvation guard was added to `bannerVariant`
+        // (:446) and `migrationTransfers` (:730) and the class was declared closed. It was not:
+        // this function is the one behind the smart banner's button, and it awaits SIX actor-bound
+        // reads, every one of which queues behind an in-flight prove sweep. The field caught it
+        // exactly:
+        //
+        //     [MIG s3 +2.42s]  BANNER -> preparing
+        //     [MIG s3 +47.36s] prove sweep: proved 2 transaction(s)
+        //     [MIG s3 +47.38s] ROUTE: (first) -> statusProgress     <- 20 ms after the sweep ended
+        //
+        // A 45-second sweep is a 45-second blank screen with a spinner. In the same log the fast
+        // session (s2, sweep 2.4 s) routed at +3.24 s. The route time IS the sweep time.
+        //
+        // WHY NOT THE CACHE TRICK THE OTHER TWO USE. Banner and rows are CONTENT: serving the last
+        // answer during a sweep is safe, because content cannot have changed while the actor was
+        // busy. A route is NAVIGATION. A stale route opens the wrong screen — `.statusResume`
+        // offers "Send now" — and a wrong action is worse than a slow one. Reaching for the same
+        // pattern a third time because it worked twice is how this bug earns a fourth life.
+        //
+        // So: fall back to the READ-ONLY list instead. `.statusProgress` shows the transfer
+        // timeline and offers no action the engine could refuse, so landing there for a moment and
+        // being moved on the coordinator's next re-entry pass costs nothing. Gated on cached rows
+        // existing, which is exactly "a run exists" — without it a not-started wallet would be sent
+        // to a progress screen for a migration it does not have.
+        if isMigrationWorkInFlight, cachedTransferRows(accountUUID: accountUUID) != nil {
+            MigrationTrace.event(
+                "route SHORT-CIRCUIT -> statusProgress — migration work in flight, not blocking the UI"
+            )
+            return MigrationReentryRoute.statusProgress
+        }
+
         async let rawStateTask = migrationState(accountUUID: accountUUID)
         async let progressTask = migrationProgress(accountUUID: accountUUID)
         async let hasInvalidTask = hasInvalidMigrationTransfers(accountUUID: accountUUID)

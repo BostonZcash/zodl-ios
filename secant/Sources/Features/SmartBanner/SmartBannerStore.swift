@@ -467,8 +467,15 @@ struct SmartBanner {
                 // a wallet with no migration (never started, or finished) must look exactly as it
                 // does today.
                 guard state.featureFlags.migration, state.priorityContent == .priorityMigration else {
+                    // Traced, because "nothing happened" and "the action never arrived" look
+                    // identical on a device and the first field report could not tell them apart.
+                    MigrationTrace.event(
+                        "banner check SKIPPED — migration flag \(state.featureFlags.migration)"
+                        + ", priority \(String(describing: state.priorityContent))"
+                    )
                     return .none
                 }
+                MigrationTrace.event("banner → checkingStatus (foreground; min dwell \(Constants.migrationCheckingMinimumDwell)s)")
                 state.migrationBannerVariant = .checkingStatus
                 state.isMigrationCheckDwelling = true
                 state.hasHeldMigrationVariant = false
@@ -480,6 +487,9 @@ struct SmartBanner {
 
             case .migrationCheckDwellElapsed:
                 state.isMigrationCheckDwelling = false
+                MigrationTrace.event(
+                    "banner check dwell elapsed — held answer: \(state.hasHeldMigrationVariant ? "yes, applying" : "none yet, staying on checking")"
+                )
                 guard state.hasHeldMigrationVariant else {
                     // Still nothing back from `bannerVariant`. Stay on `.checkingStatus`: the dwell
                     // is a FLOOR, not a timeout, and reverting to the stale label here would restore
