@@ -9940,6 +9940,23 @@
         }
       }
     },
+    "migrationBanner.checkingTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking migration status"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando el estado de la migración"
+          }
+        }
+      }
+    },
     "migrationBanner.completeInfo": {
       "extractionState": "manual",
       "localizations": {

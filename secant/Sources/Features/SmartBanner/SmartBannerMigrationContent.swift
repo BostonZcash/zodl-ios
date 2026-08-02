@@ -83,6 +83,42 @@ enum MigrationBannerVariant: Equatable {
     case transfersExpired(first: Int, last: Int)
     case transferReady(number: Int)
     case complete
+    /// MOB-1466 (staleness pass): the banner does not KNOW yet. Every other case on this enum is an
+    /// assertion about the world; this is the one that admits the app has not re-established the
+    /// world yet, and it exists because iOS foregrounding renders the previous frame.
+    ///
+    /// THE PROBLEM. Background Zodl on "We'll notify you when to send", return twenty minutes later,
+    /// and iOS paints that same sentence before a line of our code runs. `willEnterForeground` DOES
+    /// re-derive — it routes to `retryStart`/`initialSetups`, which reach `advance(.beforeSync)` —
+    /// but the answer takes seconds (the field saw idle held ~3 s before flipping to a sending
+    /// state), and for those seconds the banner states last session's conclusion with full
+    /// confidence. The user reads a promise that is no longer true, then watches it silently
+    /// rewrite itself. That is the "outdated feeling" reported through the whole first end-to-end
+    /// migration, and no amount of speed fixes it: the gap is where knowledge does not exist yet,
+    /// not where it is slow to render.
+    ///
+    /// WHY NOT DISMISS THE BANNER INSTEAD (the other candidate, rejected). Presence/absence is a
+    /// LAYOUT event where a label swap is only a paint: closing and reopening reflows everything
+    /// below on EVERY foreground, including the majority where nothing changed. It also lies in the
+    /// other direction — mid-migration, an absent banner reads as "done, nothing here" — and it
+    /// does nothing for cold launch, where there is no banner to dismiss and the same gap exists.
+    ///
+    /// NOT A REPEAT OF `isWorkingNow`. The `.preparing` note above records a payload reverted for
+    /// inventing copy Figma does not contain, and prescribes the remedy: take the gap to the
+    /// designers. That is exactly what happened here — the copy below is PROVISIONAL, added on
+    /// Lukas's explicit instruction (2026-08-02) and going to Andrea for the real wording. Do not
+    /// revert this case on the `isWorkingNow` precedent; it is the sanctioned path, not the same
+    /// mistake. Do reword it the moment design answers.
+    ///
+    /// Carries NO button and NO second line by design: an action offered against an unknown state
+    /// is precisely the stale-CTA class this pass exists to remove.
+    case checkingStatus
+
+    /// False only for `.checkingStatus` — see that case. Every other variant offers an action,
+    /// because every other variant knows what the action would be.
+    var showsButton: Bool {
+        self != .checkingStatus
+    }
 
     var title: String {
         switch self {
@@ -102,6 +138,8 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerReadyTitle(number))
         case .complete:
             return String(localizable: .migrationBannerCompleteTitle)
+        case .checkingStatus:
+            return String(localizable: .migrationBannerCheckingTitle)
         }
     }
 
@@ -138,6 +176,12 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerReadyInfo)
         case .complete:
             return String(localizable: .migrationBannerCompleteInfo)
+        case .checkingStatus:
+            // Empty ON PURPOSE, and rendered as a reserved blank line by the content view so the
+            // banner keeps its two-line height. One provisional string was authorised, not two, and
+            // a second line invented here would be exactly the `isWorkingNow` mistake. A shrinking
+            // banner would also reintroduce the layout jump that ruled out dismiss-and-reopen.
+            return ""
         }
     }
 
@@ -197,20 +241,27 @@ struct MigrationBannerContentView: View {
                 Text(variant.title)
                     .zFont(.medium, size: 14, color: titleStyle)
 
-                Text(variant.info)
+                // `.checkingStatus` has no second line, but the blank one is still rendered so the
+                // banner holds its two-line height. Collapsing to one line on every foreground is
+                // the layout jump that ruled out dismiss-and-reopen in the first place — arriving
+                // by a different route does not make it acceptable.
+                Text(variant.info.isEmpty ? " " : variant.info)
                     .zFont(.medium, size: 12, color: infoStyle)
             }
 
             Spacer()
 
-            ZashiButton(
-                variant.buttonLabel,
-                type: .ghost,
-                infinityWidth: false
-            ) {
-                onButtonTap()
+            // Hidden only for `.checkingStatus`: no action is offered against an unknown state.
+            if variant.showsButton {
+                ZashiButton(
+                    variant.buttonLabel,
+                    type: .ghost,
+                    infinityWidth: false
+                ) {
+                    onButtonTap()
+                }
+                .environment(\.colorScheme, .light)
             }
-            .environment(\.colorScheme, .light)
         }
     }
 
@@ -227,7 +278,11 @@ struct MigrationBannerContentView: View {
             // `.splitting` variant that shared `.required`'s title). The ring says "started, this
             // far in" in the same 20pt slot. One line to revert if design disagrees.
             migrationProgressRing()
-        case .preparing, .transferSending:
+        case .preparing, .transferSending, .checkingStatus:
+            // `.checkingStatus` joins these two because it satisfies the same rule stated below —
+            // something IS actually spinning. Here the work is the re-derivation itself
+            // (`advance(.beforeSync)`), which is running for exactly as long as this state shows.
+            //
             // No static "working" glyph in the catalogue, and a live spinner says the thing both
             // states are asking for (a session is running, keep it running) better than one would.
             // Figma draws `loading-01` here in both frames — an animated spinner is that glyph's

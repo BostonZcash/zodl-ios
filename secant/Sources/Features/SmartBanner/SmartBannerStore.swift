@@ -15,6 +15,17 @@ import MessageUI
 struct SmartBanner {
     enum Constants: Equatable {
         static let easeInOutDuration = 0.85
+        /// MOB-1466: the MINIMUM time `.checkingStatus` stays on screen once a foreground has
+        /// raised it — ABSORBED into the re-derivation, never added on top. A verdict at 2 s shows
+        /// checking for 2 s; a verdict at 0.1 s still shows it until 0.5 s.
+        ///
+        /// NOT a delay-before-show. That variant (hold the stale label ~300 ms, show the spinner
+        /// only if the answer is late) optimises for sub-300 ms resolution, and the field says that
+        /// is not this app: idle held ~3 s before flipping to a sending state, and transitions
+        /// arrive in runs (A -> B -> A, A -> B -> C) rather than singly. Showing the truth
+        /// immediately and forbidding a sub-half-second flip is the shape that matches what was
+        /// actually observed.
+        static let migrationCheckingMinimumDwell = 0.5
         static let remindMe2days: TimeInterval = 86_400 * 2
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
@@ -85,6 +96,15 @@ struct SmartBanner {
         var lastObservedIronwoodActivation: Bool?
         var messageToBeShared: String?
         var migrationBannerVariant = MigrationBannerVariant.required
+        /// MOB-1466: true from the foreground that raised `.checkingStatus` until its minimum dwell
+        /// elapses. While set, a resolved variant is HELD (below) rather than applied, so the
+        /// checking state cannot flash.
+        var isMigrationCheckDwelling = false
+        /// The variant that resolved during the dwell, waiting to be applied when it ends. The
+        /// companion `Bool` exists because `nil` is itself a meaningful variant (it closes the
+        /// banner) and a double optional reads far worse than two fields.
+        var heldMigrationVariant: MigrationBannerVariant?
+        var hasHeldMigrationVariant = false
         var priorityContent: PriorityContent? = nil
         var priorityContentRequested: PriorityContent? = nil
         var remindMeShieldedPhaseCounter = 0
@@ -151,6 +171,12 @@ struct SmartBanner {
         /// completing while the state stays `.notStarted`) emits nothing at all.
         case migrationReevaluationRequested
         case migrationVariantUpdated(MigrationBannerVariant?)
+        /// MOB-1466: sent by Root on `willEnterForeground`. Raises `.checkingStatus` — but ONLY if
+        /// the migration lane already owns the banner, so a wallet with no migration never sprouts
+        /// one for half a second.
+        case migrationForegroundCheckStarted
+        /// The minimum dwell ended; apply whatever resolved meanwhile.
+        case migrationCheckDwellElapsed
         case reevaluateMigrationOnActivationFlip
         case evaluatePriority3
         case evaluatePriority4
@@ -435,7 +461,44 @@ struct SmartBanner {
                     .merge(activationFlipEffect, syncStatusEffect)
                 )
 
+            case .migrationForegroundCheckStarted:
+                // TRAP 3 — never manufacture a banner. `.checkingStatus` replaces the CONTENT of a
+                // banner the migration lane is already showing; it does not raise one. Foregrounding
+                // a wallet with no migration (never started, or finished) must look exactly as it
+                // does today.
+                guard state.featureFlags.migration, state.priorityContent == .priorityMigration else {
+                    return .none
+                }
+                state.migrationBannerVariant = .checkingStatus
+                state.isMigrationCheckDwelling = true
+                state.hasHeldMigrationVariant = false
+                state.heldMigrationVariant = nil
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                    await send(.migrationCheckDwellElapsed)
+                }
+
+            case .migrationCheckDwellElapsed:
+                state.isMigrationCheckDwelling = false
+                guard state.hasHeldMigrationVariant else {
+                    // Still nothing back from `bannerVariant`. Stay on `.checkingStatus`: the dwell
+                    // is a FLOOR, not a timeout, and reverting to the stale label here would restore
+                    // the exact lie this state exists to remove.
+                    return .none
+                }
+                let held = state.heldMigrationVariant
+                state.hasHeldMigrationVariant = false
+                state.heldMigrationVariant = nil
+                return .send(.migrationVariantUpdated(held))
+
             case .migrationVariantUpdated(let variant):
+                if state.isMigrationCheckDwelling {
+                    // Resolved inside the dwell — hold it. Last write wins, so a burst of updates
+                    // collapses to the newest rather than queueing a run of visible flips.
+                    state.heldMigrationVariant = variant
+                    state.hasHeldMigrationVariant = true
+                    return .none
+                }
                 if let variant {
                     state.migrationBannerVariant = variant
                     if state.priorityContent != .priorityMigration {

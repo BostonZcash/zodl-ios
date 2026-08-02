@@ -125,10 +125,23 @@ extension Root {
                 // restarts the tick loop's 30s countdown from zero (`cancelInFlight: true` inside
                 // `migrationTickLoopEffect`), whichever branch below this open actually takes.
                 let migrationTickEffect = migrationTickLoopEffect(state: state)
+                // MOB-1466 — STALENESS. iOS paints the previous frame on foreground, so until the
+                // re-derivation below returns (seconds, not milliseconds) the smart banner states
+                // last session's conclusion with full confidence. Raising `.checkingStatus` FIRST,
+                // synchronously in this reducer, is what stops the user reading a promise that is
+                // no longer true. It is a no-op unless the migration lane already owns the banner.
+                //
+                // Sits ALONGSIDE the tick effect above rather than replacing it — the two are
+                // different halves of one problem. The tick keeps an ALREADY-OPEN screen fresh;
+                // this covers the gap before the first answer of a NEW foreground, which no tick
+                // interval can close because the stale frame is painted before any timer starts.
+                let migrationCheck: Effect<Action> = state.featureFlags.migration
+                    ? .send(.home(.smartBanner(.migrationForegroundCheckStarted)))
+                    : .none
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
-                    return .merge(migrationTickEffect, .send(.initialization(.initialSetups)))
+                    return .merge(migrationTickEffect, migrationCheck, .send(.initialization(.initialSetups)))
                 } else {
-                    return .merge(migrationTickEffect, .send(.initialization(.retryStart)))
+                    return .merge(migrationTickEffect, migrationCheck, .send(.initialization(.retryStart)))
                 }
                 
             case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID, let isTorFailure))):
