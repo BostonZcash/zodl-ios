@@ -81,6 +81,8 @@ struct MigrationStatus {
         /// first-ever visit has nothing to be stale about and keeps the ordinary empty state.
         var isUpdating = false
         var cancelStateStreamId = UUID()
+        /// MOB-1466: the 30s refresh pulse's cancel id — see `onAppear`'s pulse effect.
+        var cancelRefreshPulseId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var remainingCount: Int {
@@ -178,6 +180,12 @@ struct MigrationStatus {
         /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
         case migrationStateChanged
         case onAppear
+        /// MOB-1466: the screen's own 30s wake-up while it is open — re-runs `loadStatus`. Exists
+        /// because the `stateEvents` stream is narrower than this screen's truth: ETA captions age
+        /// with the wall clock and proof-level row changes alter no `MigrationState`, so neither
+        /// ever emits (field-caught 2026-08-02: an open screen sat frozen between transfer windows
+        /// until reopened).
+        case refreshPulse
         /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)
         /// finished — lands on `.rescheduleConfirmed` with the refreshed rows/duration instead of
         /// flipping `isRescheduling` back to `.resume`. The coordinator doesn't send this yet (it
@@ -207,6 +215,7 @@ struct MigrationStatus {
         }
     }
 
+    @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.migrationManager) var migrationManager
     // MOB-1496 (W3): `migrationPrivacySyncBufferDuration()` for the resume footer's minutes copy —
@@ -255,8 +264,26 @@ struct MigrationStatus {
                         migrationManager.stateEvents(accountUUID)
                             .map { _ in Action.migrationStateChanged }
                     }
-                    .cancellable(id: state.cancelStateStreamId, cancelInFlight: true)
+                    .cancellable(id: state.cancelStateStreamId, cancelInFlight: true),
+                    // MOB-1466 (field-caught 2026-08-02): THE REFRESH PULSE. The event stream
+                    // above is real but narrower than this screen's truth — broadcasts poke it
+                    // (A13) and coarse-state/balance changes push it, while ETA captions age with
+                    // the wall clock and proof-level row changes alter no `MigrationState`, so an
+                    // OPEN screen sat frozen between transfer windows until reopened. Every 30s
+                    // (the foreground tick loop's own cadence) the screen re-derives instead:
+                    // cheap local reads, last-writer-wins by construction (`statusLoaded` replaces
+                    // whole rows), and cancelled with the screen. First pulse a full 30s in — the
+                    // `loadStatus` above just ran.
+                    .run { send in
+                        for await _ in continuousClock.timer(interval: .seconds(30)) {
+                            await send(.refreshPulse)
+                        }
+                    }
+                    .cancellable(id: state.cancelRefreshPulseId, cancelInFlight: true)
                 )
+
+            case .refreshPulse:
+                return loadStatus(accountUUID: state.selectedWalletAccount?.id)
 
             case .rescheduleCompleted(let rows, let totalDurationHours):
                 state.presentation = .rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)

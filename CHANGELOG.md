@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] The Migration Progress screen now refreshes itself while open — transfer ETAs and statuses update every 30 seconds without closing and reopening the screen.
 - [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
 - [MOB-140] On the Receive screen, the Zcash Sapling address (testnet debug builds only) now shows the same shield badge on its icon as the Zcash Shielded Address, instead of an incomplete badge that made the address look unshielded.
 - [#1948] The Syncing Error details now name the server ZODL is connected to and show both consensus branch IDs in hex (e.g. `0x37a5165b`) — the form used in ZIPs and other documentation — rather than unrecognizable decimal numbers, and the same information is included in the report sent to support. When the failure is a network-rules mismatch (ZCBPEO0011), where retrying can never succeed because either ZODL or the server is out of date, the sheet also offers a Switch server shortcut.
