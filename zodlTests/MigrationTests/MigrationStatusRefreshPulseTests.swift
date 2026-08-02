@@ -97,6 +97,32 @@ import ComposableArchitecture
         await store.skipInFlightEffects(strict: false)
     }
 
+    /// The other end of the lifecycle (field-caught 2026-08-03): after the screen pops, the pulse
+    /// must STOP. Until `.onDisappear` existed, the timer kept firing into a path whose element
+    /// was gone — hundreds of TCA missing-element warnings per session, and a busy-loop of loads
+    /// for a screen nobody could see.
+    @Test func onDisappearStopsThePulse() async {
+        let loadCount = LockIsolated(0)
+        let testClock = TestClock()
+        let store = Self.store(loadCount: loadCount, testClock: testClock)
+
+        await store.send(.onAppear)
+        await waitUntil { loadCount.value == 1 }
+
+        await testClock.advance(by: .seconds(30))
+        await waitUntil { loadCount.value == 2 }
+        #expect(loadCount.value == 2, "the pulse runs while the screen is up")
+
+        await store.send(.onDisappear)
+
+        await testClock.advance(by: .seconds(120))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(loadCount.value == 2, "no pulse may fire after the screen has gone")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
     /// The pulse belongs to the screen's lifecycle: before `onAppear`, no clock movement may load
     /// anything.
     @Test func noPulseBeforeTheScreenAppears() async {

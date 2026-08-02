@@ -108,6 +108,9 @@ struct MigrationStatusView: View {
         .onAppear {
             store.send(.onAppear)
         }
+        .onDisappear {
+            store.send(.onDisappear)
+        }
     }
 
     // MARK: - Title + description

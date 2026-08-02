@@ -180,6 +180,12 @@ struct MigrationStatus {
         /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
         case migrationStateChanged
         case onAppear
+        /// The screen left the hierarchy — tears down the two `onAppear` subscriptions (the
+        /// `stateEvents` stream and the 30s refresh pulse). The pulse's own comment always said
+        /// "cancelled with the screen"; until this action existed, nothing did it, and both
+        /// effects kept firing into a path whose element was gone (hundreds of TCA
+        /// missing-element warnings per session, field-caught 2026-08-03).
+        case onDisappear
         /// MOB-1466: the screen's own 30s wake-up while it is open — re-runs `loadStatus`. Exists
         /// because the `stateEvents` stream is narrower than this screen's truth: ETA captions age
         /// with the wall clock and proof-level row changes alter no `MigrationState`, so neither
@@ -286,6 +292,12 @@ struct MigrationStatus {
                         }
                     }
                     .cancellable(id: state.cancelRefreshPulseId, cancelInFlight: true)
+                )
+
+            case .onDisappear:
+                return .merge(
+                    .cancel(id: state.cancelStateStreamId),
+                    .cancel(id: state.cancelRefreshPulseId)
                 )
 
             case .refreshPulse:
