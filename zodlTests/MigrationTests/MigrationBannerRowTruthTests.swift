@@ -264,16 +264,48 @@ import ZcashLightClientKit
     }
 
     /// Preparing is RUN-level and plural: one prove sweep proves the whole run, and Figma C5 shows
-    /// two transfers preparing at once. Any provable row raises it, wherever it sits.
+    /// two transfers preparing at once. Any BLOCKED provable row raises it, wherever it sits — the
+    /// second row here, not the first.
     @Test func preparingIsRaisedByAnyRowNotJustTheFirst() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .active),
-                Self.row(index: 1, status: .pending, isPreparing: true)
+                Self.row(index: 1, status: .overdue, isPreparing: true)
             ]
         )
         #expect(variant == .preparing)
+    }
+
+    /// …but a PENDING row that merely happens to be provable does NOT raise it, and this is the
+    /// half the field had to teach us (2026-08-02, session s2).
+    ///
+    /// `isPreparing` means "the engine COULD prove this one". Provability is gated on each
+    /// transfer's own anchor boundary, drawn on a jittered grid, so it fires for rows whose send
+    /// window is still ten minutes out. Four such rows flipped a whole run's banner to "preparing":
+    ///
+    ///     BANNER: (first) → preparing · why: the prove sweep will run this session
+    ///     ROWS:   … T7:preparing T8:preparing T9:preparing T10:preparing T11:~11m
+    ///     ══ BACKGROUND — prove sweeps 0 · syncs completed 0
+    ///
+    /// The sweep did not run and could not: `start()` had been refused by the privacy gate, so
+    /// there was no sync, no sync-complete edge, and no `advance(.afterSync)`. Forty-eight seconds
+    /// of a banner promising imminent work over a session that did nothing.
+    ///
+    /// A run is only "preparing" when a row the user is actually waiting on cannot move for want of
+    /// its proof. Everything else is progress.
+    @Test func aPendingRowThatIsMerelyProvableDoesNotClaimTheRunIsPreparing() {
+        let variant = Self.variant(
+            state: .inProgress(Self.progress(completed: 0, total: 6)),
+            transferRows: [
+                Self.row(index: 0, status: .active),
+                Self.row(index: 1, status: .pending, isPreparing: true),
+                Self.row(index: 2, status: .pending, isPreparing: true)
+            ]
+        )
+
+        #expect(variant != .preparing)
+        #expect(variant == .inProgress(done: 0, total: 6, round: nil, totalRounds: nil))
     }
 
     /// A note-split preparation is work exactly as much as a crossing transfer is, and the split

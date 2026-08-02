@@ -2640,7 +2640,26 @@ enum MigrationDerivations {
         // is, and the split phase is where a large wallet spends its first minutes. Counts below
         // still come from `transferRows` alone; preparations are never numbered transfers.
         let workingRows = transferRows + preparationRows
-        let isPreparingRun = workingRows.contains { $0.isPreparing }
+        // `isInFlight`, NOT the raw `isPreparing` — the same narrowing the row caption and spinner
+        // took on 08-02, applied here so all three agree by construction.
+        //
+        // Field-caught the same day, one session later. `isPreparing` means "the engine COULD prove
+        // this one", which is true of rows whose send window is still ten minutes out. A whole run's
+        // banner flipped to "preparing" because of them:
+        //
+        //     [MIG s2 +0.31s] BANNER: (first) → preparing
+        //                     why: provable now — the prove sweep will run this session
+        //     [MIG s2 …]      ROWS: … T7:preparing T8:preparing T9:preparing T10:preparing T11:~11m
+        //     [MIG s2 +47.89s] ══ BACKGROUND — prove sweeps 0 · syncs completed 0
+        //
+        // The sweep did not run and structurally could not: `start()` had been refused by the
+        // privacy gate, so there was no sync, so no sync-complete edge, so no `advance(.afterSync)`.
+        // Forty-eight seconds of a banner promising imminent work, over a session that did nothing.
+        //
+        // `isInFlight` keeps only the rows whose own window is open or past and which cannot send
+        // because their proof is outstanding — the rows a user is genuinely waiting on. A run with
+        // none of those is not "preparing"; it is in progress, waiting for a window, and says so.
+        let isPreparingRun = workingRows.contains { $0.isInFlight }
 
         // "The app is doing this RIGHT NOW, so stay" is `isBroadcastInFlight` — the in-session flag
         // `runBroadcastSession` holds for the seconds it is actually submitting — and NOT the
