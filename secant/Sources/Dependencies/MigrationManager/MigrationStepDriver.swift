@@ -138,6 +138,10 @@ extension MigrationManagerImpl {
     /// below for the mechanism.
     @discardableResult
     func advance(phase: MigrationOpenPhase) async -> MigrationStepVerdict {
+        if phase == .tick {
+            LoggerProxy.debug("\(Self.logTag) ▸ Tick (\(phase))")
+        }
+
         guard isIronwoodActivated() else {
             return MigrationStepVerdict.notApplicable
         }
