@@ -56,11 +56,15 @@
 //  straight to the SAME action `.beforeSync` produces, not a variant of it: as far as the wire is
 //  concerned, the two are indistinguishable.
 //
-//  Everything else stays exactly where it already was. `.prove`/`.rebuild`/`.requiresAttention` are
-//  all anchored to a sync boundary this recurring wake-up never crosses on its own — proving needs
-//  the post-sync tip, rebuilding re-anchors against it, and attention's cheap first half IS a sync
-//  — so a tick can only ever defer them (`.wrongPhase`) to the open or edge that actually owns them.
-//  `.waiting`/`.complete`/`nil` were never phase-dependent in the first place and stay that way.
+//  Everything else stays anchored to a sync boundary — with ONE follow-mode exception. `.rebuild`
+//  and `.requiresAttention` a tick can only ever defer (`.wrongPhase`): rebuilding re-anchors
+//  against the post-sync tip and attention's cheap first half IS a sync. `.prove` defers too,
+//  UNLESS the wallet currently reads `.upToDate` (`isWalletAtTip`): slipstream's follow mode pins
+//  sync at the tip with no re-firing edge, so a prove that became ready mid-session had no
+//  discharge until the next app-open — and "the post-sync edge owns proving" was always a proxy
+//  for "the commitment tree is current", which an at-tip tick satisfies directly (field-caught
+//  2026-08-02, twice). `.waiting`/`.complete`/`nil` were never phase-dependent in the first place
+//  and stay that way.
 //
 //  See `docs/slipstream/migration/MIGRATION_STACK_MAP.md` §5 for the full-stack picture this
 //  implements, and `MigrationStepDriver` for the executor — including the single-flight latch, the
@@ -147,7 +151,14 @@ enum MigrationStepPlan {
     /// - Parameters:
     ///   - step: the engine's answer, or `nil` when no run is stored.
     ///   - phase: which moment of the app-open this is.
-    static func action(for step: MigrationAdvanceStep?, phase: MigrationOpenPhase) -> MigrationStepAction {
+    ///   - isWalletAtTip: whether sync currently reads `.upToDate` — consulted by exactly one
+    ///     cell, the `.prove` row's `.tick` column (see that case's comment). The default keeps
+    ///     the conservative pre-follow-mode table; the driver always passes the live value.
+    static func action(
+        for step: MigrationAdvanceStep?,
+        phase: MigrationOpenPhase,
+        isWalletAtTip: Bool = false
+    ) -> MigrationStepAction {
         guard let step else { return MigrationStepAction.nothing(MigrationStepHold.noRun) }
 
         switch step {
@@ -176,9 +187,21 @@ enum MigrationStepPlan {
             switch phase {
             case MigrationOpenPhase.afterSync:
                 return MigrationStepAction.prove(id: id)
-            case MigrationOpenPhase.beforeSync, MigrationOpenPhase.tick:
-                // A tick crosses no sync boundary of its own, so it is exactly as wrong a moment
-                // to prove as `.beforeSync` already is — the post-sync edge still owns this step.
+            case MigrationOpenPhase.tick:
+                // Follow-mode liveness (field-caught 2026-08-02, twice): slipstream keeps the
+                // wallet pinned at `.upToDate` with no re-firing sync edge, so a prove that
+                // became ready MID-SESSION had no discharge until the next app-open — ticks
+                // deferred it while no edge was ever coming. "The post-sync edge owns proving"
+                // was always a proxy for "the commitment tree is current"; an at-tip tick
+                // satisfies that property directly, so it proves. Off the tip the old column
+                // stands — proving against a stale tree stays the edge's business. Proving is
+                // local computation, so ZIP 318's broadcast-session separation is untouched.
+                return isWalletAtTip
+                    ? MigrationStepAction.prove(id: id)
+                    : MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
+            case MigrationOpenPhase.beforeSync:
+                // The open's own edge is moments away and must stay free to broadcast instead —
+                // deferring here is unchanged even at the tip.
                 return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             }
 

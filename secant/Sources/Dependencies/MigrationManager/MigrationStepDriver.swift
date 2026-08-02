@@ -289,8 +289,18 @@ extension MigrationManagerImpl {
     ) async -> MigrationStepVerdict {
         var fallback = MigrationStepVerdict.noRun
 
+        // The plan's one status-aware cell (the `.prove` row's `.tick` column) keys off whether
+        // sync currently reads `.upToDate` — read ONCE per driver call, from the same live source
+        // the flowFinished drive uses, so every account's discharge sees the same answer.
+        let isWalletAtTip: Bool
+        if case .upToDate = sdkSynchronizer.latestState().syncStatus {
+            isWalletAtTip = true
+        } else {
+            isWalletAtTip = false
+        }
+
         for (accountUUID, step) in steps {
-            let action = MigrationStepPlan.action(for: step, phase: phase)
+            let action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
             let verdict = await execute(action, accountUUID: accountUUID, phase: phase)
 
             // Not substantive on its own, but a better summary than `noRun` — keep the most

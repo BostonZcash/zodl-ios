@@ -122,6 +122,41 @@ import ZcashLightClientKit
         #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
     }
 
+    // MARK: - The at-tip tick prove (follow-mode liveness)
+
+    /// Slipstream's follow mode keeps the wallet pinned at `.upToDate` with no re-firing sync
+    /// edge, so a prove that became ready MID-SESSION had no discharge until the next app-open —
+    /// ticks deferred it as wrong-phase while no edge was ever coming (field-caught 2026-08-02,
+    /// twice: the confirm-after-edge wedge, then prove(id 4) sitting through a block drought). At
+    /// the tip, a tick satisfies the exact property `.afterSync` was proxying for — the commitment
+    /// tree is current — so the table offers the prove there too.
+    @Test func tickProvesWhenTheWalletIsAtTheTip() {
+        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+        let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
+
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick, isWalletAtTip: true) == .prove(id: 1))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .tick, isWalletAtTip: true) == .prove(id: 1))
+    }
+
+    /// Off the tip the tick column is unchanged — proving against a stale tree stays the edge's
+    /// business, exactly as before.
+    @Test func tickStillDefersProveOffTheTip() {
+        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick, isWalletAtTip: false) == .nothing(.wrongPhase))
+    }
+
+    /// Being at the tip unlocks ONLY the tick prove: `.beforeSync` keeps deferring (its own edge
+    /// is moments away, and the open must stay free to broadcast instead), and rebuild/attention
+    /// keep their edge anchoring untouched.
+    @Test func atTipUnlocksOnlyTheTickProve() {
+        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+
+        #expect(MigrationStepPlan.action(for: transfer, phase: .beforeSync, isWalletAtTip: true) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick, isWalletAtTip: true) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick, isWalletAtTip: true) == .nothing(.wrongPhase))
+    }
+
     /// The two answers that never depended on a phase in the first place stay that way with a third
     /// phase in play.
     @Test func tickArmsWakeupsAndFinishesLikeEveryOtherPhase() {

@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] Migration transactions that become ready while the app sits open on a fully synced wallet are now prepared within 30 seconds. Previously their preparation could wait until the next app open — the wallet stays continuously synced, and the moment preparation used to be tied to never came around again — which could leave the migration showing no progress for minutes even though nothing was wrong.
 - [MOB-1466] Confirming a migration while the wallet is already fully synced now starts preparing the first transaction right away. Previously the run could sit at "Preparing…" indefinitely — the first proof only ran at a sync-completion moment that had already passed by the time the migration was confirmed, and nothing re-triggered it until the app was closed and reopened.
 - [MOB-1466] Scheduled migration transfers no longer get stuck behind the privacy buffer while the app stays open: when a transfer is ready to send, the wallet briefly pauses syncing so the privacy quiet-period can elapse, then sends the transfer automatically.
 - [MOB-1466] The Migration Progress screen now refreshes itself while open — transfer ETAs and statuses update every 30 seconds without closing and reopening the screen.

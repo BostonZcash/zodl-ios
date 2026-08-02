@@ -48,6 +48,15 @@ import ComposableArchitecture
         return state
     }
 
+    /// `activatedState()` at `.upToDate` — the follow-mode shape the at-tip tick prove keys off.
+    /// (`SynchronizerState.zero`'s own status is NOT up-to-date, which is what keeps every other
+    /// test in this suite exercising the off-tip column without saying so.)
+    private static func atTipState() -> SynchronizerState {
+        var state = activatedState()
+        state.syncStatus = .upToDate
+        return state
+    }
+
     private static func account() -> WalletAccount {
         WalletAccount(
             Account(
@@ -171,6 +180,64 @@ import ComposableArchitecture
 
         #expect(verdict == .broadcast(id: 9))
         #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
+    }
+
+    // MARK: - The at-tip tick prove (follow-mode liveness)
+
+    /// Slipstream's follow mode pins the wallet at `.upToDate` with no re-firing sync edge, so a
+    /// prove that became ready mid-session sat undischarged until the next app-open (ticks
+    /// deferred it as wrong-phase, field-caught 2026-08-02). At the tip, the tick now runs the
+    /// sweep itself — this is the driver half of `MigrationStepPlanTests`' at-tip column.
+    @Test func tickRunsTheProveSweepWhenTheWalletIsAtTheTip() async {
+        Self.installCandidateAccount()
+        let sweepCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                finalizeReadyMigrationTransfers: { _ in
+                    sweepCalls.withValue { $0 += 1 }
+                    return 1
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(verdict == .proved(count: 1), "an at-tip tick must run the sweep, got \(verdict)")
+        #expect(sweepCalls.value == 1, "the sweep must run exactly once")
+    }
+
+    /// Off the tip a tick still defers the prove — proving against a stale tree stays the sync
+    /// edge's business, and the sweep must not run at all.
+    @Test func tickOffTheTipStillDefersTheProve() async {
+        Self.installCandidateAccount()
+        let sweepCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                finalizeReadyMigrationTransfers: { _ in
+                    sweepCalls.withValue { $0 += 1 }
+                    return 1
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(verdict == .deferredToPhase, "an off-tip tick must keep deferring the prove, got \(verdict)")
+        #expect(sweepCalls.value == 0, "the sweep must never run off the tip")
     }
 
     // MARK: - The privacy-buffer fast path
