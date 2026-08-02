@@ -109,7 +109,19 @@ extension Root {
                 // is Phase 5's cross-account routing; for now a tap opens the flow for whichever
                 // account is selected, which is the same account in every single-account case.
                 _ = accountUUID
-                guard state.featureFlags.migration else { return .none }
+                // I4 — ENTRY PARITY. A tap that arrives before the app can act on it is LATCHED,
+                // never dropped. On a cold launch this handler runs inside `didFinishLaunching`'s
+                // half-second pause, before feature flags load, so the guard below used to swallow
+                // the deep link entirely and the user landed on Home — the same tap, on a warm app,
+                // opened their migration. See `Root.State.pendingMigrationNotificationTap`.
+                //
+                // `isInitializingSDK` covers the other half of the window: flags loaded, SDK not up
+                // yet, so the flow would open over an app that cannot populate it.
+                guard state.featureFlags.migration, !state.isInitializingSDK else {
+                    state.pendingMigrationNotificationTap = true
+                    LoggerProxy.event("\(MigrationManagerImpl.logTag) notification tap latched — app not ready yet; will replay")
+                    return .none
+                }
                 return openMigrationCoordFlow(state: &state)
 
             case .initialization(.appDelegate(.didEnterBackground)):
@@ -168,25 +180,30 @@ extension Root {
                 let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
                 state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
-                    ? .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                    ? .run { [migrationManager] _ in
                         migrationManager.recordSyncCompleted()
                         // (P3's invalidation sweep used to run here, first. Both of its jobs are
                         // the ENGINE's now: foreign-spent funding notes are recorded by the
                         // engine's satisfiability oracle, and a broadcast this process submitted
                         // but failed to record is promoted on every `migrationAdvanceStep` —
                         // automatically, not only when this edge remembered to ask.)
-                        // THE PROVE SWEEP, and this edge is the only correct place for it: sync
-                        // has just reached the tip, so every settled anchor boundary is now
-                        // witnessable. Runs BEFORE reconcile so the state reconcile derives already
-                        // reflects the proofs this sweep just produced — otherwise the first
-                        // reconcile after a sync would still report transfers as unproven and the
-                        // banner would lag a whole visit behind.
-                        _ = await migrationManager.runProveSweep()
-                        await migrationManager.reconcile()
-                        // PHASE 4: re-arm AFTER reconcile, so the pokes are computed from the rows
-                        // reconcile just refreshed. Idempotent — stable per-(case, account) ids mean
-                        // a re-arm replaces this account's own pending request, never stacks one.
-                        await migrationManager.armNextWindowNotifications(accountUUID)
+                        // THE DRIVER at its second and last moment of the app-open, and this edge is
+                        // the only correct place for it: sync has just reached the tip, so every
+                        // settled anchor boundary is now witnessable and the engine's answer is
+                        // computed against fresh data.
+                        //
+                        // This used to be three hand-sequenced calls — prove sweep, reconcile, re-arm
+                        // — chosen by this call site rather than by the engine. That is exactly the
+                        // shape the driver replaces: the app decided WHAT to do here and the engine
+                        // was only ever consulted about broadcasts, so the two steps with no other
+                        // discharge in the app (`.rebuild`, `.requiresAttention`) fell through this
+                        // edge untouched, every time, forever. `advance` asks and obeys instead, and
+                        // still does all three of those things when `.prove` is the answer.
+                        //
+                        // `accountUUID` is no longer threaded in: the driver arms wake-ups for every
+                        // candidate account, not just the selected one, which is what a wallet with a
+                        // Zodl and a Keystone account migrating in parallel actually needs.
+                        await migrationManager.advance(.afterSync)
                     }
                     : .none
 
@@ -387,8 +404,16 @@ extension Root {
                             // background lane on iOS this open IS the delivery window — suppressing
                             // sync without broadcasting would just stall a schedule the user
                             // already confirmed.
-                            _ = await migrationManager.runBroadcastSession()
+                            await migrationManager.advance(.beforeSync)
                         } else {
+                            // THE DRIVER, on the sync branch too. `visitKind()` above answers only
+                            // "may this session sync?"; this is where the engine's actual next step
+                            // gets discharged. On a sync visit most steps defer to the post-sync
+                            // edge — but `.requiresAttention` and `.complete` are answered here, the
+                            // wake-ups are re-armed here, and, crucially, this open now LOGS a
+                            // verdict whether or not it did anything. A session that did nothing and
+                            // said nothing is indistinguishable from a frozen app.
+                            await migrationManager.advance(.beforeSync)
                             do {
                                 try await sdkSynchronizer.start(true)
                             } catch ZcashError.migrationSyncBlocked {
@@ -407,7 +432,7 @@ extension Root {
                                 let refusalReason = "start refused — migration gate active; running broadcast session"
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
                                 await send(.migrationGateDeferredSyncStart)
-                                _ = await migrationManager.runBroadcastSession()
+                                await migrationManager.advance(.beforeSync)
                             }
                         }
                         if state.bgTask != nil {
@@ -670,8 +695,25 @@ extension Root {
                             // `MigrationVisit`.
                             if await migrationManager.visitKind() == .send {
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start on launch — broadcast session")
-                                _ = await migrationManager.runBroadcastSession()
+                                // I5, N4's TWIN — live until 2026-08-02 and identical in shape to the
+                                // bug that froze a foreground session for six minutes. `.retryStart`
+                                // got its `.migrationGateDeferredSyncStart` on 08-01; THIS site, the
+                                // cold-launch one, did not, so a launch that landed in a due
+                                // broadcast window suppressed sync and armed nothing to bring it
+                                // back: `syncDeferredByMigrationGate` stayed false, and
+                                // `stopSyncBeforeMigrationBroadcast()` early-returned on
+                                // `guard isSyncing()` (correctly — there was no sync to stop), so
+                                // `migrationStoppedSyncForBroadcast` stayed false too. When the
+                                // post-broadcast buffer cleared, `.migrationSyncGateChanged(false)`
+                                // computed `shouldResume = !isBlocked && (false || false)` and
+                                // returned without a `.retryStart`. Sync never resumed for the whole
+                                // launch — no polling, no sync-complete edge, no driver call at the
+                                // edge, no reconcile, no pokes. The rule that closes the whole class:
+                                // A SESSION THAT SUPPRESSES SYNC ALWAYS ARMS ITS OWN RESUME.
+                                await send(.migrationGateDeferredSyncStart)
+                                await migrationManager.advance(.beforeSync)
                             } else {
+                                await migrationManager.advance(.beforeSync)
                                 do {
                                     try await sdkSynchronizer.start(false)
                                 } catch ZcashError.migrationSyncBlocked {
@@ -694,7 +736,7 @@ extension Root {
                                     let refusalReason = "start refused — migration gate active; treating launch as broadcast session"
                                     LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
                                     await send(.migrationGateDeferredSyncStart)
-                                    _ = await migrationManager.runBroadcastSession()
+                                    await migrationManager.advance(.beforeSync)
                                 }
                             }
 
@@ -779,7 +821,21 @@ extension Root {
 
             case .initialization(.initializationSuccessfullyDone):
                 state.isInitializingSDK = false
+                // I4: replay a notification tap that landed while the app was still coming up. Done
+                // HERE, at the one point where "the app is ready" is unambiguously true, so the cold
+                // and warm entries converge on the same screen by the same route.
+                var replayEffect = Effect<Action>.none
+                if state.pendingMigrationNotificationTap && state.featureFlags.migration {
+                    state.pendingMigrationNotificationTap = false
+                    LoggerProxy.event("\(MigrationManagerImpl.logTag) replaying the latched notification tap")
+                    replayEffect = openMigrationCoordFlow(state: &state)
+                } else {
+                    // Never carry a stale latch into the next launch: a tap the user has since
+                    // resolved must not reopen the flow behind them.
+                    state.pendingMigrationNotificationTap = false
+                }
                 return .merge(
+                    replayEffect,
                     .send(.initialization(.registerForSynchronizersUpdate)),
                     .publisher {
                         autolockHandler.batteryStatePublisher()

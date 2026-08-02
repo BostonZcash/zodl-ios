@@ -86,12 +86,29 @@ struct MigrationManagerClient: Sendable {
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.
+    /// THE DRIVER — one app-open, one engine step, discharged. See `MigrationStepDriver`.
+    ///
+    /// This is the ONLY member that decides what a migration app-open does. Called at exactly two
+    /// moments per open — `.beforeSync` before the wire is touched, `.afterSync` at the
+    /// sync-complete edge — from Root and from nowhere else. Tapping the icon and tapping a
+    /// notification reach the identical calls in the identical order; a notification tap adds
+    /// navigation and nothing else.
+    ///
+    /// Never throws and never traps: a migration read failure degrades to a logged verdict rather
+    /// than being allowed to brick ordinary wallet syncing.
+    var advance: @Sendable (_ phase: MigrationOpenPhase) async -> MigrationStepVerdict = { _ in .notApplicable }
+
     /// What this app-open is FOR — see `MigrationVisit`. Ask BEFORE starting sync; `.send` means
     /// this session belongs to a broadcast and must not initiate one.
     ///
     /// Degrades to `.sync` if the reads fail. Fail-open is the right direction here: a migration
     /// read error must not be able to brick ordinary wallet syncing, and the SDK's own reactive
     /// gate is still behind this as a second line of defence.
+    ///
+    /// NOTE: `advance(.beforeSync)` above is what DISCHARGES the broadcast. This member answers only
+    /// the narrower ZIP 318 question "may this session sync?", which Root must ask before `start()`
+    /// — the two are deliberately separate calls at the same moment rather than one, because the
+    /// sync decision has to be taken and acted on before any step is executed.
     var visitKind: @Sendable () async -> MigrationVisit = { .sync }
 
     /// THE PROVE SWEEP, run over every migrating account. Call on SYNC visits, once sync reaches

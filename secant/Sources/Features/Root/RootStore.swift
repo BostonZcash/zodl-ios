@@ -76,6 +76,20 @@ struct Root {
         /// Edge detector for the sync-completion hooks below — reconcile and the send-gate re-key
         /// run ONCE per completed sync, not on every tick while already at the tip.
         var wasSyncUpToDateForMigration = false
+        /// A migration notification tap that arrived before the app could act on it — replayed by
+        /// `.initializationSuccessfullyDone`.
+        ///
+        /// MOB-1466 (2026-08-02): tapping a notification and tapping the icon must run the IDENTICAL
+        /// set of operations, differing only in where the user lands. On a WARM open they already
+        /// did. On a COLD one they did not: `didFinishLaunching` waits half a second before even
+        /// beginning `.initialSetups`, and the tap is delivered inside that window — so
+        /// `.migrationNotificationTapped`'s `guard state.featureFlags.migration` read a flag set
+        /// that had not loaded yet, returned `.none`, and the deep link was gone. The user tapped a
+        /// poke about their migration and landed on Home.
+        ///
+        /// Latching instead of dropping makes the two entries converge: the tap is honoured the
+        /// moment the app is capable of honouring it, whatever state it was in when the tap landed.
+        var pendingMigrationNotificationTap: Bool = false
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?

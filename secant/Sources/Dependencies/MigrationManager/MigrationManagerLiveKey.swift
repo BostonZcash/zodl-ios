@@ -148,6 +148,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
             migrationPrepareBalanceRows: { await impl.migrationPrepareBalanceRows(accountUUID: $0) },
+            advance: { await impl.advance(phase: $0) },
             visitKind: { await impl.visitKind() },
             runProveSweep: { await impl.runProveSweep() },
             runBroadcastSession: { await impl.runBroadcastSession() },
@@ -280,6 +281,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
     @Dependency(\.userNotifications) var userNotifications
+
+    // The three seams `MigrationStepDriver` needs to discharge the engine's `.rebuild` step without
+    // the user: deriving a software account's spending key so the engine can re-sign the rebuilt
+    // rows in place. Exactly the trio `MigrationSpendingKeyDerivation.deriveUSK` takes, and exactly
+    // what the Recovery screen's button already uses — the driver runs the same code, just without
+    // requiring the user to find the screen first. `exportWallet()` is a plain keychain read on iOS
+    // (no biometric prompt), which is what makes this safe to do on an ordinary app-open.
+    @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.mnemonic) var mnemonic
+    @Dependency(\.derivationTool) var derivationTool
 
     enum Constants {
         /// PHASE 4 (D9): how far AHEAD of a send window the `timeToSync` poke fires. Long enough
@@ -532,18 +543,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
         async let hasInvalidTask = hasInvalidMigrationTransfers(accountUUID: accountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: accountUUID)
         async let clockTask = chainClock(accountUUID: accountUUID)
+        // The engine's own answer, read alongside the rest rather than after them — see
+        // `MigrationDerivations.reentryRoute`'s doc for why it now outranks the clock. A failed read
+        // contributes `nil`, which offers no action at all: the failure mode of this input is a
+        // quieter screen, never a button the engine will refuse.
+        async let advanceStepTask = try? sdkSynchronizer.migrationAdvanceStep(accountUUID)
 
         let rawState = await rawStateTask ?? MigrationState.notStarted
         let progress = await progressTask
         let hasInvalid = await hasInvalidTask
         let hasOverdue = await hasOverdueTask
         let clock = await clockTask
+        let advanceStep = await advanceStepTask
 
         let state = rawState
 
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
+            advanceStep: advanceStep,
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(for: accountUUID),
@@ -2731,9 +2749,23 @@ enum MigrationDerivations {
     /// See MOB-1466 spec, "reentryRoute" — §4.3 table, checked in this exact order.
     /// `isIronwoodActivated` (MOB-1483) is checked first, ahead of row 1 — pre-activation every
     /// input falls through to `.entry`.
+    ///
+    /// MOB-1466 (2026-08-02): `advanceStep` is now an input, and it OUTRANKS the app's own clock.
+    ///
+    /// THE DEAD-CTA LOOP. Every actionable route here ends in a button, and a button that the engine
+    /// refuses is worse than no button: the user taps Send now, the engine answers `awaitingProof`,
+    /// nothing happens, they tap Reschedule, nothing happens, and the run appears to be broken when
+    /// it is merely waiting. That is exactly what an overnight testnet run produced — twelve
+    /// transfers past their scheduled heights (so `hasOverdue` was true) whose engine step was
+    /// `prove`, routed to a Resume screen offering a send that could not be served.
+    ///
+    /// The rule this encodes: THE ROUTE MAY ONLY OFFER AN ACTION THE ENGINE IS ASKING FOR. A clock
+    /// reading is evidence about time, not about what the run needs — only `migrationAdvanceStep`
+    /// knows that, and now it is the one that decides.
     static func reentryRoute(
         isIronwoodActivated: Bool,
         state: MigrationState,
+        advanceStep: MigrationAdvanceStep?,
         hasInvalid: Bool,
         hasOverdue: Bool,
         isManualDelivery: Bool,
@@ -2746,6 +2778,25 @@ enum MigrationDerivations {
         if hasInvalid {
             let isExpired = isTransferExpired(state)
             return MigrationReentryRoute.recovery(isExpired: isExpired)
+        }
+
+        // The engine is ASKING for something only the user can give. Route straight to the screen
+        // whose button discharges that exact step — `.rebuild` to the expired-transfer recovery
+        // (its Continue calls `refreshStaleMigrationTransfers`), `.requiresAttention` to the
+        // re-plan recovery (its Continue calls `restartCurrentMigrationStep`).
+        //
+        // Ranked here, above every state arm, because these two steps have no other discharge in
+        // the app: before this existed, a run whose next step was either of them showed whatever
+        // the state arms happened to derive — usually "in progress" — while the engine waited
+        // forever for a screen nothing routed to. Automatic discharge (`MigrationStepDriver`)
+        // handles the cases it can; this is the route for the cases it cannot.
+        switch advanceStep {
+        case MigrationAdvanceStep.rebuild?:
+            return MigrationReentryRoute.recovery(isExpired: true)
+        case MigrationAdvanceStep.requiresAttention?:
+            return MigrationReentryRoute.recovery(isExpired: isTransferExpired(state))
+        default:
+            break
         }
 
         // BEFORE `hasOverdue`, deliberately. During the split phase a transfer can pass its
@@ -2771,11 +2822,20 @@ enum MigrationDerivations {
             return MigrationReentryRoute.statusProgress
         }
 
-        if hasOverdue {
+        // Both of the routes below end in a SEND button, so both now require the engine to actually
+        // be offering a broadcast. `hasOverdue` and `isNextTransferDue` are app-side height
+        // comparisons: they can tell you a window has opened, but not whether the transfer inside it
+        // is proved, whether its dependencies mined, or whether the engine considers it deliverable
+        // at all. Only `.broadcast` means "deliverable right now" — everything else that looks
+        // overdue is a run doing its job, and falls through to the honest progress screen below.
+        let isBroadcastOffered: Bool
+        if case MigrationAdvanceStep.broadcast? = advanceStep { isBroadcastOffered = true } else { isBroadcastOffered = false }
+
+        if hasOverdue && isBroadcastOffered {
             return MigrationReentryRoute.statusResume
         }
 
-        if isManualDelivery && isNextTransferDue, let progress {
+        if isManualDelivery && isNextTransferDue && isBroadcastOffered, let progress {
             return MigrationReentryRoute.reviewManual(step: progress.completedTransfers + 1, total: progress.totalTransfers)
         }
 

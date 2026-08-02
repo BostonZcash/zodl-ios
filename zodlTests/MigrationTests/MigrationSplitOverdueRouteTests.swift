@@ -37,14 +37,20 @@ import ZcashLightClientKit
         )
     }
 
+    /// `advanceStep` defaults to `.broadcast` — the engine OFFERING a delivery — because that is the
+    /// premise every pre-existing case here was written under: they all ask "given that a transfer
+    /// is deliverable, where does an overdue clock take the user?". The cases below that pass a
+    /// different step are the new half of the contract.
     private static func route(
         state: MigrationState,
         hasOverdue: Bool,
-        hasInvalid: Bool = false
+        hasInvalid: Bool = false,
+        advanceStep: MigrationAdvanceStep? = MigrationAdvanceStep.broadcast(id: 1)
     ) -> MigrationReentryRoute {
         MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
             state: state,
+            advanceStep: advanceStep,
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isManualDelivery: false,
@@ -118,5 +124,60 @@ import ZcashLightClientKit
         let route = Self.route(state: .splitPendingConfirmation, hasOverdue: false)
 
         #expect(route == .statusProgress)
+    }
+
+    // MARK: - The dead-CTA loop (field-caught 2026-08-02, overnight run)
+
+    /// THE regression test for the loop. Twelve transfers past their scheduled heights — so
+    /// `hasOverdue` is true and the old code went straight to Resume — while the engine's step was
+    /// `prove`. The Resume screen's "Send now" is answered `awaitingProof`, so the user taps it,
+    /// nothing happens, taps Reschedule, nothing happens, and the run looks broken while it is
+    /// simply waiting for proofs.
+    ///
+    /// A clock reading is evidence about time. Only the engine knows what the run needs.
+    @Test func anOverdueTransferTheEngineWantsPROVEDDoesNotOfferASend() {
+        let route = Self.route(
+            state: .inProgress(Self.progress()),
+            hasOverdue: true,
+            advanceStep: .prove(id: 3, kind: .transfer(crossing: 0))
+        )
+
+        #expect(route != .statusResume)
+        #expect(route == .statusProgress)
+    }
+
+    /// Same shape, the quieter cause: the engine says there is nothing to do at all. An overdue
+    /// clock must not manufacture an action out of that either.
+    @Test func anOverdueTransferTheEngineIsWAITINGOnDoesNotOfferASend() {
+        let route = Self.route(state: .inProgress(Self.progress()), hasOverdue: true, advanceStep: .waiting)
+
+        #expect(route != .statusResume)
+    }
+
+    /// The engine ASKS for a rebuild — the step that had no discharge anywhere in the app outside a
+    /// button on a screen nothing routed to. It must now route to exactly that screen.
+    @Test func aRebuildStepRoutesToTheExpiredRecoveryScreen() {
+        let route = Self.route(state: .inProgress(Self.progress()), hasOverdue: false, advanceStep: .rebuild(id: 4))
+
+        #expect(route == .recovery(isExpired: true))
+    }
+
+    /// …and the same for attention, which likewise had no automatic route to its own discharge.
+    @Test func anAttentionStepRoutesToRecovery() {
+        let route = Self.route(
+            state: .requiresAttention(.invalidTransfer),
+            hasOverdue: false,
+            advanceStep: .requiresAttention(id: 2)
+        )
+
+        #expect(route == .recovery(isExpired: false))
+    }
+
+    /// A failed engine read contributes `nil`, and `nil` must offer NO action. The failure mode of
+    /// this input is a quieter screen, never a button the engine will refuse.
+    @Test func anUnreadableStepNeverOffersASend() {
+        let route = Self.route(state: .inProgress(Self.progress()), hasOverdue: true, advanceStep: nil)
+
+        #expect(route != .statusResume)
     }
 }
