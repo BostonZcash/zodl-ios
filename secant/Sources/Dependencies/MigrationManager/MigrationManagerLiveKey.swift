@@ -407,7 +407,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // waiting 32.17 seconds THREE TIMES over in one session (three callers, all queued behind
         // one sweep). During a sweep the banner cannot have changed, so the last one is the truthful
         // answer and it costs nothing to give it immediately.
-        if isProveSweepInFlight,
+        if isMigrationWorkInFlight,
            let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
            let cached = bannerCache.withLock({ $0[resolvedAccountUUID] }) {
             return cached
@@ -691,7 +691,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // changed during the sweep, because the sweep is what would change them and it has not
         // finished. The caller renders the snapshot with its "updating…" note, and the poke fired
         // when the sweep completes brings the real values in.
-        if isProveSweepInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
+        if isMigrationWorkInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
             return cached.transfers
         }
         let rows = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
@@ -721,18 +721,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// user never sees.
     private let bannerCache = OSAllocatedUnfairLock<[AccountUUID: MigrationBannerVariant?]>(initialState: [:])
 
-    /// True for exactly the duration of a prove sweep — see the guard in `migrationTransfers`.
+    /// True while LONG migration work occupies the `SlipstreamSynchronizer` actor — see the guard in
+    /// `migrationTransfers`.
     ///
-    /// Not a lock and deliberately not one: it never GATES the sweep, it only tells the read paths
-    /// that the actor they are about to await is busy for tens of seconds, so they should answer
-    /// from cache instead of queueing. A stale read of this flag costs one slow read or one
-    /// slightly-early fresh one; neither is a correctness problem.
-    private let proveSweepInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
+    /// Covers BOTH occupants, and the second one was field-caught 2026-08-02 after the first was
+    /// fixed. The prove sweep is the obvious one (tens of seconds). The broadcast is the sneaky one:
+    /// a Tor bootstrap plus a submit runs 4–7 s, every broadcast session, and it holds the same
+    /// actor. Nine broadcast sessions in one run, nine slow reads, growing with the run:
+    ///
+    ///     s2 4.09s · s3 4.34s · s4 3.96s · s5 3.56s · s6 6.49s · s7 6.39s · s8 7.02s · s9 6.70s
+    ///
+    /// A tester tapping the banner during one got a blank screen with a spinner — the 33-second
+    /// bug's smaller sibling, in the lane the first fix did not reach. Naming the flag after the
+    /// CONDITION (the actor is busy) rather than after one of its causes is what stops a third
+    /// occupant from being missed the same way.
+    ///
+    /// Not a lock and deliberately not one: it never GATES the work, it only tells the read paths
+    /// that the actor they are about to await is busy for seconds, so they should answer from cache
+    /// instead of queueing. A stale read of this flag costs one slow read or one slightly-early
+    /// fresh one; neither is a correctness problem.
+    private let migrationWorkInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
 
-    var isProveSweepInFlight: Bool { proveSweepInFlight.withLock { $0 } }
+    var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
 
-    func setProveSweepInFlight(_ inFlight: Bool) {
-        proveSweepInFlight.withLock { $0 = inFlight }
+    func setMigrationWorkInFlight(_ inFlight: Bool) {
+        migrationWorkInFlight.withLock { $0 = inFlight }
     }
 
     /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
@@ -1724,8 +1737,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             _ = await bannerVariant(accountUUID: accountUUID)
             _ = await migrationTransfers(accountUUID: accountUUID)
         }
-        setProveSweepInFlight(true)
-        defer { setProveSweepInFlight(false) }
+        setMigrationWorkInFlight(true)
+        defer { setMigrationWorkInFlight(false) }
 
         for accountUUID in accountUUIDs {
             pokeStateEvent(for: accountUUID)
@@ -1973,8 +1986,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
             MigrationTrace.recordBroadcast()
             LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
+
+            // Warm the caches BEFORE the submit takes the actor, then flag — the same order that
+            // fixed the prove sweep, applied to the occupant that fix did not reach. A Tor bootstrap
+            // plus a submit holds the synchronizer for 4–7 s, EVERY broadcast session, and the poke
+            // below would otherwise queue behind it and land after the broadcast. A tester tapping
+            // the banner in that window got a blank screen with a spinner.
+            _ = await bannerVariant(accountUUID: accountUUID)
+            _ = await migrationTransfers(accountUUID: accountUUID)
+            setMigrationWorkInFlight(true)
+
             pokeStateEvent(for: accountUUID)
             await broadcastOneTransfer(accountUUID: accountUUID)
+            // Cleared BEFORE the closing poke, so that one derives fresh — it is the edge that
+            // reveals the row this broadcast just changed.
+            setMigrationWorkInFlight(false)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
             pokeStateEvent(for: accountUUID)
 
