@@ -289,9 +289,24 @@ extension Root {
                 // and the tick loop only spawns at app-open — re-spawn it here too (idempotent,
                 // self-guarding: the off switch, activation, and scheduled-candidate checks all live
                 // inside the effect itself).
+                //
+                // And drive the DRIVER once at `.afterSync` when the wallet is already at the tip
+                // (field-caught 2026-08-02, the confirm-after-edge wedge): a run committed after
+                // this app-open's one `.upToDate` edge has missed the only phase that may prove
+                // (`.prove` defers as `.wrongPhase` at `.beforeSync` and `.tick` alike), so its
+                // first preparation sat unproven until the next app-open — "no transition is
+                // coming" applies to the driver exactly as it does to the banner above. Guarded on
+                // the LIVE status at execution time: mid-sync, the coming edge owns this call
+                // (`didJustReachUpToDate` in `synchronizerStateChanged`), and driving early would
+                // sweep against a stale tip. The driver is single-flight and self-guarding, so a
+                // flow that committed nothing degrades to one cheap `noRun` read.
                 return .merge(
                     .send(.home(.smartBanner(.migrationReevaluationRequested))),
-                    migrationTickLoopEffect(state: state)
+                    migrationTickLoopEffect(state: state),
+                    .run { [migrationManager, sdkSynchronizer] _ in
+                        guard case .upToDate = sdkSynchronizer.latestState().syncStatus else { return }
+                        await migrationManager.advance(.afterSync)
+                    }
                 )
 
             case .home(.torSetupTapped(let settingsView)):

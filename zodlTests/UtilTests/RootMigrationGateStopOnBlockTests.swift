@@ -675,4 +675,72 @@ import Testing
 
         await teardown(store)
     }
+
+    // MARK: - Liveness: flowFinished drives the edge a mid-session commit missed
+
+    /// The confirm-after-edge wedge (field-caught 2026-08-02): a run committed mid-session, on a
+    /// wallet already idling at the tip, has missed this app-open's one `.upToDate` edge — no
+    /// further edge is coming, and `.prove` is dischargeable at `.afterSync` alone, so the run's
+    /// FIRST prove would wait for the next app-open while every tick defers it as `.wrongPhase`.
+    /// `flowFinished` must run the driver once at the phase the commit missed.
+    @Test func flowFinishedOnAnAtTipWalletDrivesTheAfterSyncPhaseOnce() async {
+        resetSharedResumeFlag()
+        let stopCalls = LockIsolated(0)
+        let testClock = TestClock()
+        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let store = makeStore(
+            stopCalls: stopCalls,
+            syncStatus: SyncStatus.upToDate,
+            mode: MigrationMode.privateScheduled,
+            isManualDelivery: false,
+            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            testClock: testClock
+        )
+        store.dependencies.migrationManager.advance = { phase in
+            advancePhases.withValue { $0.append(phase) }
+            return MigrationStepVerdict.idle
+        }
+
+        await store.send(.migrationCoordFlow(.flowFinished))
+        await waitUntil { advancePhases.value.contains(MigrationOpenPhase.afterSync) }
+
+        #expect(
+            advancePhases.value.filter { $0 == MigrationOpenPhase.afterSync }.count == 1,
+            "flowFinished on an at-tip wallet must drive the driver exactly once at .afterSync — the edge the commit missed"
+        )
+
+        await teardown(store)
+    }
+
+    /// The complementary half of the guard: mid-sync, the coming `.upToDate` edge owns the
+    /// `.afterSync` drive (`didJustReachUpToDate` in `synchronizerStateChanged`) — flowFinished
+    /// must not pre-empt it against a stale tip.
+    @Test func flowFinishedWhileStillSyncingLeavesTheDriveToTheComingEdge() async {
+        resetSharedResumeFlag()
+        let stopCalls = LockIsolated(0)
+        let testClock = TestClock()
+        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let store = makeStore(
+            stopCalls: stopCalls,
+            syncStatus: SyncStatus.syncing(0.5, false),
+            mode: MigrationMode.privateScheduled,
+            isManualDelivery: false,
+            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            testClock: testClock
+        )
+        store.dependencies.migrationManager.advance = { phase in
+            advancePhases.withValue { $0.append(phase) }
+            return MigrationStepVerdict.idle
+        }
+
+        await store.send(.migrationCoordFlow(.flowFinished))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        #expect(
+            !advancePhases.value.contains(MigrationOpenPhase.afterSync),
+            "mid-sync, the coming .upToDate edge owns the .afterSync drive — flowFinished must leave it alone"
+        )
+
+        await teardown(store)
+    }
 }
