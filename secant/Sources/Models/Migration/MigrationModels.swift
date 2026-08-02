@@ -166,8 +166,20 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     ///
     /// Proving is the one row-level state that genuinely runs on this device, for tens of seconds,
     /// and stops the moment the app closes — so it keeps the spinner.
+    ///
+    /// NARROWED 2026-08-02, from a field screenshot, alongside the caption it sits beside (see
+    /// `MigrationStatusView`'s `.isPreparing` case). `isPreparing` alone was wrong here for the same
+    /// reason: it means "the engine can prove this one NOW", and provability is gated on each
+    /// transfer's own anchor boundary, drawn on a jittered grid — so it fires OUT of send order. A
+    /// spinner on a row captioned "~16 mins" claims the app is busy with a transfer that will not
+    /// move for a quarter of an hour. True of the proof; meaningless to the user, who reads a
+    /// spinner as "this row is happening".
+    ///
+    /// A spinner belongs to a row whose OWN next step is blocked on work in progress: window open
+    /// (`.active`) or past (`.overdue`), waiting on its proof. Those are exactly the rows that
+    /// caption "Preparing transaction…", so caption and spinner stay in step by construction.
     var isInFlight: Bool {
-        isPreparing
+        isPreparing && (status == .active || status == .overdue)
     }
 
     /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,

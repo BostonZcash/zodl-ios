@@ -169,12 +169,31 @@ struct MigrationStatusView: View {
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationStatusSentRecently)
                 : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
-        case _ where row.isPreparing:
+        case .active where row.isPreparing, .overdue where row.isPreparing:
             // MOB-1466 (smart-banner pass, Figma C5). Below `.sent` — a mined transfer is finished
-            // whatever else it says — and above EVERY other case, `.overdue` included. A transfer
-            // whose window has passed while its proof is still outstanding used to caption
-            // "Overdue Nh ago", which is true and useless: the run is not stuck waiting for the
-            // user, it is being prepared, and this is the phase that needs them to stay.
+            // whatever else it says. A transfer whose window is open (or has passed) while its proof
+            // is still outstanding would otherwise caption "Ready now" / "Overdue Nh ago", both of
+            // which promise a send that cannot happen yet: the engine will refuse it until the proof
+            // exists. "Preparing transaction…" is the honest word for that gap.
+            //
+            // NARROWED 2026-08-02, field-caught from a screenshot. This used to be `case _ where
+            // row.isPreparing`, which caught PENDING rows too — and that put two different clocks in
+            // one column. `isPreparing` means "the engine can prove this one NOW", and provability
+            // is gated on each transfer's own anchor boundary, drawn on a jittered grid. It is
+            // therefore NOT in send order. The tester saw:
+            //
+            //     Transfer 7   ~15 mins
+            //     Transfer 8   Preparing transaction… ⟳
+            //     Transfer 9   Preparing transaction… ⟳
+            //     Transfer 10  ~19 mins
+            //
+            // and reasonably asked why some rows have a time and some do not. Worse than
+            // inconsistent, it implies 8 and 9 have jumped the queue. They have not — their proofs
+            // are simply being computed early, which is correct (prove early, send at the window)
+            // and completely invisible to when they actually send.
+            //
+            // A pending row's ETA is true whether or not its proof is being built, so it keeps it.
+            // Proving only earns the caption when it is the reason a row cannot do what it claims.
             return String(localizable: .migrationStatusPreparing)
         case .overdue:
             // hoursFromNow is A3's forward ETA; overdue copy needs elapsed, which rows don't carry — 0 keeps it truthful-enough as "just overdue".
