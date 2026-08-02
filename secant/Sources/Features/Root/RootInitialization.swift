@@ -459,7 +459,38 @@ extension Root {
                     ? .run { [migrationManager] _ in await migrationManager.reconcile() }
                     : .none
 
-                guard shouldResume else { return reconcileEffect }
+                // MOB-1466 (foreground wedge, field-caught 2026-08-02): THE STOP HALF of this
+                // handler's pair. `blocked == true` means "this wallet should not be syncing" —
+                // a ready broadcast is waiting, or a post-broadcast buffer is running — but the
+                // SDK enforces that only on a NEW start(); an already-running engine keeps
+                // completing passes, and every completion re-arms the app-side send window
+                // (`sendGate`'s 180 s from `lastSyncCompletedAt`) before it can expire. The tick
+                // lane then holds forever: nine `broadcast(id:)` reads over 15+ minutes, every
+                // tick `held(privacy buffer until …)` with a sliding deadline. Stopping the
+                // running sync here is what makes the silence the gate is waiting for actually
+                // arrive; the window expires within one buffer and the tick lane broadcasts.
+                //
+                // Scoped to the runs whose broadcasts RIDE ticks: `.privateScheduled` with manual
+                // delivery off. An `.immediate` run delivers from the open lanes and a manual-
+                // delivery run delivers by hand (its Send-now lane performs its own stop) —
+                // stopping their sync would strand them with no lane to use the silence.
+                //
+                // `stopSyncBeforeMigrationBroadcast()` (not a bare `stop()`): its `isSyncing()`
+                // guard makes the post-broadcast edge a no-op (that stop already happened), and
+                // it sets `migrationStoppedSyncForBroadcast` only when it genuinely stopped —
+                // which is exactly what arms this same handler's resume half for the `false`
+                // edge. One stop per false->true transition (the `isGenuineChange` dedupe);
+                // the SDK's own start() throw backstops any restart attempt while blocked.
+                let stopEffect: Effect<Action> = isGenuineChange && isBlocked
+                    ? .run { [migrationManager, sdkSynchronizer] _ in
+                        guard migrationManager.migrationMode(nil) == MigrationMode.privateScheduled,
+                              !migrationManager.isManualDelivery(nil)
+                        else { return }
+                        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                    }
+                    : .none
+
+                guard shouldResume else { return .merge(reconcileEffect, stopEffect) }
 
                 state.syncDeferredByMigrationGate = false
                 $migrationStoppedSyncForBroadcast.withLock { $0 = false }
