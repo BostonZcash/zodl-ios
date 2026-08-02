@@ -402,7 +402,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
     /// uses.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
-        await MigrationTrace.timed("bannerVariant") { await bannerVariantUntimed(accountUUID: accountUUID) }
+        // The actor-starvation guard — see `migrationTransfers`. The banner depends on the same
+        // `SlipstreamSynchronizer` actor the prove sweep occupies, and the field log caught it
+        // waiting 32.17 seconds THREE TIMES over in one session (three callers, all queued behind
+        // one sweep). During a sweep the banner cannot have changed, so the last one is the truthful
+        // answer and it costs nothing to give it immediately.
+        if isProveSweepInFlight,
+           let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
+           let cached = bannerCache.withLock({ $0[resolvedAccountUUID] }) {
+            return cached
+        }
+        let variant = await MigrationTrace.timed("bannerVariant") { await bannerVariantUntimed(accountUUID: accountUUID) }
+        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id {
+            bannerCache.withLock { $0[resolvedAccountUUID] = variant }
+        }
+        return variant
     }
 
     /// See `bannerVariant` — the body, wrapped so a banner that takes seconds to decide says so.
@@ -653,6 +667,28 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// back to the W1 progress-only approximation, kept verbatim below.
     ///
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
+        // THE ACTOR-STARVATION GUARD (field-caught 2026-08-02: a 33-second blank screen).
+        //
+        // `SlipstreamSynchronizer` is an ACTOR, and `finalizeReadyMigrationTransfers` — the prove
+        // sweep — is one of its members. So is `migrationTransactionStatuses`, which every row and
+        // banner derivation below depends on. While a sweep runs, the actor's executor is occupied
+        // and EVERY UI read queues behind it:
+        //
+        //     [MIG s2 +2.46s]  advance step (afterSync): prove(id: 0, …)
+        //     [MIG s2 +35.80s] prove sweep: proved 2 transaction(s)
+        //     [MIG s2 +35.92s] 🐌 SLOW READ migrationTransfers took 33.45s
+        //     [MIG s2 +35.93s] 🐌 SLOW READ bannerVariant took 32.17s   (×3)
+        //
+        // Thirty-three seconds of blank screen with a spinner, which the tester correctly read as
+        // "never progresses" — while the run underneath was in fact progressing perfectly.
+        //
+        // Serving the cache here is not a degradation, it is the honest answer: the rows CANNOT have
+        // changed during the sweep, because the sweep is what would change them and it has not
+        // finished. The caller renders the snapshot with its "updating…" note, and the poke fired
+        // when the sweep completes brings the real values in.
+        if isProveSweepInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
+            return cached.transfers
+        }
         let rows = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
         // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
         // result is worth keeping: `[]` means "nothing derivable", and prefilling a screen with it
@@ -674,6 +710,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// nothing to show instantly and correctly falls back to the loading state; nothing here is ever
     /// the source of truth for a decision.
     private let rowsCache = OSAllocatedUnfairLock<[AccountUUID: MigrationRowsSnapshot]>(initialState: [:])
+
+    /// The last banner each account derived, kept for the same reason as `rowsCache` and consulted
+    /// by the same actor-starvation guard: a banner that takes 32 seconds to decide is a banner the
+    /// user never sees.
+    private let bannerCache = OSAllocatedUnfairLock<[AccountUUID: MigrationBannerVariant?]>(initialState: [:])
+
+    /// True for exactly the duration of a prove sweep — see the guard in `migrationTransfers`.
+    ///
+    /// Not a lock and deliberately not one: it never GATES the sweep, it only tells the read paths
+    /// that the actor they are about to await is busy for tens of seconds, so they should answer
+    /// from cache instead of queueing. A stale read of this flag costs one slow read or one
+    /// slightly-early fresh one; neither is a correctness problem.
+    private let proveSweepInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
+
+    var isProveSweepInFlight: Bool { proveSweepInFlight.withLock { $0 } }
+
+    func setProveSweepInFlight(_ inFlight: Bool) {
+        proveSweepInFlight.withLock { $0 = inFlight }
+    }
 
     /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
     /// screens behind the banner wait on THIS, and a blank screen with a spinner is this function
@@ -1652,6 +1707,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // post-sweep `reconcile()`, i.e. exactly when it stopped being true. Proving is chunked
         // (utility QoS) and takes seconds to tens of seconds; this is the window the banner exists
         // for. A poke is a re-send of the account's current subject value — cheap, idempotent.
+        // WARM THE CACHE BEFORE TAKING THE ACTOR, then flag. Order is the whole fix.
+        //
+        // The poke below asks every subscriber to re-derive. Until 08-02 that derive raced the sweep
+        // and LOST — it queued on the same actor and returned 33 seconds later, which is precisely
+        // the blank screen the poke was added to prevent. Deriving first, while the actor is still
+        // free, means the poke is answered instantly from a cache that is milliseconds old; the
+        // guard in `bannerVariant`/`migrationTransfers` then keeps every later read off the actor
+        // until the sweep is done.
+        for accountUUID in accountUUIDs {
+            _ = await bannerVariant(accountUUID: accountUUID)
+            _ = await migrationTransfers(accountUUID: accountUUID)
+        }
+        setProveSweepInFlight(true)
+        defer { setProveSweepInFlight(false) }
+
         for accountUUID in accountUUIDs {
             pokeStateEvent(for: accountUUID)
         }
