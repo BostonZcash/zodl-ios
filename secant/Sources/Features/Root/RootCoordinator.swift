@@ -284,7 +284,15 @@ extension Root {
                 // coming, which is exactly how a completed manual migration was left advertising
                 // itself on the Home screen (field-caught 2026-07-29). Harmless when nothing
                 // changed — the re-read returns the same variant and re-renders in place.
-                return .send(.home(.smartBanner(.migrationReevaluationRequested)))
+                //
+                // MOB-1466: the flow that just closed may have COMMITTED a scheduled run mid-session,
+                // and the tick loop only spawns at app-open — re-spawn it here too (idempotent,
+                // self-guarding: the off switch, activation, and scheduled-candidate checks all live
+                // inside the effect itself).
+                return .merge(
+                    .send(.home(.smartBanner(.migrationReevaluationRequested))),
+                    migrationTickLoopEffect(state: state)
+                )
 
             case .home(.torSetupTapped(let settingsView)):
                 state.torSetupState = .initial

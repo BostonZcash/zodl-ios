@@ -69,6 +69,10 @@ struct Root {
         /// (`cancelInFlight: true`, so a fresh foreground always resets the countdown to zero) and
         /// cancelled at `.appDelegate(.didEnterBackground)`. See `migrationTickLoopEffect(state:)`.
         var migrationTickCancelId = UUID()
+        /// MOB-1466: the blocked-edge stop's attribution-probe cancel id — cancelled on the gate's
+        /// false edge, since the probe's work is moot once sync is no longer blocked. See
+        /// `.migrationSyncGateChanged`'s stop half.
+        var migrationGateStopProbeCancelId = UUID()
         /// MOB-1466: how many `.migrationTick` wake-ups THIS loop instance has seen — effect-adjacent
         /// bookkeeping for the heartbeat log line (`.migrationTick`'s handler), not itself read by any
         /// decision. Deliberately never reset except by a fresh `Root.State` — an occasional

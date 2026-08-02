@@ -49,6 +49,10 @@ extension Root {
         /// effect's leading guard), while the app-open pokes are a separate lane and keep working.
         /// Surfaced to reducers/tests as `DependencyValues.migrationTickInterval`.
         static let migrationTickInterval: Swift.Duration = .zero
+        /// The attribution probe's attempt budget — with the interval below, ~3.5 min covering the estimated-vs-scanned tip skew.
+        static let migrationGateStopProbeAttempts = 10
+        /// The blocked-edge stop's attribution probe: wait between `migrationAdvanceStep` reads — 10 attempts at this interval is ~3.5 min.
+        static let migrationGateStopProbeInterval: Swift.Duration = .seconds(20)
         /// How many ticks between "the loop is alive" heartbeat lines — ~10 minutes at the interval
         /// above. Approximate on purpose (see `migrationTickCount`'s doc): the log line only ever
         /// claims the loop is running, never a precise cadence.
@@ -458,6 +462,11 @@ extension Root {
                 let reconcileEffect: Effect<Action> = isGenuineChange
                     ? .run { [migrationManager] _ in await migrationManager.reconcile() }
                     : .none
+                // The probe (below) is moot once the gate unblocks — the false edge is also the
+                // resume half's edge, and a stop landing AFTER resume would re-strand sync.
+                let probeCancelEffect: Effect<Action> = isGenuineChange && !isBlocked
+                    ? .cancel(id: state.migrationGateStopProbeCancelId)
+                    : .none
 
                 // MOB-1466 (foreground wedge, field-caught 2026-08-02): THE STOP HALF of this
                 // handler's pair. `blocked == true` means "this wallet should not be syncing" —
@@ -481,12 +490,14 @@ extension Root {
                 // `migrationTickLoopEffect(state:)` scopes itself by
                 // (`MigrationDerivations.candidateAccountUUIDs`), not just the selected account —
                 // a second candidate's scheduled run must be able to stop sync even when the
-                // selected account is immediate-mode or none is selected. Residual gap, not
-                // solved here: with two eligible candidates where only a manual-delivery
-                // account's ready broadcast is what is blocking the gate, this can still stop
-                // sync for the OTHER eligible account, pausing it for a broadcast nothing
-                // automatic will send — attributing the gate to the specific account that tripped
-                // it needs SDK surface this does not add.
+                // selected account is immediate-mode or none is selected. Attribution is no
+                // longer a residual gap: the probe below reads each candidate's OWN
+                // `migrationAdvanceStep`, the per-account view the wallet-wide gate itself does
+                // not have, and only stops sync once a tick-deliverable candidate's step answers
+                // `.broadcast` — a manual-delivery or immediate account's ready broadcast can
+                // still be what tripped the gate, and in that shape the probe exhausts its
+                // attempts and deliberately leaves sync running rather than pausing a candidate
+                // for a broadcast nothing automatic will send.
                 //
                 // Also gated on the tick loop's own off switch (`migrationTickInterval >
                 // Swift.Duration.zero`, the same dependency `migrationTickLoopEffect(state:)`
@@ -503,7 +514,11 @@ extension Root {
                 // genuinely stopped something — which is exactly what arms this same handler's
                 // resume half for the `false` edge. One stop per false->true transition (the
                 // `isGenuineChange` dedupe); the SDK's own start() throw backstops any restart
-                // attempt while blocked.
+                // attempt while blocked. Merged into the same effect: a re-spawn of
+                // `migrationTickLoopEffect(state:)`, idempotent and self-guarding, because a run
+                // can be COMMITTED mid-session with no loop yet running (the loop only spawns at
+                // app-open) — a stop with no lane left to consume its silence would strand sync
+                // instead of freeing it.
                 let tickLoopCanConsumeTheStop = migrationTickInterval > Swift.Duration.zero
                 let stopEffect: Effect<Action>
                 // Short-circuited deliberately, not pre-computed: `migrationMode`/
@@ -517,25 +532,70 @@ extension Root {
                         selectedAccountUUID: state.selectedWalletAccount?.id,
                         walletAccounts: state.walletAccounts
                     )
-                    let hasStoppableCandidate = accountUUIDs.contains { accountUUID in
+                    let stoppableCandidateUUIDs = accountUUIDs.filter { accountUUID in
                         migrationManager.migrationMode(accountUUID) == MigrationMode.privateScheduled
                             && !migrationManager.isManualDelivery(accountUUID)
                     }
-                    stopEffect = hasStoppableCandidate
-                        ? .run { [sdkSynchronizer] _ in
-                            await sdkSynchronizer.stopStartedSyncForMigrationGate()
-                        }
-                        : .none
+                    stopEffect = stoppableCandidateUUIDs.isEmpty
+                        ? .none
+                        : .merge(
+                            // THE CONSUMER LANE, GUARANTEED ALIVE. The tick loop spawns at
+                            // app-open/foreground and self-cancels on a `.noRun` verdict — a run
+                            // COMMITTED mid-session has no loop until the next open, so a stop
+                            // armed for it would pause sync with nothing left to use the
+                            // silence. Re-spawning here (idempotent — `cancelInFlight: true`
+                            // restarts the 30 s countdown) pins the invariant instead of the
+                            // schedule: whenever a stop can arm, the lane that consumes it is
+                            // running.
+                            migrationTickLoopEffect(state: state),
+                            .run { [sdkSynchronizer, continuousClock] _ in
+                                // THE ATTRIBUTION PROBE. The SDK's gate is wallet-wide; a
+                                // manual-delivery or immediate account's ready broadcast can be
+                                // what blocked it, and pausing sync for a send nothing automatic
+                                // performs would strand the wallet. `migrationAdvanceStep` IS the
+                                // per-account view the gate lacks: step priority puts
+                                // `.broadcast` first, so `.broadcast(id:)` for an account means
+                                // exactly "proved, schedule-due" — the same predicate the gate's
+                                // ready-broadcast check sees. Stop only when a TICK-DELIVERABLE
+                                // account answers `.broadcast`.
+                                //
+                                // Probed, not read once: the gate can flip on the wall-clock
+                                // ESTIMATED tip while the step still reads the scanned tip — sync
+                                // is still running while this probes, so the step catches up
+                                // within a block or two. Ten 20 s attempts (~3.5 min) cover that
+                                // skew with margin; exhausting them means the blocker belongs to
+                                // a non-deliverable account, and sync is deliberately left
+                                // running — today's behavior for exactly that case. Cancelled by
+                                // the gate's false edge (the probe's work is moot once unblocked).
+                                for attempt in 0..<Root.Constants.migrationGateStopProbeAttempts {
+                                    for accountUUID in stoppableCandidateUUIDs {
+                                        let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+                                        if case .broadcast = step {
+                                            await sdkSynchronizer.stopStartedSyncForMigrationGate()
+                                            return
+                                        }
+                                    }
+                                    if attempt < Root.Constants.migrationGateStopProbeAttempts - 1 {
+                                        try await continuousClock.sleep(for: Root.Constants.migrationGateStopProbeInterval)
+                                    }
+                                }
+                                LoggerProxy.event(
+                                    "[MIG] blocked gate: no tick-deliverable account answers .broadcast after probing — leaving sync running (manual/immediate blocker)"
+                                )
+                            }
+                            .cancellable(id: state.migrationGateStopProbeCancelId, cancelInFlight: true)
+                        )
                 } else {
                     stopEffect = .none
                 }
 
-                guard shouldResume else { return .merge(reconcileEffect, stopEffect) }
+                guard shouldResume else { return .merge(reconcileEffect, stopEffect, probeCancelEffect) }
 
                 state.syncDeferredByMigrationGate = false
                 $migrationStoppedSyncForBroadcast.withLock { $0 = false }
                 return .merge(
                     reconcileEffect,
+                    probeCancelEffect,
                     // A broadcast just landed (or failed) — the next window moved either way.
                     .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         await migrationManager.armNextWindowNotifications(accountUUID)
