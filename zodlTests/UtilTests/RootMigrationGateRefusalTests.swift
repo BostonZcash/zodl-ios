@@ -122,9 +122,17 @@ import Testing
             $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
 
             $0.migrationManager.visitKind = { visitKind }
-            $0.migrationManager.runBroadcastSession = {
-                calls.withValue { $0.append("runBroadcastSession") }
-                return true
+            // MOB-1466 (2026-08-02): the refusal handlers discharge the engine's step through the
+            // DRIVER now, not by calling `runBroadcastSession` directly — the broadcast is what the
+            // driver does when the engine's answer is `.broadcast`. Recording the driver keeps every
+            // claim below intact and adds the phase, which is the ZIP 318 property.
+            //
+            // Counts matter here, not just presence: the sync branch calls the driver ONCE before
+            // `start()` on every open, so "the refusal ran a broadcast session" is now "the driver
+            // ran a SECOND time, from the catch" — see `advanceCalls` at each assertion.
+            $0.migrationManager.advance = { phase in
+                calls.withValue { $0.append("advance:\(phase)") }
+                return .broadcast(id: 1)
             }
 
             $0.sdkSynchronizer = .mocked(
@@ -158,6 +166,14 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
+    /// How many times the driver ran at `.beforeSync`. The sync branch calls it once before
+    /// `start()` on EVERY open, so a gate refusal — which discharges the engine's step from the
+    /// catch — shows up as at least a second call (the gate's own reopen->retryStart resume can
+    /// legitimately drive several more), while a non-gate error shows EXACTLY the first.
+    private func advanceCalls(_ calls: LockIsolated<[String]>) -> Int {
+        calls.value.filter { $0 == "advance:beforeSync" }.count
+    }
+
     // MARK: - Cold launch: gate refusal is treated as the broadcast-session signal, not a fatal error
 
     @Test func coldLaunchGateRefusalRunsBroadcastSessionInsteadOfFailingInit() async throws {
@@ -176,7 +192,10 @@ import Testing
             timeout: .seconds(5)
         )
 
-        #expect(calls.value.contains("runBroadcastSession"), "the refusal must be treated as a broadcast session")
+        #expect(
+            advanceCalls(calls) >= 2,
+            "the refusal must discharge the engine step, on top of the unconditional pre-start driver call"
+        )
         #expect(store.state.alert == nil, "a gate refusal must not surface the fatal init alert")
         #expect(store.state.appInitializationState != .failed, "a gate refusal must not mark initialization failed")
 
@@ -199,7 +218,7 @@ import Testing
             timeout: .seconds(5)
         )
 
-        #expect(!calls.value.contains("runBroadcastSession"), "a non-gate error must not be treated as a broadcast session")
+        #expect(advanceCalls(calls) == 1, "a non-gate error must not be treated as a broadcast session — only the pre-start call")
         #expect(store.state.appInitializationState == .failed)
         #expect(store.state.alert != nil)
 
@@ -303,7 +322,10 @@ import Testing
             timeout: .seconds(5)
         )
 
-        #expect(calls.value.contains("runBroadcastSession"), "the refusal must be treated as a broadcast session")
+        #expect(
+            advanceCalls(calls) >= 2,
+            "the refusal must discharge the engine step, on top of the unconditional pre-start driver call"
+        )
 
         await drain(store)
     }
@@ -324,7 +346,7 @@ import Testing
             timeout: .seconds(5)
         )
 
-        #expect(!calls.value.contains("runBroadcastSession"), "a non-gate error must not be treated as a broadcast session")
+        #expect(advanceCalls(calls) == 1, "a non-gate error must not be treated as a broadcast session — only the pre-start call")
 
         await drain(store)
     }

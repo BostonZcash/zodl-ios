@@ -28,6 +28,14 @@
 //  So the tests below assert the sweeps RUN, on the path that matters (an account IS selected), and
 //  do not assert anything about what they return. Reaching them was the whole bug.
 //
+//  MOB-1466 (2026-08-02): the edge no longer hand-sequences prove-sweep/reconcile/re-arm. It calls
+//  `migrationManager.advance(.afterSync)`, which asks the engine what the run needs and discharges
+//  exactly that — the prove sweep is what it does when the answer is `.prove`, which on a healthy
+//  run at the tip it usually is. These tests moved to that seam with their claims intact, and gained
+//  one: the PHASE is now pinned too. `.afterSync` at this edge is a privacy property, not a detail —
+//  it is the only phase allowed to prove, and the one forbidden from broadcasting, because this
+//  session has already been on the wire.
+//
 
 import Foundation
 import Testing
@@ -57,17 +65,21 @@ import ComposableArchitecture
         return state.redacted
     }
 
-    /// Records which sweeps ran. `reconcile` is included because it is what refreshes the banner
-    /// after the sweeps — a run whose proofs land but whose UI never updates is its own bug.
+    /// Records every driver call and the phase it ran at. The phase matters as much as the count:
+    /// a `.beforeSync` call at this edge would mean a session that has already synced was about to
+    /// be allowed to broadcast, which is the exact correlation ZIP 318 forbids.
     private struct SweepSpy: Sendable {
-        let proveSweeps = LockIsolated(0)
-        let reconciles = LockIsolated(0)
+        let phases = LockIsolated<[MigrationOpenPhase]>([])
+
+        var afterSyncCalls: Int { phases.value.filter { $0 == .afterSync }.count }
 
         func install(_ values: inout DependencyValues) {
             var client = MigrationManagerClient.noOp
             client.recordSyncCompleted = { }
-            client.runProveSweep = { proveSweeps.withValue { $0 += 1 }; return 0 }
-            client.reconcile = { reconciles.withValue { $0 += 1 } }
+            client.advance = { phase in
+                phases.withValue { $0.append(phase) }
+                return .proved(count: 0)
+            }
             client.armNextWindowNotifications = { _ in }
             values.migrationManager = client
         }
@@ -89,10 +101,13 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.proveSweeps.value > 0 && spy.reconciles.value > 0 }
+        await waitUntil { spy.afterSyncCalls > 0 }
 
-        #expect(spy.proveSweeps.value == 1, "the prove sweep is what produces the proofs the engine keeps asking for")
-        #expect(spy.reconciles.value == 1, "without reconcile the proofs land and no surface ever says so")
+        #expect(spy.afterSyncCalls == 1, "the edge is where the engine gets asked what the run needs next")
+        #expect(
+            !spy.phases.value.contains(.beforeSync),
+            "a session that has already synced must never reach the phase that may broadcast"
+        )
     }
 
     /// The edge fires ONCE per arrival at the tip, not on every tick while already synced — the
@@ -110,12 +125,12 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.proveSweeps.value > 0 }
+        await waitUntil { spy.afterSyncCalls > 0 }
         store.send(.synchronizerStateChanged(Self.upToDateState()))
         store.send(.synchronizerStateChanged(Self.upToDateState()))
         try? await Task.sleep(nanoseconds: 200_000_000)
 
-        #expect(spy.proveSweeps.value == 1, "three ticks at the tip, one arrival")
+        #expect(spy.afterSyncCalls == 1, "three ticks at the tip, one arrival")
     }
 
     /// The path that always worked keeps working — no account, still swept. Kept so the fix reads as
@@ -131,9 +146,9 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.proveSweeps.value > 0 }
+        await waitUntil { spy.afterSyncCalls > 0 }
 
-        #expect(spy.proveSweeps.value == 1)
+        #expect(spy.afterSyncCalls == 1)
     }
 }
 

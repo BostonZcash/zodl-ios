@@ -180,4 +180,57 @@ import ZcashLightClientKit
 
         #expect(route != .statusResume)
     }
+
+    /// The banner half of the same fix, and the one case that would otherwise have slipped through.
+    ///
+    /// A prove stall deliberately clears `isPreparing` on the rows — that is how the "Keep Zodl
+    /// open" ask gets dropped when staying open cannot help. But clearing it also drops the banner
+    /// out of its `.preparing` arm, straight into the `hasOverdue` one: "Transfer N is waiting · tap
+    /// to reschedule or send now", for a run where rescheduling re-draws heights the engine cannot
+    /// meet and Send now is answered `awaitingProof`. Two dead actions advertised over a screen that
+    /// (correctly) no longer offers either.
+    @Test func aStalledRunDoesNotAdvertiseRescheduleOrSendNow() {
+        let stalled = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .inProgress(Self.progress()),
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(10_000_000_000),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: [],
+            isProvingStalled: true
+        )
+
+        let waiting = MigrationBannerVariant.transferWaiting(number: 1, torHold: false)
+        #expect(stalled?.title != waiting.title)
+
+        // …and the route it opens agrees: Progress, not Resume.
+        let route = Self.route(
+            state: .inProgress(Self.progress()),
+            hasOverdue: true,
+            advanceStep: .prove(id: 1, kind: .transfer(crossing: 0))
+        )
+        #expect(route == .statusProgress)
+    }
+
+    /// The guard is narrow: with proving healthy, an overdue transfer the engine IS offering still
+    /// gets its waiting banner. The fix suppresses a dead end; it must not remove a live one.
+    @Test func aHealthyOverdueRunStillGetsItsWaitingBanner() {
+        let healthy = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .inProgress(Self.progress()),
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(10_000_000_000),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: [],
+            isProvingStalled: false
+        )
+
+        #expect(healthy == .transferWaiting(number: 1, torHold: false))
+    }
 }

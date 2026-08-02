@@ -473,7 +473,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // MOB-1466: now only an ACCELERATOR — the durable `.broadcast` row is checked first.
             isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
             round: roundContext.round,
-            totalRounds: roundContext.totalRounds
+            totalRounds: roundContext.totalRounds,
+            // The same verdict the ROWS already consult to drop their "Preparing transaction…"
+            // caption. The banner needs it separately because that suppression is exactly what would
+            // otherwise let this arm fall through to "tap to reschedule or send now" — see the
+            // `hasOverdue` arm in `MigrationDerivations.bannerVariant`.
+            isProvingStalled: isProvingStalled
         )
 
         // The decision, always, with the two inputs that explain a surprising one. "No banner" was
@@ -2552,7 +2557,11 @@ enum MigrationDerivations {
         isTorHoldActive: Bool = false,
         isBroadcastInFlight: Bool = false,
         round: Int = 1,
-        totalRounds: Int? = nil
+        totalRounds: Int? = nil,
+        // Defaulted `false` so every existing caller and test keeps its exact behaviour: the stall
+        // is an exceptional state, and the ordinary answer to "has proving stalled?" is no. See the
+        // `hasOverdue` arm below for what it suppresses and why.
+        isProvingStalled: Bool = false
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
@@ -2697,13 +2706,24 @@ enum MigrationDerivations {
             // awaiting proof — deferring to the next sync visit". An action that cannot succeed,
             // offered in place of the one behaviour that helps.
             //
-            // The banner label is all that changes: `reentryRoute` still routes an overdue run to
-            // the Resume screen, so Reschedule and Send now remain one tap away for anyone who wants
-            // them — this stops ADVERTISING a dead end, it does not remove an exit.
+            // MOB-1466 (2026-08-02): `reentryRoute` now ranks the ENGINE'S STEP above `hasOverdue`,
+            // so an overdue run the engine is not offering a broadcast for lands on Progress rather
+            // than Resume. This arm has to move with it or the two surfaces disagree again.
             if isPreparingRun {
                 return MigrationBannerVariant.preparing
             }
-            if hasOverdue {
+            // `hasOverdue` has exactly two causes (see the SDK's own doc): a PROVED due transaction,
+            // and a due, dependency-satisfied but still unproved one. The first makes the engine's
+            // step `.broadcast`, where Resume and its Send now are exactly right. The second makes
+            // it `.prove`, which `isPreparingRun` above already caught — EXCEPT when proving has
+            // stalled, which deliberately clears `isPreparing` on the rows to drop the keep-open ask.
+            //
+            // That exception is the overnight state: twelve transfers past their heights, proving
+            // impossible, `isPreparingRun` false, and this arm offering "tap to reschedule or send
+            // now" for a run where neither does anything. Rescheduling re-draws heights the engine
+            // cannot meet; Send now is answered `awaitingProof`. The honest banner is the progress
+            // one, and it is also what the route now opens.
+            if hasOverdue && !isProvingStalled {
                 return MigrationBannerVariant.transferWaiting(
                     number: nextTransferNumber(transferRows: transferRows, progress: progress),
                     torHold: isTorHoldActive
