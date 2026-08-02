@@ -464,31 +464,71 @@ extension Root {
                 // a ready broadcast is waiting, or a post-broadcast buffer is running — but the
                 // SDK enforces that only on a NEW start(); an already-running engine keeps
                 // completing passes, and every completion re-arms the app-side send window
-                // (`sendGate`'s 180 s from `lastSyncCompletedAt`) before it can expire. The tick
-                // lane then holds forever: nine `broadcast(id:)` reads over 15+ minutes, every
-                // tick `held(privacy buffer until …)` with a sliding deadline. Stopping the
-                // running sync here is what makes the silence the gate is waiting for actually
-                // arrive; the window expires within one buffer and the tick lane broadcasts.
+                // (`sendGate`'s network-scaled buffer — up to 600 s mainnet, 180 s testnet —
+                // measured from `lastSyncCompletedAt`) before it can expire. The tick lane then
+                // holds forever: nine `broadcast(id:)` reads over 15+ minutes, every tick
+                // `held(privacy buffer until …)` with a sliding deadline — up to ~10 minutes of
+                // paused sync on mainnet before the tick lane can send. Stopping the running sync
+                // here is what makes the silence the gate is waiting for actually arrive; the
+                // window expires within one buffer and the tick lane broadcasts.
                 //
                 // Scoped to the runs whose broadcasts RIDE ticks: `.privateScheduled` with manual
                 // delivery off. An `.immediate` run delivers from the open lanes and a manual-
                 // delivery run delivers by hand (its Send-now lane performs its own stop) —
-                // stopping their sync would strand them with no lane to use the silence.
+                // stopping their sync would strand them with no lane to use the silence. The
+                // SDK's gate is WALLET-wide (`isMigrationSyncBlocked()` has no per-account view),
+                // so eligibility is checked over the same candidate set
+                // `migrationTickLoopEffect(state:)` scopes itself by
+                // (`MigrationDerivations.candidateAccountUUIDs`), not just the selected account —
+                // a second candidate's scheduled run must be able to stop sync even when the
+                // selected account is immediate-mode or none is selected. Residual gap, not
+                // solved here: with two eligible candidates where only a manual-delivery
+                // account's ready broadcast is what is blocking the gate, this can still stop
+                // sync for the OTHER eligible account, pausing it for a broadcast nothing
+                // automatic will send — attributing the gate to the specific account that tripped
+                // it needs SDK surface this does not add.
                 //
-                // `stopSyncBeforeMigrationBroadcast()` (not a bare `stop()`): its `isSyncing()`
-                // guard makes the post-broadcast edge a no-op (that stop already happened), and
-                // it sets `migrationStoppedSyncForBroadcast` only when it genuinely stopped —
-                // which is exactly what arms this same handler's resume half for the `false`
-                // edge. One stop per false->true transition (the `isGenuineChange` dedupe);
-                // the SDK's own start() throw backstops any restart attempt while blocked.
-                let stopEffect: Effect<Action> = isGenuineChange && isBlocked
-                    ? .run { [migrationManager, sdkSynchronizer] _ in
-                        guard migrationManager.migrationMode(nil) == MigrationMode.privateScheduled,
-                              !migrationManager.isManualDelivery(nil)
-                        else { return }
-                        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                // Also gated on the tick loop's own off switch (`migrationTickInterval >
+                // Swift.Duration.zero`, the same dependency `migrationTickLoopEffect(state:)`
+                // reads): with the loop disabled nothing will ever consume the silence this buys,
+                // so stopping here would strand sync for the rest of the foreground instead of
+                // helping it.
+                //
+                // `stopStartedSyncForMigrationGate()` (not `stopSyncBeforeMigrationBroadcast()`,
+                // the broadcast lanes' own stop): its predicate is "started" (`.syncing` OR
+                // `.upToDate`), not `isSyncing()` — the wedge is an engine idling AT the tip
+                // between blocks, where `isSyncing()` reads false at every tick, which is exactly
+                // why the broadcast lanes' guard could never serve this call site. Same contract
+                // as its sibling otherwise: sets `migrationStoppedSyncForBroadcast` only when it
+                // genuinely stopped something — which is exactly what arms this same handler's
+                // resume half for the `false` edge. One stop per false->true transition (the
+                // `isGenuineChange` dedupe); the SDK's own start() throw backstops any restart
+                // attempt while blocked.
+                let tickLoopCanConsumeTheStop = migrationTickInterval > Swift.Duration.zero
+                let stopEffect: Effect<Action>
+                // Short-circuited deliberately, not pre-computed: `migrationMode`/
+                // `isManualDelivery` must only be READ when a stop is otherwise on the table.
+                // Suites that drive `.migrationSyncGateChanged` without a `.privateScheduled`
+                // scenario in mind (e.g. `RootMigrationGateRefusalTests`) never stub either
+                // closure — calling them unconditionally would trap on every gate emission,
+                // not just the ones this handler's stop half actually cares about.
+                if isGenuineChange && isBlocked && tickLoopCanConsumeTheStop {
+                    let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+                        selectedAccountUUID: state.selectedWalletAccount?.id,
+                        walletAccounts: state.walletAccounts
+                    )
+                    let hasStoppableCandidate = accountUUIDs.contains { accountUUID in
+                        migrationManager.migrationMode(accountUUID) == MigrationMode.privateScheduled
+                            && !migrationManager.isManualDelivery(accountUUID)
                     }
-                    : .none
+                    stopEffect = hasStoppableCandidate
+                        ? .run { [sdkSynchronizer] _ in
+                            await sdkSynchronizer.stopStartedSyncForMigrationGate()
+                        }
+                        : .none
+                } else {
+                    stopEffect = .none
+                }
 
                 guard shouldResume else { return .merge(reconcileEffect, stopEffect) }
 
@@ -609,11 +649,12 @@ extension Root {
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
 
                 // Both migration gate feeds funnel into the SAME action under the SAME cancel id, so
-                // they start and stop together. The SDK's own stream only transitions on a
-                // SUCCESSFUL broadcast and dedupes internally; the app-side feed is what a
-                // broadcast-failure site nudges when it stopped sync for a broadcast that never
-                // reached a successful outcome. The seed read ahead of the stream is what makes a
-                // cold start resume a sync stopped by a broadcast in a previous session.
+                // they start and stop together. The SDK's own stream re-evaluates the wallet
+                // predicate on a ~15 s ticker (and immediately after a broadcast) and dedupes
+                // internally; the app-side feed is what a broadcast-failure site nudges when it
+                // stopped sync for a broadcast that never reached a successful outcome. The seed
+                // read ahead of the stream is what makes a cold start resume a sync stopped by a
+                // broadcast in a previous session.
                 let migrationSyncGateEffect = Effect.merge(
                     Effect.concatenate(
                         .run { [sdkSynchronizer] send in

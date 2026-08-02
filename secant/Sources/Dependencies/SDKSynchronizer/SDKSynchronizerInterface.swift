@@ -322,5 +322,30 @@ extension SDKSynchronizerClient {
         @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
         $migrationStoppedSyncForBroadcast.withLock { $0 = true }
     }
+
+    /// The migration GATE's stop — the sibling of `stopSyncBeforeMigrationBroadcast()` above, with
+    /// a deliberately different predicate. The broadcast lanes stop a scan that is IN FLIGHT
+    /// (`isSyncing()`), because that is what would correlate with their submit. The gate's stop
+    /// exists for the opposite state: a STARTED engine idling at the tip (`.upToDate`), completing
+    /// a pass on every new block — each completion re-arms the app-side send window, which is the
+    /// foreground broadcast wedge (field-caught 2026-08-02). `isSyncing()` is false there, so the
+    /// broadcast lanes' guard would no-op in exactly the state this call is for. "Started" here is
+    /// `.syncing` OR `.upToDate`; a `.stopped`/`.unprepared`/`.error` engine has nothing to stop,
+    /// and the resume flag must not be armed for a sync nobody paused (the same B12 contract as
+    /// the sibling).
+    func stopStartedSyncForMigrationGate() async {
+        let status = latestState().syncStatus
+        let isStarted: Bool
+        switch status {
+        case .syncing, .upToDate:
+            isStarted = true
+        default:
+            isStarted = false
+        }
+        guard isStarted else { return }
+        stop()
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+    }
 }
 
