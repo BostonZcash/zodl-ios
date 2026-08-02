@@ -85,6 +85,7 @@ import Testing
     private func makeStore(
         spy: TickSpy,
         testClock: TestClock<Swift.Duration>,
+        tickInterval: Swift.Duration = Root.Constants.migrationTickInterval,
         lastMigrationSyncGateBlocked: Bool = false,
         syncDeferredByMigrationGate: Bool = false
     ) -> TestStore<Root.State, Root.Action> {
@@ -106,6 +107,7 @@ import Testing
         } withDependencies: {
             $0.mainQueue = .immediate
             $0.continuousClock = testClock
+            $0.migrationTickInterval = tickInterval
 
             $0.exchangeRate = .noOp
             $0.autolockHandler = .noOp
@@ -394,6 +396,58 @@ import Testing
             },
             timeout: .seconds(5)
         )
+
+        await drain(store)
+    }
+
+    // MARK: - The zero switch (interval constant set to 0 disables the loop; opens unaffected)
+
+    /// Zero interval: the loop must never spawn from the launch-done site — no tick advance no
+    /// matter how far the clock runs.
+    @Test func zeroIntervalNeverSpawnsTheLoopFromLaunchDone() async {
+        let spy = TickSpy()
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock, tickInterval: Swift.Duration.zero)
+
+        await store.send(.initialization(.initializationSuccessfullyDone))
+
+        await testClock.advance(by: .seconds(600))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(spy.tickCalls == 0, "a zero interval must disable the loop entirely")
+
+        await drain(store)
+    }
+
+    /// Zero interval: the foreground spawn site is equally dead.
+    @Test func zeroIntervalNeverSpawnsTheLoopFromForeground() async {
+        let spy = TickSpy()
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock, tickInterval: Swift.Duration.zero)
+
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+
+        await testClock.advance(by: .seconds(600))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(spy.tickCalls == 0, "a zero interval must disable the foreground spawn site too")
+
+        await drain(store)
+    }
+
+    /// THE requirement that must survive the switch: with the loop disabled, an app-open still
+    /// pokes the driver — the foreground path runs its own `.beforeSync` advance exactly as before.
+    @Test func zeroIntervalKeepsTheForegroundPokeWorking() async {
+        let spy = TickSpy()
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock, tickInterval: Swift.Duration.zero)
+
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await waitUntil { spy.phases.value.contains(MigrationOpenPhase.beforeSync) }
+
+        #expect(
+            spy.phases.value.contains(MigrationOpenPhase.beforeSync),
+            "the open poke is a separate lane and must survive the zero switch"
+        )
+        #expect(spy.tickCalls == 0, "and still no tick, ever")
 
         await drain(store)
     }

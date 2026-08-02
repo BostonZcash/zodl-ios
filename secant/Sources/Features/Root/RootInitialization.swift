@@ -12,6 +12,30 @@ import Foundation
 
 /// In this file is a collection of helpers that control all state and action related operations
 /// for the `Root` with a connection to the app/wallet initialization and erasure of the wallet.
+
+// MARK: - MOB-1466: the tick loop's interval as a dependency
+
+/// MOB-1466: `Constants.migrationTickInterval`, surfaced as a dependency so tests can override it
+/// — including to `.zero`, the OFF switch (see `migrationTickLoopEffect(state:)`'s leading guard).
+/// The CONSTANT stays the single source of truth: both values below read it, and production never
+/// overrides this key. `testValue == liveValue` is deliberate for a plain configuration VALUE (no
+/// behavior to stub, nothing a forgotten override could silently fake) — existing suites keep the
+/// shipped 30s without naming this key at all.
+private enum MigrationTickIntervalKey: DependencyKey {
+    static let liveValue: Swift.Duration = Root.Constants.migrationTickInterval
+    static let testValue: Swift.Duration = Root.Constants.migrationTickInterval
+}
+
+extension DependencyValues {
+    /// The tick loop's period. `.zero` disables the automatic loop entirely; the app-open pokes
+    /// (`advance(.beforeSync)` at cold start/foreground, `advance(.afterSync)` at sync edges) are a
+    /// separate lane and are never affected.
+    var migrationTickInterval: Swift.Duration {
+        get { self[MigrationTickIntervalKey.self] }
+        set { self[MigrationTickIntervalKey.self] = newValue }
+    }
+}
+
 extension Root {
     enum Constants {
         static let udIsRestoringWallet = "udIsRestoringWallet"
@@ -20,14 +44,17 @@ extension Root {
         static let noAuthenticationWithinXMinutes = 15
         /// MOB-1466: the foreground migration tick loop's wake-up period — see
         /// `migrationTickLoopEffect(state:)`. `Swift.Duration`, not `ZcashLightClientKit`'s
-        /// generated protobuf `Duration`, which shadows it once that module is imported unqualified.
+        /// generated protobuf `Duration`, which shadows it once that module is imported
+        /// unqualified. ZERO IS THE OFF SWITCH: at `.zero` the loop never spawns at all (the
+        /// effect's leading guard), while the app-open pokes are a separate lane and keep working.
+        /// Surfaced to reducers/tests as `DependencyValues.migrationTickInterval`.
         static let migrationTickInterval: Swift.Duration = .seconds(30)
         /// How many ticks between "the loop is alive" heartbeat lines — ~10 minutes at the interval
         /// above. Approximate on purpose (see `migrationTickCount`'s doc): the log line only ever
         /// claims the loop is running, never a precise cadence.
         static let migrationTickHeartbeatEvery = 20
     }
-    
+
     enum InitializationAction {
         case appDelegate(AppDelegateAction)
         case checkBackupPhraseValidation
@@ -1341,6 +1368,14 @@ extension Root {
     /// (the `.migrationTick`/`.migrationTickAdvanced` cases above), which is what lets this effect be
     /// cancelled cleanly at any instant without ever leaving an in-flight `advance()` half-handled.
     func migrationTickLoopEffect(state: Root.State) -> Effect<Root.Action> {
+        // MOB-1466: THE OFF SWITCH, checked before anything else. `.zero` (set on
+        // `Constants.migrationTickInterval`, or injected by a test) means the automatic loop does
+        // not exist: no spawn, no timer, no engine reads — while the app-open pokes, a separate
+        // lane entirely, keep working (pinned by `zeroIntervalKeepsTheForegroundPokeWorking`).
+        guard migrationTickInterval > Swift.Duration.zero else {
+            return .none
+        }
+
         // `isIronwoodActivated` gated FIRST, as its own `guard`, deliberately — every OTHER Root
         // lifecycle test in the suite reaches this call site (it runs on every
         // `.initializationSuccessfullyDone`/`.willEnterForeground`), and most of them have no
@@ -1369,7 +1404,7 @@ extension Root {
             // full interval before its first element, and an app-open already just ran its own
             // `.beforeSync`/`.afterSync` pair moments ago (or is about to) — an immediate tick would
             // only ever race that, never add anything.
-            for await _ in continuousClock.timer(interval: Constants.migrationTickInterval) {
+            for await _ in continuousClock.timer(interval: migrationTickInterval) {
                 await send(.migrationTick)
             }
         }
