@@ -652,12 +652,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // read as "not available" per the derivation's own fallback precedence.
         let residual = (try? await sdkSynchronizer.residualAfterMigration(resolvedAccountUUID)) ?? nil
         let progress = await migrationProgress(accountUUID: resolvedAccountUUID)
+        // The `.complete` fallback — see the `dust` derivation. Read unconditionally rather than
+        // only at `.complete`: it is the same live balance read the banner already does on every
+        // derivation, and branching on state here would just make the two disagree.
+        let orchardBalance = await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
 
         return MigrationDerivations.summary(
             committedSchedule: committedSchedule,
             state: state,
             residual: residual,
-            progress: progress
+            progress: progress,
+            orchardBalance: orchardBalance
         )
     }
 
@@ -3306,11 +3311,15 @@ enum MigrationDerivations {
     /// caller) when available; while `state == .complete` and residual isn't, `progress
     /// .remainingOrchard` (whatever's left over at completion is the best available proxy); `.zero`
     /// otherwise.
+    /// - Parameter orchardBalance: the account's LIVE Orchard balance, the `.complete` fallback. See
+    ///   the `dust` derivation below for why `progress` cannot serve that role. Defaults to `.zero`
+    ///   so the many call sites that predate this keep their exact behaviour.
     static func summary(
         committedSchedule: MigrationCommittedSchedule,
         state: MigrationState,
         residual: Zatoshi?,
-        progress: MigrationProgress?
+        progress: MigrationProgress?,
+        orchardBalance: Zatoshi = .zero
     ) -> MigrationSummary {
         let transferred = committedSchedule.sentRecords.reduce(Zatoshi.zero) { $0 + $1.amount }
         let sentTransferIds = Set(committedSchedule.sentRecords.map { $0.transferId })
@@ -3320,7 +3329,23 @@ enum MigrationDerivations {
         if let residual {
             dust = residual
         } else if state == MigrationState.complete {
-            dust = progress?.remainingOrchard ?? Zatoshi.zero
+            // MOB-1458 (field-caught 2026-08-02): this fallback used to read
+            // `progress?.remainingOrchard`, and it could NEVER fire. The SDK's own contract for
+            // `migrationProgress` is explicit — "a terminal — complete or cancelled — run reports
+            // `nil`" — and this branch is reached only when `state == .complete`. So `progress` was
+            // nil by construction, the expression collapsed to `.zero`, and `dust` was always zero
+            // on the one screen that exists to resolve it.
+            //
+            // The cost was the whole done-flow: `MigrationComplete.State.hasDust` is `dust > 0`, so
+            // with zero dust the residual card, "Migrate anyway" and "Lock balance" all vanished and
+            // the screen showed a bare summary. That is exactly what the first tester reported —
+            // "only migration done, summary" — and it read as a missing feature rather than a bug,
+            // because the feature was fully built behind a predicate that could not become true.
+            //
+            // The live Orchard balance is the right fallback and was available all along: the banner
+            // has been printing it correctly at `.complete` throughout ("state complete, orchard
+            // 0,005" in the 08-02 completion log) via `orchardBalanceToMigrate`.
+            dust = orchardBalance
         } else {
             dust = Zatoshi.zero
         }
