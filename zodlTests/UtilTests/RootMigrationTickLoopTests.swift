@@ -85,7 +85,8 @@ import Testing
     private func makeStore(
         spy: TickSpy,
         testClock: TestClock<Swift.Duration>,
-        tickInterval: Swift.Duration = Root.Constants.migrationTickInterval,
+        // A literal, not Constants.migrationTickInterval: these tests exercise the loop, so they must not go blind when the shipped default is the .zero off switch.
+        tickInterval: Swift.Duration = .seconds(30),
         lastMigrationSyncGateBlocked: Bool = false,
         syncDeferredByMigrationGate: Bool = false
     ) -> TestStore<Root.State, Root.Action> {
