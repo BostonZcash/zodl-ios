@@ -49,6 +49,11 @@ enum MigrationTrace {
         case coldLaunch = "cold launch"
         case foreground = "foreground"
         case backgroundTask = "background task"
+        /// MOB-1466: a foreground migration TICK (Root's recurring 30s wake-up) reached a
+        /// `.broadcast` action — see `MigrationStepDriver.execute`'s tick-phase case. Distinguishes
+        /// a tick-triggered broadcast's own brief session from the ambient foreground session it
+        /// interrupts; every OTHER tick (nothing due, or held) begins no session at all.
+        case timer = "timer"
     }
 
     private struct Session {

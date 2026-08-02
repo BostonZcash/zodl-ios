@@ -18,6 +18,14 @@ extension Root {
         static let udIsResyncingWallet = "udIsResyncingWallet"
         static let udLeavesScreenOpen = "udLeaves_screen_open"
         static let noAuthenticationWithinXMinutes = 15
+        /// MOB-1466: the foreground migration tick loop's wake-up period — see
+        /// `migrationTickLoopEffect(state:)`. `Swift.Duration`, not `ZcashLightClientKit`'s
+        /// generated protobuf `Duration`, which shadows it once that module is imported unqualified.
+        static let migrationTickInterval: Swift.Duration = .seconds(30)
+        /// How many ticks between "the loop is alive" heartbeat lines — ~10 minutes at the interval
+        /// above. Approximate on purpose (see `migrationTickCount`'s doc): the log line only ever
+        /// claims the loop is running, never a precise cadence.
+        static let migrationTickHeartbeatEvery = 20
     }
     
     enum InitializationAction {
@@ -86,10 +94,14 @@ extension Root {
                 // which is what makes this call site immediate rather than waiting for a fresh
                 // sync tick to repopulate it via `.synchronizerStateChanged`.
                 presentIronwoodAnnouncementIfNeeded(state: &state, tip: sdkSynchronizer.latestState().latestBlockHeight)
+                // MOB-1466: "the open breaks the loop's sleep" — a fresh foreground always
+                // restarts the tick loop's 30s countdown from zero (`cancelInFlight: true` inside
+                // `migrationTickLoopEffect`), whichever branch below this open actually takes.
+                let migrationTickEffect = migrationTickLoopEffect(state: state)
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
-                    return .send(.initialization(.initialSetups))
+                    return .merge(migrationTickEffect, .send(.initialization(.initialSetups)))
                 } else {
-                    return .send(.initialization(.retryStart))
+                    return .merge(migrationTickEffect, .send(.initialization(.retryStart)))
                 }
                 
             case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID, let isTorFailure))):
@@ -138,7 +150,12 @@ extension Root {
                 state.isLockedInKeychainUnavailableState = false
                 return .merge(
                     .cancel(id: state.CancelStateId),
-                    .cancel(id: state.CancelTransactionsStateId)
+                    .cancel(id: state.CancelTransactionsStateId),
+                    // MOB-1466: the tick loop is a FOREGROUND-only mechanism — the app cannot poll
+                    // anything once backgrounded (there is no background lane), so its whole reason
+                    // to exist stops the instant sync itself does, on the same boundary. The next
+                    // foreground respawns it fresh if the spawn condition still holds.
+                    .cancel(id: state.migrationTickCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):
@@ -326,6 +343,69 @@ extension Root {
                 // `migrationStoppedSyncForBroadcast` never gets set either).
                 state.syncDeferredByMigrationGate = true
                 return .none
+
+            // MOB-1466: THE TICK LOOP's one wake-up. See `migrationTickLoopEffect(state:)` for how
+            // this got sent, and its own doc for why calling the driver lives HERE rather than in
+            // the loop's `.run` body: only a reducer case can return `.cancel`/`.send` in response
+            // to what the driver answers.
+            //
+            // I5 (RESUME INVARIANT): pre-arms `syncDeferredByMigrationGate` BEFORE the advance call
+            // that may broadcast — the same flag `.migrationGateDeferredSyncStart` already arms for
+            // the gate-refusal sites elsewhere in this file. Three sync states can exist the instant
+            // a tick's broadcast lands: (a) actively syncing — `stopSyncBeforeMigrationBroadcast`
+            // stops it and sets the shared `migrationStoppedSyncForBroadcast` flag itself, unchanged
+            // by this pre-arm; (b) already stopped-and-deferred — `syncDeferredByMigrationGate` was
+            // already true; (c) started but IDLE AT THE TIP — nothing for
+            // `stopSyncBeforeMigrationBroadcast` to stop, so NEITHER flag would otherwise get set by
+            // the broadcast itself, and once the SDK's own post-broadcast gate later clears,
+            // `.migrationSyncGateChanged(false)`'s `shouldResume` computation would find both flags
+            // false and never send `.retryStart` — sync stays unresumed for the rest of the
+            // foreground. (a) and (b) already pass bare (pinned in
+            // `RootMigrationTickLoopTests`/`RootMigrationGateRefusalTests`); this line is what makes
+            // (c) pass too.
+            //
+            // Unconditional rather than gated on "did the fast path hold": that answer is
+            // driver-internal (the plan stays pure — see `MigrationStepPlan`'s doc — and
+            // `MigrationStepVerdict.held`'s reason is a free-form string, not a structured signal
+            // worth pattern-matching on here). A QUIET tick pre-arms this flag for nothing, but that
+            // is harmless: the flag just sits `true`, unread, until SOME later genuine gate
+            // transition consumes it — at worst one extra, idempotent `.retryStart`.
+            case .migrationTick:
+                state.migrationTickCount += 1
+                let tickNumber = state.migrationTickCount
+                let logHeartbeat = tickNumber.isMultiple(of: Constants.migrationTickHeartbeatEvery)
+                return .concatenate(
+                    .send(.migrationGateDeferredSyncStart),
+                    .run { [migrationManager] send in
+                        let verdict = await migrationManager.advance(.tick)
+                        if logHeartbeat {
+                            LoggerProxy.event("\(MigrationManagerImpl.logTag) migration tick loop alive — last verdict: \(verdict)")
+                        }
+                        await send(.migrationTickAdvanced(verdict))
+                    }
+                )
+
+            case .migrationTickAdvanced(let verdict):
+                switch verdict {
+                // Terminal/empty: nothing is left for the loop to help with. Self-stop — the next
+                // foreground respawns it if a fresh run starts a new candidate.
+                case MigrationStepVerdict.complete, MigrationStepVerdict.noRun, MigrationStepVerdict.notApplicable:
+                    return .cancel(id: state.migrationTickCancelId)
+                // SUBSTANTIVE — the same set `MigrationStepVerdict.isQuietForTick` calls NOT quiet,
+                // esp. `.broadcast`: a tick just changed something about the run, so re-derive the
+                // banner rather than waiting for a sync transition that a tick, by construction,
+                // never causes. Reuses the SAME reevaluation `.migrationCoordFlow(.flowFinished)`
+                // already sends after a manual delivery (see `RootCoordinator.swift`) — harmless
+                // when nothing visibly changed, since the re-read just returns the same variant.
+                case MigrationStepVerdict.broadcast, MigrationStepVerdict.rebuilt, MigrationStepVerdict.needsUser,
+                     MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved:
+                    return .send(.home(.smartBanner(.migrationReevaluationRequested)))
+                // Quiet: nothing changed, and arming/logging already handled the rest inside the
+                // driver — see `advance(phase:)`'s tick-specific hygiene.
+                case MigrationStepVerdict.held, MigrationStepVerdict.idle, MigrationStepVerdict.deferredToPhase,
+                     MigrationStepVerdict.skipped:
+                    return .none
+                }
 
             case .migrationSyncGateChanged(let isBlocked):
                 @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
@@ -846,7 +926,11 @@ extension Root {
                     .send(.observeTransactions),
                     .send(.observeShieldingProcessor),
                     .send(.observeTorInit),
-                    .send(.refreshAutomaticServer)
+                    .send(.refreshAutomaticServer),
+                    // MOB-1466: the OTHER start/restart site — a completed launch is just as much
+                    // "the app is now open" as a foreground re-entry is. See `willEnterForeground`'s
+                    // identical call for the "the open breaks the loop's sleep" rationale.
+                    migrationTickLoopEffect(state: state)
                 )
                 
             case .initialization(.loadedWalletAccounts(let walletAccounts)):
@@ -1227,6 +1311,69 @@ extension Root {
         // `state.destinationState.destination = .home` in the `.phraseDisplay(.finishedTapped)` /
         // `.onboarding(.newWalletSuccessfulyCreated)` arm above.
         state.destinationState.destination = .ironwoodAnnouncement
+    }
+
+    // MARK: - MOB-1466: the foreground migration TICK LOOP
+
+    /// A `privateScheduled` migration run's broadcast opportunities used to come from app-opens
+    /// ALONE (`.beforeSync`) — an app left sitting open in the foreground for the ten-plus minutes
+    /// between transfer windows advanced nothing on its own, however long it stayed frontmost,
+    /// because nothing short of a fresh open ever asked the engine again. This effect closes that
+    /// gap: a recurring 30s wake-up (`.migrationTick`, handled above) for exactly as long as the app
+    /// stays open and a run exists that could use it.
+    ///
+    /// SPAWN CONDITION, re-derived fresh at every call site rather than cached in state: Ironwood
+    /// must be active AND at least one CANDIDATE account (the identical set
+    /// `MigrationStepDriver.advance` itself derives, via the same `MigrationDerivations
+    /// .candidateAccountUUIDs`) must be running `.privateScheduled`. An `.immediate`-only wallet has
+    /// nothing a tick could ever help with — see `MigrationStepPlan`'s tick column and the mode belt
+    /// in `executeBroadcast` — so spawning the loop for one would just be a silent no-op every 30s,
+    /// forever, for a wallet that will never have anything for it to do.
+    ///
+    /// `cancelInFlight: true` on the SAME `migrationTickCancelId` at every start/restart site is
+    /// "the open breaks the loop's sleep": both call sites below are lifecycle edges (a fresh
+    /// foreground, a just-completed launch) at which resetting the countdown to zero is exactly
+    /// right — there is no reason for a wake-up armed several minutes into a PREVIOUS foreground to
+    /// fire moments after a new one begins.
+    ///
+    /// The effect's own body only ever SENDS `.migrationTick` — ticking is all it does. Calling the
+    /// driver, deciding whether to keep going, and reacting to what it found are the REDUCER's job
+    /// (the `.migrationTick`/`.migrationTickAdvanced` cases above), which is what lets this effect be
+    /// cancelled cleanly at any instant without ever leaving an in-flight `advance()` half-handled.
+    func migrationTickLoopEffect(state: Root.State) -> Effect<Root.Action> {
+        // `isIronwoodActivated` gated FIRST, as its own `guard`, deliberately — every OTHER Root
+        // lifecycle test in the suite reaches this call site (it runs on every
+        // `.initializationSuccessfullyDone`/`.willEnterForeground`), and most of them have no
+        // reason to stub `migrationManager` at all. `migrationMode` has no macro-supplied default
+        // (unlike `isIronwoodActivated`, which safely defaults `false`), so it traps under
+        // `MigrationManagerClient.testValue` when called unstubbed — this guard must therefore
+        // short-circuit BEFORE `migrationMode` is ever reached, not merely list both conditions in
+        // one `guard a, b` (which still evaluates a `let` computed ahead of it regardless of `a`).
+        guard migrationManager.isIronwoodActivated() else {
+            return .none
+        }
+
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: state.selectedWalletAccount?.id,
+            walletAccounts: state.walletAccounts
+        )
+        let hasScheduledCandidate = accountUUIDs.contains { accountUUID in
+            migrationManager.migrationMode(accountUUID) == MigrationMode.privateScheduled
+        }
+        guard hasScheduledCandidate else {
+            return .none
+        }
+
+        return .run { send in
+            // The first tick fires 30s from NOW, never at t=0: `clock.timer(interval:)` sleeps a
+            // full interval before its first element, and an app-open already just ran its own
+            // `.beforeSync`/`.afterSync` pair moments ago (or is about to) — an immediate tick would
+            // only ever race that, never add anything.
+            for await _ in continuousClock.timer(interval: Constants.migrationTickInterval) {
+                await send(.migrationTick)
+            }
+        }
+        .cancellable(id: state.migrationTickCancelId, cancelInFlight: true)
     }
 
     // MARK: - PHASE 7: opening the migration flow from OUTSIDE it

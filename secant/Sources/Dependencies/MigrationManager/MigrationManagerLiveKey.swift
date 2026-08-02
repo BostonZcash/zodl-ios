@@ -266,10 +266,27 @@ actor MigrationManagerSerialExecutor {
     }
 }
 
+/// MOB-1466: state for `advance(phase:)`'s single-flight latch — see
+/// `MigrationManagerImpl.advanceLatch`'s doc for why it is a stored property on that class rather
+/// than an actor, and `MigrationStepDriver.swift` for the acquire/release functions that hold this
+/// lock.
+///
+/// FIFO queue of PARKED `.beforeSync`/`.afterSync` callers, mirroring
+/// ../zcash-swift-wallet-sdk's `OrchardMigration.serializedBroadcastFlow`'s own
+/// `isBroadcastFlowInFlight`/`broadcastFlowWaiters` pair — adjusted for a lock rather than an
+/// actor's isolation: an actor's isolation already serializes every access to those two vars by
+/// construction, so the SAME pair guarded by an explicit lock takes its place here. `.tick` callers
+/// never enter `waiters` at all — they try the lock once (`tryAcquireAdvanceLatch`) and yield
+/// (`.skipped`) rather than park, so this queue only ever holds callers that are GOING to run.
+struct MigrationAdvanceLatchState {
+    var isBusy = false
+    var waiters: [CheckedContinuation<Void, Never>] = []
+}
+
 /// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the per-account `stateEvents`
 /// subjects. `@unchecked Sendable`: the only mutable state is `gateStorage`'s own
-/// `OSAllocatedUnfairLock`-protected storage, the `serialExecutor` actor, plus the Combine subjects
-/// below, all of which are safe to share across isolation domains.
+/// `OSAllocatedUnfairLock`-protected storage, the `serialExecutor` actor, the `advanceLatch` lock,
+/// plus the Combine subjects below, all of which are safe to share across isolation domains.
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
@@ -357,6 +374,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// exists. It is also the re-entrancy guard: a second driver call for the same account while one
     /// is running is a no-op rather than a double submit.
     private let broadcastsInFlight = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
+
+    /// MOB-1466: single-flight latch guarding the WHOLE body of `advance(phase:)` — see
+    /// `MigrationStepDriver.swift`'s acquire/release functions for the mechanism, and its file
+    /// header (I1-I5) for why `advance` cannot simply overlap itself. A `.tick` fires every 30s from
+    /// Root's foreground loop and must never queue up behind a slower `.beforeSync`/`.afterSync`
+    /// call (or behind another tick) — it yields instead (`MigrationStepVerdict.skipped`) — while an
+    /// app-open's own `.beforeSync`/`.afterSync` call must never be silently dropped for arriving
+    /// mid-tick, so it waits its turn (FIFO) instead.
+    ///
+    /// `internal` (no access modifier), not `private`: Swift's `private` is FILE-scoped, and the
+    /// acquire/release functions that use this live in `MigrationStepDriver.swift`, a different
+    /// file — the same reason `gateStorage`/`scheduleStorage`/`snapshotStorage` above are `let`
+    /// rather than `private let`. `OSAllocatedUnfairLock`-guarded rather than an actor:
+    /// `MigrationManagerImpl` is a class, not an actor, and this state must live on IT (there is no
+    /// separate actor to isolate it on) — see `MigrationAdvanceLatchState`'s doc for how the
+    /// resulting check-under-lock / await-continuation-outside shape mirrors
+    /// ../zcash-swift-wallet-sdk's `OrchardMigration.serializedBroadcastFlow` despite the different
+    /// primitive.
+    let advanceLatch = OSAllocatedUnfairLock<MigrationAdvanceLatchState>(initialState: MigrationAdvanceLatchState())
 
     /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
     /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration

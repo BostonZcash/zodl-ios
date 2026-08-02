@@ -74,6 +74,45 @@ enum MigrationStepVerdict: Equatable, Sendable {
     case deferredToPhase
     /// A discharge was attempted and failed. Carries the reason; never swallowed.
     case failed(String)
+    /// MOB-1466: a `.tick` arrived while another `advance` call was already in flight, and yielded
+    /// without reading the engine at all — the single-flight latch's fast-reject path. Quiet by
+    /// construction (see `isQuietForTick`): a busy driver is not news the way a stalled or blocked
+    /// run is, and logging it at `.event` every time a 30s tick loses this race would be exactly
+    /// the noise the tick's own log hygiene exists to avoid. `.beforeSync`/`.afterSync` callers
+    /// never see this verdict — they wait their turn (FIFO) and run instead.
+    case skipped
+}
+
+extension MigrationStepVerdict {
+    /// Whether THIS verdict, produced at `.tick`, is quiet enough that the tick loop's wake-up
+    /// should be treated as a no-op: no re-arm (arming reflects the run's ROWS, and a quiet tick
+    /// changed none of them) and a `.debug`, not `.event`, log line (an idle tick every 30s must
+    /// not compete, in volume, with the app-open lines every other `[MIG]` reader filters for).
+    /// See `MigrationManagerImpl.advance(phase:)`'s tick-specific arming/log hygiene.
+    ///
+    /// EXHAUSTIVE BY CONSTRUCTION, the same discipline `MigrationStepPlan.action(for:phase:)` holds
+    /// (I1): a verdict added to this enum must be classified here before the project compiles, so a
+    /// new SUBSTANTIVE verdict can never silently fall quiet, and a new quiet one can never silently
+    /// start spamming `.event` every 30 seconds.
+    var isQuietForTick: Bool {
+        switch self {
+        case MigrationStepVerdict.notApplicable,
+             MigrationStepVerdict.noRun,
+             MigrationStepVerdict.held,
+             MigrationStepVerdict.idle,
+             MigrationStepVerdict.complete,
+             MigrationStepVerdict.deferredToPhase,
+             MigrationStepVerdict.skipped:
+            return true
+        case MigrationStepVerdict.broadcast,
+             MigrationStepVerdict.proved,
+             MigrationStepVerdict.rebuilt,
+             MigrationStepVerdict.resyncing,
+             MigrationStepVerdict.needsUser,
+             MigrationStepVerdict.failed:
+            return false
+        }
+    }
 }
 
 extension MigrationManagerImpl {
@@ -90,11 +129,28 @@ extension MigrationManagerImpl {
     ///
     /// Never throws. A migration read failure must not be able to brick ordinary wallet syncing, so
     /// every internal failure degrades to a logged `.failed` verdict and the wallet carries on.
+    ///
+    /// MOB-1466: SINGLE-FLIGHT, around the whole body below. `.tick` — Root's recurring 30s
+    /// foreground wake-up — tries the latch ONCE and yields (`.skipped`, no engine read at all) if
+    /// another `advance` is already running; `.beforeSync`/`.afterSync` — an app-open's own driver
+    /// calls — wait their turn (FIFO) instead, because an open's call must never be silently
+    /// dropped for arriving mid-tick. See `advanceLatch`'s doc and the acquire/release functions
+    /// below for the mechanism.
     @discardableResult
     func advance(phase: MigrationOpenPhase) async -> MigrationStepVerdict {
         guard isIronwoodActivated() else {
             return MigrationStepVerdict.notApplicable
         }
+
+        if phase == MigrationOpenPhase.tick {
+            guard tryAcquireAdvanceLatch() else {
+                LoggerProxy.debug("\(Self.logTag) ▸ session verdict (\(phase)): skipped — another advance is already in flight")
+                return MigrationStepVerdict.skipped
+            }
+        } else {
+            await acquireAdvanceLatch()
+        }
+        defer { releaseAdvanceLatch() }
 
         let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
             selectedAccountUUID: selectedWalletAccount?.id,
@@ -104,17 +160,37 @@ extension MigrationManagerImpl {
             return MigrationStepVerdict.notApplicable
         }
 
+        // MOB-1466: THE TICK FAST PATH — before any candidate/engine reads, consult the same
+        // privacy-buffer source `executeBroadcast` uses below. A tick fires every 30s; spending a
+        // per-account engine read on every one of them just to re-learn "the buffer is holding",
+        // which this cheap, wallet-wide, no-SDK-read check already knows, would make an idle tick
+        // far from free. `executeBroadcast` still re-checks the same gate once a broadcast is
+        // actually due (this is a fast REJECT, not a replacement for that check) — harmless and
+        // cheap either way.
+        if phase == MigrationOpenPhase.tick {
+            let gate = await sendGate()
+            if case let MigrationSendGate.waitUntil(gateUntil) = gate {
+                let reason = "privacy buffer until \(gateUntil) (\(Int(gateUntil.timeIntervalSinceNow))s)"
+                LoggerProxy.debug("\(Self.logTag) ▸ session verdict (\(phase)): held(\(reason))")
+                return MigrationStepVerdict.held(reason: reason)
+            }
+        }
+
         // ONE read of the engine, for every candidate account, feeding BOTH the wallet-wide session
         // decision and the per-account discharge below. The old code read `migrationAdvanceStep`
         // once in `visitKind` for the session decision and again inside `runBroadcastSession` for
         // the delivery, and a tip that moved between the two reads made them disagree.
         var steps: [(accountUUID: AccountUUID, step: MigrationAdvanceStep?)] = []
+        // MOB-1466: buffered, not logged immediately — a `.tick`'s log LEVEL depends on the verdict
+        // these reads feed into, which isn't known until `discharge` below returns. See the emission
+        // loop after it.
+        var stepLogLines: [String] = []
         for accountUUID in accountUUIDs {
             let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
             // THE key driver line, logged verbatim at both phases. A run sitting at 0-of-12 looks
             // identical whether the engine is saying `prove`, `waiting` or `broadcast` — this is the
             // line that tells those apart, and until 07-31 it was the one thing never written down.
-            LoggerProxy.event(
+            stepLogLines.append(
                 "\(Self.logTag) advance step (\(phase)): \(step.map { String(describing: $0) } ?? "none (no run)")"
             )
             steps.append((accountUUID, step))
@@ -122,19 +198,82 @@ extension MigrationManagerImpl {
 
         let verdict = await discharge(steps: steps, phase: phase)
 
+        // MOB-1466: LOG HYGIENE. A quiet `.tick` verdict — nothing changed, nothing needed the user
+        // — logs at `.debug`: every 30s, forever, while the app sits open with a scheduled run, is
+        // not a volume `.event` (read by default) should carry. A SUBSTANTIVE tick verdict (a
+        // broadcast, a rebuild, an escalation…) keeps `.event`, identically to `.beforeSync`/
+        // `.afterSync`, which always do (`isQuietForTick` is never consulted for them below).
+        let isQuietTick = phase == MigrationOpenPhase.tick && verdict.isQuietForTick
+        for line in stepLogLines {
+            isQuietTick ? LoggerProxy.debug(line) : LoggerProxy.event(line)
+        }
         // I2: every open ends with a verdict, printed. Including — especially including — the
         // sessions that did nothing.
-        LoggerProxy.event("\(Self.logTag) ▸ session verdict (\(phase)): \(verdict)")
+        let verdictLine = "\(Self.logTag) ▸ session verdict (\(phase)): \(verdict)"
+        isQuietTick ? LoggerProxy.debug(verdictLine) : LoggerProxy.event(verdictLine)
 
-        // Wake-ups are re-armed on EVERY path, not only the `.waiting` one. The schedule is a
-        // function of the run's rows, and a discharge that changed those rows (a broadcast, a
-        // rebuild) has invalidated whatever was armed before it. Arming after the discharge rather
-        // than instead of it is what keeps a poke pointing at the right event.
-        for accountUUID in accountUUIDs {
-            await armNextWindowNotifications(accountUUID: accountUUID)
+        // MOB-1466: ARMING HYGIENE. Wake-ups are re-armed on every `.beforeSync`/`.afterSync` path,
+        // not only the `.waiting` one — unchanged, see the doc this replaces. A QUIET `.tick`,
+        // though, changed none of the run's rows (nothing to re-derive a schedule from), so arming
+        // again would be pure repeated work for an identical answer; a SUBSTANTIVE tick verdict
+        // keeps arming, exactly like the two opens.
+        if !isQuietTick {
+            for accountUUID in accountUUIDs {
+                await armNextWindowNotifications(accountUUID: accountUUID)
+            }
         }
 
         return verdict
+    }
+
+    /// Non-blocking acquire for `.tick` callers — see `advance(phase:)`'s single-flight latch.
+    /// `true` means the latch is now held by THIS call; `false` means another `advance` is already
+    /// running and this caller must yield (`.skipped`) rather than park.
+    private func tryAcquireAdvanceLatch() -> Bool {
+        advanceLatch.withLock { state in
+            guard !state.isBusy else { return false }
+            state.isBusy = true
+            return true
+        }
+    }
+
+    /// FIFO blocking acquire for `.beforeSync`/`.afterSync` callers — mirrors
+    /// ../zcash-swift-wallet-sdk's `OrchardMigration.serializedBroadcastFlow`'s wait loop, adapted
+    /// from actor isolation to an explicit lock (see `MigrationAdvanceLatchState`'s doc).
+    ///
+    /// The busy check and the enqueue-or-resume decision happen in ONE `withLock` call rather than
+    /// two (check busy; if so, separately append a continuation) — splitting them would open a
+    /// window in which a concurrent `releaseAdvanceLatch()` observes an EMPTY waiter list between
+    /// the two calls and clears `isBusy`, stranding this continuation in the queue with nobody left
+    /// to resume it. Calling `continuation.resume()` from inside the lock is safe: `resume()` is
+    /// synchronous — it hands the continuation off, it does not itself suspend — so this never
+    /// violates "no `await` inside `withLock`" (`OSAllocatedUnfairLock.withLock`'s closure is
+    /// synchronous and could not compile an `await` inside it regardless).
+    private func acquireAdvanceLatch() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            advanceLatch.withLock { state in
+                if state.isBusy {
+                    state.waiters.append(continuation)
+                } else {
+                    state.isBusy = true
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    /// Releases the latch. When a caller is parked, ownership transfers DIRECTLY to the oldest one
+    /// (FIFO) rather than clearing `isBusy` and letting whoever gets there first win — that is what
+    /// keeps a `.tick` racing in from jumping the queue ahead of an app-open's own waiting call.
+    private func releaseAdvanceLatch() {
+        advanceLatch.withLock { state in
+            guard !state.waiters.isEmpty else {
+                state.isBusy = false
+                return
+            }
+            let next = state.waiters.removeFirst()
+            next.resume() // `isBusy` stays true — ownership transfers to the resumed waiter.
+        }
     }
 
     /// The per-account discharge loop. Returns the FIRST substantive verdict — the engine's steps are
@@ -176,7 +315,20 @@ extension MigrationManagerImpl {
     ) async -> MigrationStepVerdict {
         switch action {
         case let MigrationStepAction.broadcast(id):
-            return await executeBroadcast(id: id, accountUUID: accountUUID)
+            if phase == MigrationOpenPhase.tick {
+                // MOB-1466: a tick that reaches a broadcast action is a genuine, tick-triggered
+                // network event — the same kind of thing an app-open's own `.beforeSync` session
+                // already is — so it gets its own `[MIG]` session marker, distinguishing it from
+                // the ambient foreground session it interrupts. `tip` comes from the exact source
+                // every other `beginSession` call site uses (`sdkSynchronizer.latestState()`); the
+                // driver already depends on `sdkSynchronizer` for the engine reads above, so no new
+                // seam is needed to reach it. Begun here rather than only once the broadcast lands:
+                // "about to attempt" is the trigger, not "succeeded" — `executeBroadcast` below may
+                // still hold this (mode belt, manual delivery, the buffer), and that hold is itself
+                // worth its own session-scoped log lines.
+                MigrationTrace.beginSession(cause: MigrationTrace.Cause.timer, tip: sdkSynchronizer.latestState().latestBlockHeight)
+            }
+            return await executeBroadcast(id: id, accountUUID: accountUUID, phase: phase)
 
         case MigrationStepAction.prove:
             // The sweep is wallet-wide by construction (it walks every candidate account), so it
@@ -238,8 +390,23 @@ extension MigrationManagerImpl {
     /// buffer, the manual-delivery opt-out, the network snapshot and the failure routing.
     ///
     /// The driver deliberately does NOT reimplement any of that. It only translates the outcome
-    /// into a verdict, so that "held by the buffer" stops looking like "did nothing".
-    private func executeBroadcast(id: UInt32, accountUUID: AccountUUID) async -> MigrationStepVerdict {
+    /// into a verdict, so that "held by the buffer" stops looking like "did nothing". `phase` is
+    /// threaded through (rather than read from a stored property) so `MigrationStepPlan` stays
+    /// pure — the plan already decided this action is due; this is the one place that still needs
+    /// to know WHICH phase asked, for the mode belt below.
+    private func executeBroadcast(id: UInt32, accountUUID: AccountUUID, phase: MigrationOpenPhase) async -> MigrationStepVerdict {
+        // MOB-1466: THE MODE BELT. A tick is a broadcast opportunity ONLY for a run the user chose
+        // to run on a schedule (`.privateScheduled`) — see `MigrationStepPlan`'s tick-column doc. An
+        // `.immediate` run still gets its one delivery from the open lanes (`.beforeSync`); ticking
+        // it too would send the moment Ironwood activates rather than at the user's own chosen
+        // pace, on whatever 30s boundary the app happened to be foregrounded across. Checked BEFORE
+        // the manual-delivery read below: an immediate-mode account is never manual-delivery's
+        // business to begin with, and ordering it first keeps "why this tick held" from ever being
+        // misread as the user's own delivery preference.
+        if phase == MigrationOpenPhase.tick, migrationMode(accountUUID: accountUUID) != MigrationMode.privateScheduled {
+            return MigrationStepVerdict.held(reason: "immediate-mode run — ticks leave it to the open lanes")
+        }
+
         if gateStorage.isManualDelivery(for: accountUUID) {
             return MigrationStepVerdict.held(reason: "delivery is manual — transfer \(id) is left for the user to send")
         }

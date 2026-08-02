@@ -100,6 +100,41 @@ import ZcashLightClientKit
         #expect(MigrationStepPlan.action(for: nil, phase: .afterSync) == .nothing(.noRun))
     }
 
+    // MARK: - The tick column (MOB-1466): a foreground TICK is a broadcast opportunity
+
+    /// A tick reproduces exactly what `.beforeSync` already offers a due broadcast — one more
+    /// chance to deliver it, without a sync of its own. See the file header's tick-column note for
+    /// why that correlation story is what makes a tick safe to broadcast from at all.
+    @Test func tickBroadcastsADueTransfer() {
+        #expect(MigrationStepPlan.action(for: .broadcast(id: 5), phase: .tick) == .broadcast(id: 5))
+    }
+
+    /// Proving, rebuilding, and attention all stay pinned to the two moments that bracket an actual
+    /// sync. A tick runs no sync of its own, so none of the three gains a new discharge here — only
+    /// the phase check stands between them and the open/edge that already owns them.
+    @Test func tickDefersProveRebuildAndAttentionToTheOpensAndEdges() {
+        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+        let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
+
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
+    }
+
+    /// The two answers that never depended on a phase in the first place stay that way with a third
+    /// phase in play.
+    @Test func tickArmsWakeupsAndFinishesLikeEveryOtherPhase() {
+        #expect(MigrationStepPlan.action(for: .waiting, phase: .tick) == .armWakeups)
+        #expect(MigrationStepPlan.action(for: .complete, phase: .tick) == .finish)
+    }
+
+    /// No stored run reads the same at a tick as at either open — it is the benign answer, not a
+    /// deferral, everywhere `nil` shows up.
+    @Test func tickWithNoStoredRunIsNoRun() {
+        #expect(MigrationStepPlan.action(for: nil, phase: .tick) == .nothing(.noRun))
+    }
+
     // MARK: - Coverage: no step may go nowhere
 
     /// THE invariant, stated directly: across the two phases, EVERY engine step produces at least
