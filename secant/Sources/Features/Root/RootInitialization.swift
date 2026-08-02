@@ -48,7 +48,7 @@ extension Root {
         /// unqualified. ZERO IS THE OFF SWITCH: at `.zero` the loop never spawns at all (the
         /// effect's leading guard), while the app-open pokes are a separate lane and keep working.
         /// Surfaced to reducers/tests as `DependencyValues.migrationTickInterval`.
-        static let migrationTickInterval: Swift.Duration = .seconds(30)
+        static let migrationTickInterval: Swift.Duration = .zero
         /// How many ticks between "the loop is alive" heartbeat lines — ~10 minutes at the interval
         /// above. Approximate on purpose (see `migrationTickCount`'s doc): the log line only ever
         /// claims the loop is running, never a precise cadence.

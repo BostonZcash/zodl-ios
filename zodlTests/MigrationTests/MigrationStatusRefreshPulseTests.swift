@@ -111,4 +111,46 @@ import ComposableArchitecture
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
     }
+
+    /// Design pin, green by construction (Michal's scope decision, 2026-08-02): the tick loop's
+    /// OFF switch (`migrationTickInterval == .zero`) must NOT silence this screen's pulse — ETA
+    /// captions age with the wall clock whether or not the automatic loop exists. If someone later
+    /// wires the pulse to the switch, this is the test that names the decision they are reversing.
+    @Test func thePulseStillFiresWithTheTickLoopSwitchedOff() async {
+        let loadCount = LockIsolated(0)
+        let testClock = TestClock()
+        let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.continuousClock = testClock
+            $0.migrationTickInterval = Swift.Duration.zero
+
+            var client = MigrationManagerClient.noOp
+            client.migrationTransfers = { _ in
+                loadCount.withValue { $0 += 1 }
+                return []
+            }
+            client.migrationSummary = { _ in MigrationSummary.zero }
+            client.cachedTransferRows = { _ in nil }
+            client.isMigrationTorHoldActive = { _ in false }
+            client.stateEvents = { _ in Empty().eraseToAnyPublisher() }
+            $0.migrationManager = client
+
+            $0.sdkSynchronizer = .mocked(
+                migrationPrivacySyncBufferDuration: { 600 }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await waitUntil { loadCount.value == 1 }
+
+        await testClock.advance(by: .seconds(30))
+        await waitUntil { loadCount.value == 2 }
+        #expect(loadCount.value == 2, "the pulse is not the tick loop and must survive its off switch")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
 }

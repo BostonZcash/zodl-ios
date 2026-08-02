@@ -215,6 +215,12 @@ struct MigrationStatus {
         }
     }
 
+    /// MOB-1466: the open screen's re-derivation period — see `onAppear`'s refresh-pulse effect.
+    /// Deliberately its OWN constant, not `migrationTickInterval`: the tick loop's `.zero` off
+    /// switch must not silence this screen (ETA captions age with the wall clock either way) —
+    /// pinned by `thePulseStillFiresWithTheTickLoopSwitchedOff`.
+    private static let refreshPulseInterval: Swift.Duration = .seconds(30)
+
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.migrationManager) var migrationManager
@@ -275,7 +281,7 @@ struct MigrationStatus {
                     // whole rows), and cancelled with the screen. First pulse a full 30s in — the
                     // `loadStatus` above just ran.
                     .run { send in
-                        for await _ in continuousClock.timer(interval: .seconds(30)) {
+                        for await _ in continuousClock.timer(interval: MigrationStatus.refreshPulseInterval) {
                             await send(.refreshPulse)
                         }
                     }
