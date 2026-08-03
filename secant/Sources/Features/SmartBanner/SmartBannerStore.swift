@@ -563,12 +563,15 @@ struct SmartBanner {
                     // the latter wraps its send in its own `.run`, which only schedules that
                     // nested effect rather than awaiting it, so a second `await send(...)` right
                     // after it would race the close instead of running after it settles.
-                    return .run { send in
-                        await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
-                        await send(.evaluatePriority1)
-                    }
+                    return .merge(
+                        .run { send in
+                            await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                            await send(.evaluatePriority1)
+                        },
+                        syncGateDeclineRepollEffect(state: state)
+                    )
                 }
-                return .none
+                return syncGateDeclineRepollEffect(state: state)
 
             case .migrationStateChanged, .reevaluateMigrationOnActivationFlip, .migrationReevaluationRequested:
                 // Route an activation-day crossing (or a reorg back below the activation height),
@@ -634,7 +637,10 @@ struct SmartBanner {
                     // Goal 1's sync gate WIDENED this window, because "not caught up" outlives every
                     // pre-existing reason for nil. Measuring that is the point of this line.
                     MigrationTrace.event("migration DECLINED the banner slot — walking down to priority3")
-                    return .send(.evaluatePriority3)
+                    return .merge(
+                        .send(.evaluatePriority3),
+                        syncGateDeclineRepollEffect(state: state)
+                    )
                 }
                 state.migrationBannerVariant = variant
                 return .send(.triggerPriority(.priorityMigration))
@@ -922,15 +928,56 @@ struct SmartBanner {
                 await send(.migrationVariantUpdated(nil))
                 return
             }
-            for _ in 0..<Constants.migrationRepollMaxAttempts {
-                try await clock.sleep(for: .seconds(Constants.migrationRepollInterval))
-                if let polledVariant = await migrationManager.bannerVariant(accountUUID) {
-                    await send(.migrationVariantUpdated(polledVariant))
-                    return
-                }
-            }
+            await pollBannerVariantUntilAnswered(accountUUID: accountUUID, send: send)
         }
         .cancellable(id: cancelID, cancelInFlight: true)
+    }
+
+    /// The bounded poll shared by `postRestoreMigrationRecheckEffect` and
+    /// `syncGateDeclineRepollEffect`: every `migrationRepollInterval`, up to
+    /// `migrationRepollMaxAttempts` times, until `bannerVariant` answers non-nil — that answer
+    /// feeds the one `.migrationVariantUpdated` funnel. Cap reached ⇒ ends with no dispatch,
+    /// leaving whatever occupies the slot exactly as it stands.
+    private func pollBannerVariantUntilAnswered(accountUUID: AccountUUID?, send: Send<Action>) async {
+        for _ in 0..<Constants.migrationRepollMaxAttempts {
+            do {
+                try await clock.sleep(for: .seconds(Constants.migrationRepollInterval))
+            } catch {
+                return
+            }
+            if let polledVariant = await migrationManager.bannerVariant(accountUUID) {
+                await send(.migrationVariantUpdated(polledVariant))
+                return
+            }
+        }
+    }
+
+    /// MOB-1466 (field-caught 2026-08-03, at-tip cold launch): a migration decline made while the
+    /// Goal-1 sync gate is closed ("wallet not caught up") used to be FINAL until a later
+    /// `syncing → upToDate` STREAM transition re-asked — and that transition is losable: this
+    /// feature's stream subscription dies with `.onDisappear` (anything covering Home), and Root's
+    /// belt-funnel is a single read that can race the sync-completion reconcile's own work. In the
+    /// field run the first sync's completion produced no re-ask at all and the offer stayed
+    /// missing until the NEXT sync cycle, minutes later.
+    ///
+    /// So the decline itself arms the bounded repoll: once the wallet catches up, the next poll
+    /// answers non-nil and feeds the one `.migrationVariantUpdated` funnel — no stream edge
+    /// required. Scoped to a CLOSED gate on purpose: a gate-open decline is a real "nothing to
+    /// migrate" (banner retirement, spent-down Orchard) and polling it would be forty pointless
+    /// reads. Shares `CancelMigrationRepollId` with the post-restore arm — the two never apply at
+    /// once (`cancelInFlight` supersedes), and every existing teardown (`.onDisappear`, account
+    /// switch, the next sync-status transition) tears this one down identically.
+    private func syncGateDeclineRepollEffect(state: State) -> Effect<Action> {
+        guard state.featureFlags.migration,
+              migrationManager.isIronwoodActivated(),
+              sdkSynchronizer.latestState().syncStatus != .upToDate
+        else { return .none }
+        MigrationTrace.event("offer declined while sync gate closed — arming bounded recheck")
+        let accountUUID = state.selectedWalletAccount?.id
+        return .run { send in
+            await pollBannerVariantUntilAnswered(accountUUID: accountUUID, send: send)
+        }
+        .cancellable(id: state.CancelMigrationRepollId, cancelInFlight: true)
     }
 
     /// The pre-existing body of `.synchronizerStateChanged`, extracted verbatim except for the two

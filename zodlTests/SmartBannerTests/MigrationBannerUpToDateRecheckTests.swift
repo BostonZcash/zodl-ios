@@ -36,6 +36,10 @@ import Testing
             state.priorityContent = .priority8
             state.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: .syncing(1.0, true))
 
+            var upToDateState = SynchronizerState.zero
+            upToDateState.syncStatus = .upToDate
+            let upToDate = upToDateState
+
             let store = TestStore(initialState: state) {
                 SmartBanner()
             } withDependencies: {
@@ -44,11 +48,14 @@ import Testing
                 client.isIronwoodActivated = { true }
                 client.bannerVariant = { _ in nil }
                 $0.migrationManager = client
+                // The scenario IS a caught-up wallet — the nil answer must read as "nothing to
+                // migrate", not as a sync-gated decline, so the gate-closed repoll stays unarmed.
+                $0.sdkSynchronizer = .mocked(
+                    latestState: { upToDate }
+                )
             }
             store.exhaustivity = .off
 
-            var upToDate = SynchronizerState.zero
-            upToDate.syncStatus = .upToDate
             await store.send(.synchronizerStateChanged(upToDate.redacted))
 
             await store.receive(\.migrationReevaluationRequested)
@@ -70,6 +77,10 @@ import Testing
             state.priorityContent = .priority4
             state.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: .syncing(0.9, true))
 
+            var upToDateState = SynchronizerState.zero
+            upToDateState.syncStatus = .upToDate
+            let upToDate = upToDateState
+
             let store = TestStore(initialState: state) {
                 SmartBanner()
             } withDependencies: {
@@ -78,11 +89,14 @@ import Testing
                 client.isIronwoodActivated = { true }
                 client.bannerVariant = { _ in nil }
                 $0.migrationManager = client
+                // Caught-up wallet — the nil re-read is a genuine "nothing to migrate", so the
+                // gate-closed repoll must stay unarmed (see the sibling test above).
+                $0.sdkSynchronizer = .mocked(
+                    latestState: { upToDate }
+                )
             }
             store.exhaustivity = .off
 
-            var upToDate = SynchronizerState.zero
-            upToDate.syncStatus = .upToDate
             await store.send(.synchronizerStateChanged(upToDate.redacted))
 
             await store.receive(\.closeBanner)

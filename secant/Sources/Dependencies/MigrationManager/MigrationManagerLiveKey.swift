@@ -457,6 +457,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         if isMigrationWorkInFlight,
            let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
            let cached = bannerCache.withLock({ $0[resolvedAccountUUID] }) {
+            // Traced because this is the ONE exit that answers without the gate/decline lines the
+            // full derivation logs — an investigation of "the banner never re-asked" (field,
+            // 2026-08-03) could not tell this path from the call never happening at all.
+            MigrationTrace.event(
+                "bannerVariant served from cache — work in flight, cached \(cached.map { String(describing: $0) } ?? "nil")"
+            )
             return cached
         }
         let variant = await MigrationTrace.timed("bannerVariant") { await bannerVariantUntimed(accountUUID: accountUUID) }
