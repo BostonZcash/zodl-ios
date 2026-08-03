@@ -2008,11 +2008,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // and LOST — it queued on the same actor and returned 33 seconds later, which is precisely
         // the blank screen the poke was added to prevent. Deriving first, while the actor is still
         // free, means the poke is answered instantly from a cache that is milliseconds old; the
-        // guard in `bannerVariant`/`migrationTransfers` then keeps every later read off the actor
-        // until the sweep is done.
+        // guard in `bannerVariant`/`migrationTransfers`/`migrationSummary`/`migrationPreparationRows`
+        // then keeps every later read off the actor until the sweep is done.
+        //
+        // MOB-1466 (T8 follow-up): `bannerVariant` only ever needed `migrationTransfers` warmed — but
+        // the Migration Progress screen's OWN hydration (`statusProgressState`) also awaits
+        // `migrationSummary` and `migrationPreparationRows` (see `summaryCache`'s doc), which were
+        // never on this list. So the sequence launch -> sweep starts -> user taps the SmartBanner
+        // "More" before any hydration ever completed still fell through those two guards and waited
+        // out proof chunks on the DB actor, once per launch. `warmHydrationCaches` below closes that
+        // gap for all three.
         for accountUUID in accountUUIDs {
             _ = await bannerVariant(accountUUID: accountUUID)
-            _ = await migrationTransfers(accountUUID: accountUUID)
+            await warmHydrationCaches(accountUUID: accountUUID)
         }
         setMigrationWorkInFlight(true)
         defer { setMigrationWorkInFlight(false) }
@@ -2067,6 +2075,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
             fruitlessProveSweeps.withLock { $0 = 0 }
         }
         return proved
+    }
+
+    /// Pre-sweep cache warm-up: the serve-stale guards in `migrationTransfers` /
+    /// `migrationSummary` / `migrationPreparationRows` can only serve what a completed
+    /// hydration once stored — and a fresh process has stored nothing, so the first
+    /// banner tap during a sweep used to fall through every guard and wait out proof
+    /// chunks on the DB actor. Computing the three answers HERE, while the actor is
+    /// still free, means any tap during the sweep serves the at-sweep-start snapshot
+    /// instantly; the sweep-end poke refreshes it as always.
+    private func warmHydrationCaches(accountUUID: AccountUUID) async {
+        _ = await migrationTransfers(accountUUID: accountUUID)
+        _ = await migrationSummary(accountUUID: accountUUID)
+        _ = await migrationPreparationRows(accountUUID: accountUUID)
     }
 
     /// Consecutive prove sweeps that produced nothing WHILE the engine reported rows as
