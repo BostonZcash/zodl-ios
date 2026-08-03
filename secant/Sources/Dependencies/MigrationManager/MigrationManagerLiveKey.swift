@@ -693,7 +693,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// or pre-commit — the SDK retains no proposal list to derive from either) falls back to the W1
     /// progress-only approximation, kept verbatim below rather than deleted.
     ///
+    /// MOB-1466: serves the last answer while migration work occupies the actor, and records every
+    /// fresh one. See `summaryCache` for why staleness is safe here and is NOT for the route.
     func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
+        let resolved = accountUUID ?? selectedWalletAccount?.id
+        if isMigrationWorkInFlight, let resolved, let cached = summaryCache.withLock({ $0[resolved] }) {
+            return cached
+        }
+        let value = await migrationSummaryComputing(accountUUID: accountUUID)
+        if let resolved { summaryCache.withLock { $0[resolved] = value } }
+        return value
+    }
+
+    private func migrationSummaryComputing(accountUUID: AccountUUID?) async -> MigrationSummary {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationSummary.zero }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
@@ -782,6 +794,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// nothing to show instantly and correctly falls back to the loading state; nothing here is ever
     /// the source of truth for a decision.
     private let rowsCache = OSAllocatedUnfairLock<[AccountUUID: MigrationRowsSnapshot]>(initialState: [:])
+
+    /// MOB-1466 — the same starvation guard as `rowsCache`, for the other two reads the migration
+    /// screen's hydration awaits. `reentryRoute`'s short-circuit made the ROUTE fast; the screen
+    /// still blanked because `statusProgressState` then awaited `migrationSummary` and
+    /// `migrationPreparationRows`, both unguarded, both queued behind the same prove sweep.
+    ///
+    /// Safe to serve stale here where it was NOT safe for the route (see `reentryRoute`): these are
+    /// CONTENT. A summary and a set of preparation rows cannot have changed while the actor that
+    /// produces them was blocked, and the screen re-hydrates on its next pass regardless.
+    private let summaryCache = OSAllocatedUnfairLock<[AccountUUID: MigrationSummary]>(initialState: [:])
+    private let preparationRowsCache = OSAllocatedUnfairLock<[AccountUUID: [MigrationTransferRow]?]>(initialState: [:])
 
     /// The last banner each account derived, kept for the same reason as `rowsCache` and consulted
     /// by the same actor-starvation guard: a banner that takes 32 seconds to decide is a banner the
@@ -2300,7 +2323,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// so a multi-transaction split shows each transaction with its own state and ETA instead of one
     /// summary row. `nil` when the statuses carry no preparation at all (no run stored yet, or a
     /// read failure), which tells the caller to fall back to its synthesized single row.
+    /// MOB-1466: see `migrationSummary` — same guard, same reasoning.
     func migrationPreparationRows(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
+        let resolved = accountUUID ?? selectedWalletAccount?.id
+        if isMigrationWorkInFlight, let resolved, let cached = preparationRowsCache.withLock({ $0[resolved] }) {
+            return cached
+        }
+        let value = await migrationPreparationRowsComputing(accountUUID: accountUUID)
+        if let resolved { preparationRowsCache.withLock { $0[resolved] = value } }
+        return value
+    }
+
+    private func migrationPreparationRowsComputing(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         return MigrationDerivations.preparationRows(
@@ -2492,6 +2526,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func wipeAllMigrationState() async {
         MigrationTrace.notificationCancelled("wallet reset")
         rowsCache.withLock { $0.removeAll() }
+        summaryCache.withLock { $0.removeAll() }
+        preparationRowsCache.withLock { $0.removeAll() }
         await userNotifications.cancelMigrationNotifications()
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
