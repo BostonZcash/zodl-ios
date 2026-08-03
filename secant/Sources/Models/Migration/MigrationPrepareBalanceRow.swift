@@ -57,9 +57,19 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
     /// 0-based position in the run. The sheet displays `index + 1`.
     var index: Int
     var state: State
-    /// Minutes from now until this step is expected to become actionable. `0` reads "in ~0 hours",
-    /// matching the design's first row.
-    var minutesFromNow: Int
+    /// Minutes from now until this step is expected to become actionable. `0` reads "Starts right
+    /// away" — the design's own first row (5207-16025 draws "in ~0 hours" there).
+    ///
+    /// NIL FOR A STEP THAT HAS ALREADY HAPPENED, which is why this became optional (field,
+    /// 2026-08-03). A `.done` step has no future to state, but a plain `Int` forced it to supply
+    /// one, and the only available number was 0 — which the sheet rendered as "Starts right away"
+    /// UNDER A GREEN CHECKMARK, beside the word "Done".
+    ///
+    /// The design never draws a done step: 5207-16025 is the pre-commit ladder, every row still
+    /// ahead (in ~0 / ~1 / ~2 / ~3 hours). So nothing specified what a finished row should read, and
+    /// the type answered "right away" on the design's behalf. `nil` says "no forward time", and the
+    /// sheet omits the line. Absence renders; a wrong number does not.
+    var minutesFromNow: Int?
 
     /// A shaped placeholder ladder for `count` steps, pending the real per-transaction statuses:
     /// the first step ready, the second in flight, and each later one waiting on its predecessor —
@@ -97,7 +107,13 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
                 id: row.id,
                 index: position,
                 state: state,
-                minutesFromNow: max(0, row.hoursFromNow * 60)
+                // `forwardETAMinutes`, NOT `hoursFromNow * 60` — the row's own helper, which prefers
+                // the minute-precise value and falls back to hours only where no better one exists.
+                // Multiplying the coarse field discarded precision the engine had already computed:
+                // every step under an hour collapsed to 0 and read "Starts right away", so a real
+                // ladder (the design draws ~0 / ~1 / ~2 / ~3 hours) flattened into four identical
+                // lines. `.sent` gets nil — a finished step has no forward time; see the property.
+                minutesFromNow: row.status == .sent ? nil : max(0, row.forwardETAMinutes)
             )
         }
     }

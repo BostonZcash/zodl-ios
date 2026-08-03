@@ -180,4 +180,68 @@ import ZcashLightClientKit
         #expect(steps.map(\.index) == [0, 1, 2])
         #expect(Set(steps.map(\.id)).count == 3)
     }
+
+    // MARK: - The engine's real rows (field, 2026-08-03)
+
+    private static func preparation(
+        id: String,
+        status: MigrationTransferRow.Status,
+        minutesFromNow: Int? = nil,
+        hoursFromNow: Int = 0
+    ) -> MigrationTransferRow {
+        MigrationTransferRow(
+            id: id,
+            index: 0,
+            amount: nil,
+            status: status,
+            hoursFromNow: hoursFromNow,
+            minutesFromNow: minutesFromNow,
+            kind: .splitBalance
+        )
+    }
+
+    /// A FINISHED step states no future. It used to state "Starts right away" — under a green
+    /// checkmark, beside the word "Done" — because the field was a plain `Int` and 0 was the only
+    /// number a done step could honestly supply.
+    @Test func aDoneStepCarriesNoForwardTime() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .sent)
+        ])
+
+        #expect(steps.first?.state == .done)
+        #expect(steps.first?.minutesFromNow == nil)
+    }
+
+    /// …and every unfinished step still does, so the sheet keeps the ladder the design draws.
+    @Test func anUnfinishedStepKeepsItsForwardTime() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .active, minutesFromNow: 0),
+            Self.preparation(id: "1", status: .pending, minutesFromNow: 41)
+        ])
+
+        #expect(steps[0].minutesFromNow == 0)
+        #expect(steps[1].minutesFromNow == 41)
+    }
+
+    /// MINUTE precision, not `hoursFromNow * 60`. The coarse field truncates everything under an
+    /// hour to 0, so a real ladder of sub-hour steps flattened into identical "Starts right away"
+    /// lines — the design's 0/1/2/3-hour ladder rendered as four copies of one row.
+    @Test func forwardTimeKeepsSubHourPrecision() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .pending, minutesFromNow: 41, hoursFromNow: 0),
+            Self.preparation(id: "1", status: .pending, minutesFromNow: 42, hoursFromNow: 0)
+        ])
+
+        #expect(steps.map(\.minutesFromNow) == [41, 42], "41 and 42 minutes must not both read as 0")
+    }
+
+    /// The fallback stays: a row with no minute-precise value still reports its coarse one rather
+    /// than claiming "right away".
+    @Test func forwardTimeFallsBackToHoursWhenThatIsAllThereIs() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .pending, minutesFromNow: nil, hoursFromNow: 2)
+        ])
+
+        #expect(steps.first?.minutesFromNow == 120)
+    }
 }

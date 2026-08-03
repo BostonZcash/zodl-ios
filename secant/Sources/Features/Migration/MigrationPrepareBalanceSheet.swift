@@ -112,11 +112,22 @@ struct MigrationPrepareBalanceSheet: View {
                 Text(String(localizable: .migrationPrepareTransactionNOfM(step.index + 1, steps.count)))
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
-                // MOB-1466: `.plan`, not `.inPrefixed` — this sheet only ever opens from the
-                // pre-commit Transfer Plan screen's "Show details" disclosure, so its per-step
-                // captions take the same committal phrasing the rest of that screen does.
-                Text(MigrationETA.caption(minutesFromNow: step.minutesFromNow, phrasing: .plan))
-                    .zFont(size: 12, style: Design.Text.tertiary)
+                // MOB-1466: `.plan`, not `.inPrefixed` — committal phrasing, matching the Transfer
+                // Plan screen this sheet was first built for.
+                //
+                // NOW CONDITIONAL (field, 2026-08-03). The line used to render unconditionally, on
+                // the assumption recorded here that the sheet "only ever opens from the pre-commit
+                // Transfer Plan screen" — where every step is still ahead, so a forward ETA is
+                // always meaningful. That assumption stopped holding the moment this sheet was also
+                // wired behind the Migration Progress screen's disclosure, one day before a
+                // screenshot showed "Starts right away" beneath a green checkmark labelled "Done".
+                //
+                // A finished step has no forward time (`minutesFromNow == nil`) and gets no line.
+                // Its trailing "Done" already says everything true about it.
+                if let minutesFromNow = step.minutesFromNow {
+                    Text(MigrationETA.caption(minutesFromNow: minutesFromNow, phrasing: .plan))
+                        .zFont(size: 12, style: Design.Text.tertiary)
+                }
             }
             .padding(.top, 2)
 
@@ -188,7 +199,9 @@ struct MigrationPrepareBalanceSheet: View {
 #Preview("Mixed states") {
     MigrationPrepareBalanceSheet(
         steps: [
-            MigrationPrepareBalanceRow(id: "0", index: 0, state: .done, minutesFromNow: 0),
+            // `nil`, not 0 — a done step states no forward time, and this preview is where that
+            // renders: one row with no second line, three with one.
+            MigrationPrepareBalanceRow(id: "0", index: 0, state: .done, minutesFromNow: nil),
             MigrationPrepareBalanceRow(id: "1", index: 1, state: .readyToSend, minutesFromNow: 0),
             MigrationPrepareBalanceRow(id: "2", index: 2, state: .waitsOn([1, 2]), minutesFromNow: 120),
             MigrationPrepareBalanceRow(id: "3", index: 3, state: .waitsOn([3]), minutesFromNow: 180)
