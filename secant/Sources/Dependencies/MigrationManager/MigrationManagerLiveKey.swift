@@ -689,8 +689,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let rows = await migrationTransfers(accountUUID: resolved)
         let balances = try? await sdkSynchronizer.getAccountsBalances()
         let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
+        let preparations = await migrationPreparationRows(accountUUID: resolved) ?? []
 
-        return MigrationViewSnapshot(
+        let snapshot = MigrationViewSnapshot(
             orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved),
             // The wallet's OWN per-pool figure (B10), never inferred from the rows: the two agreeing
             // is the claim, so deriving one from the other would make it vacuous and hide the very
@@ -699,8 +700,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,
+            preparations: preparations,
             sessionOrdinal: MigrationTrace.currentSessionOrdinal
         )
+        // Goal #6: both header figures, every derivation, so the claim can be READ rather than
+        // eyeballed on a device. `settled false` is the destination trailing the checkmarks and is
+        // normal — see `MigrationViewSnapshot.isPoolFlowSettled`.
+        MigrationTrace.event(
+            "POOLS: orchard \(snapshot.orchardRemaining.decimalString())"
+            + " → ironwood \(snapshot.ironwoodHeld.decimalString())"
+            + " · done \(snapshot.doneTransfers)/\(snapshot.totalTransfers)"
+            + " = \(snapshot.movedByDoneTransfers.decimalString())"
+            + " · settled \(snapshot.isPoolFlowSettled)"
+            + " · splits \(preparations.count)"
+        )
+        return snapshot
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {

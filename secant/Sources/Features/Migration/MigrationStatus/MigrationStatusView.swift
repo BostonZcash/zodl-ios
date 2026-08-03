@@ -68,6 +68,21 @@ struct MigrationStatusView: View {
                             MigrationPoolFlowHeader(snapshot: store.poolFlow)
                         }
 
+                        // GOAL #4 (Figma 5207-16322): the split's parts moved out of the timeline,
+                        // so this is the door to them. Shown whenever there is more than one part —
+                        // a single-part split has no detail the collapsed row does not already say,
+                        // which is the one case the design omits the button.
+                        if store.poolFlow.hasSplitDetail {
+                            Button {
+                                store.send(.showSplitDetailTapped)
+                            } label: {
+                                Text(localizable: .migrationSplitShowDetails)
+                                    .zFont(.medium, size: 14, style: Design.Text.primary)
+                                    .underline()
+                            }
+                            .padding(.bottom, 16)
+                        }
+
                         if store.isUpdating {
                             updatingNote
                         }
@@ -112,6 +127,25 @@ struct MigrationStatusView: View {
             .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
+        .zashiSheet(
+            isPresented: Binding(
+                get: { store.isSplitDetailPresented },
+                set: { presented in
+                    if !presented {
+                        store.send(.splitDetailDismissed)
+                    }
+                }
+            )
+        ) {
+            // Steps AND total both from `poolFlow` — one derivation, four observers. The sheet is
+            // the fourth (banner, timeline, pool header, this), and the first three already agree.
+            MigrationPrepareBalanceSheet(
+                steps: MigrationPrepareBalanceRow.from(preparations: store.poolFlow.preparations),
+                amountBeingSplit: store.splitRows.first?.amount
+            ) {
+                store.send(.splitDetailDismissed)
+            }
+        }
         .onAppear {
             store.send(.onAppear)
         }

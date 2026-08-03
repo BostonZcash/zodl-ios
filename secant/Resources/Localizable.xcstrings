@@ -9821,6 +9821,23 @@
         }
       }
     },
+    "migration.split.showDetails": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show details"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ver detalles"
+          }
+        }
+      }
+    },
     "migrationBackgroundDelivery.bullet1Desc": {
       "extractionState": "manual",
       "localizations": {

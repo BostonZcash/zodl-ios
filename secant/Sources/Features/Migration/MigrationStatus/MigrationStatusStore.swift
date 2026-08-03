@@ -52,6 +52,10 @@ struct MigrationStatus {
         /// rows also come from — so the header's Ironwood figure and the checkmarks below it cannot
         /// drift. See `MigrationViewSnapshot`.
         var poolFlow = MigrationViewSnapshot.empty
+        /// GOAL #4: the split-detail sheet (Figma 5207-16025), opened by the "Show details" button
+        /// on the collapsed Split Balance row (5207-16322). Its steps come from `poolFlow`, so the
+        /// sheet is the FOURTH observer of one derivation rather than a fourth reader of the engine.
+        var isSplitDetailPresented = false
         var presentation = Presentation.progress
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         /// The schedule's total remaining-duration estimate. `nil` when not derivable — a W1
@@ -231,6 +235,8 @@ struct MigrationStatus {
         case closeTapped
         /// Progress CTA and the X close.
         case gotItTapped
+        case showSplitDetailTapped
+        case splitDetailDismissed
         case delegate(Delegate)
         /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
         case migrationStateChanged
@@ -297,6 +303,14 @@ struct MigrationStatus {
             switch action {
             case .closeTapped:
                 return .send(.delegate(.done))
+
+            case .showSplitDetailTapped:
+                state.isSplitDetailPresented = true
+                return .none
+
+            case .splitDetailDismissed:
+                state.isSplitDetailPresented = false
+                return .none
 
             case .gotItTapped:
                 return .send(.delegate(.done))

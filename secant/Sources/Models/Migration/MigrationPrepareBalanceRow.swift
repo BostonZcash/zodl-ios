@@ -68,6 +68,40 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
     /// The renderer is NOT provisional: `.waitsOn` already takes a set, so a real dependency naming
     /// several predecessors ("Waits on steps 1 & 2", as the design draws step 3) renders correctly
     /// the moment `depends_on` is wired, with no change to the sheet.
+    /// The sheet's steps from the ENGINE's own preparation rows — the real thing
+    /// `interimLadder` stood in for.
+    ///
+    /// Reads the rows carried on `MigrationViewSnapshot`, so the sheet renders the same split the
+    /// timeline row collapses and the pool header counts. Four observers, one derivation.
+    ///
+    /// `.expired` maps to `.invalid`: both mean this step needs the user, and the sheet has one
+    /// state for that. `.pending` maps to `.waitsOn` its predecessors — the honest reading of a
+    /// step the engine has not released yet.
+    static func from(preparations: [MigrationTransferRow]) -> [MigrationPrepareBalanceRow] {
+        preparations.enumerated().map { position, row in
+            let state: State
+            switch row.status {
+            case .sent:
+                state = .done
+            case .invalid, .expired:
+                state = .invalid
+            case .active, .overdue:
+                state = row.isPreparing ? .preparing : .readyToSend
+            case .pending:
+                // Displayed step numbers are 1-based, and a first step that is somehow pending
+                // waits on nothing the user can see — the caption treats an empty list as
+                // `.preparing`, which is the truthful fallback.
+                state = .waitsOn(Array(1...max(1, position)).filter { _ in position > 0 })
+            }
+            return MigrationPrepareBalanceRow(
+                id: row.id,
+                index: position,
+                state: state,
+                minutesFromNow: max(0, row.hoursFromNow * 60)
+            )
+        }
+    }
+
     static func interimLadder(count: Int) -> [MigrationPrepareBalanceRow] {
         let total = max(1, count)
         return (0..<total).map { index in

@@ -54,6 +54,11 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     let doneTransfers: Int
     let totalTransfers: Int
 
+    /// The split's parts, as the engine reports them. Carried here — rather than fetched again by
+    /// the sheet — because the "Show details" sheet is the FOURTH observer of this state (banner,
+    /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
+    let preparations: [MigrationTransferRow]
+
     /// The app-open that produced this. `nil` outside a session.
     ///
     /// Freshness is ONE stamp on ONE value now, consumed identically by every observer, rather than
@@ -80,12 +85,17 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         ironwoodHeld >= movedByDoneTransfers
     }
 
+    /// Whether the split detail is worth offering. A one-part split has no detail to show — the
+    /// timeline row already says everything the sheet would.
+    var hasSplitDetail: Bool { preparations.count > 1 }
+
     static let empty = MigrationViewSnapshot(
         orchardRemaining: .zero,
         ironwoodHeld: .zero,
         movedByDoneTransfers: .zero,
         doneTransfers: 0,
         totalTransfers: 0,
+        preparations: [],
         sessionOrdinal: nil
     )
 }
