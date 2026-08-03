@@ -2999,7 +2999,33 @@ enum MigrationDerivations {
             // prove or submit, and the designed idle banner otherwise. The split phase having no
             // designed "waiting" state of its own is a real gap — one for the designers, recorded
             // in SMART_BANNER_STATES §8, not one to paper over here.
-            if isPreparingRun || isBroadcastInFlight {
+            // MOB-1466 (field, 2026-08-03): `isBroadcastInFlight` REMOVED from this arm.
+            //
+            // `.preparing` is Figma 5139:35270 — spinner plus "Keep Zodl open on active phone
+            // screen" — and it is the PROVING costume. A split-phase broadcast was wearing it, so
+            // the banner span a spinner and demanded the user stay for a 5.7 s headless submit,
+            // while the timeline one tap away showed no spinner at all: the rows are `ready`, then
+            // `broadcast`, and NO row is ever "preparing" during a submit. Field log s2:
+            //
+            //     +0.09s broadcasting migration tx 0 — headless send session
+            //     +0.13s BANNER -> preparing  ·  why: submitting now
+            //     +5.82s BANNER: preparing [held 5.69s] -> inProgress
+            //
+            // The banner was not wrong that work was happening. It was wrong about WHAT KIND, and
+            // it claimed the user for it.
+            //
+            // A split broadcast now falls through to the idle `.inProgress` banner below. That is
+            // honest on both counts: nothing about a 5-second headless submit needs the user's
+            // attention, and the timeline agrees because it also shows nothing special.
+            //
+            // NOT re-costumed as `.transferSending` deliberately: that variant reads "Sending
+            // transfer N", and a preparation is not a transfer. The split phase genuinely has no
+            // designed "submitting" state — a gap for the designers (SMART_BANNER_STATES §8), and
+            // reaching for the nearest costume a second time is how the first one got here.
+            //
+            // `isPreparingRun` stays: proving DOES need the app open, for tens of seconds, and the
+            // rows corroborate it.
+            if isPreparingRun {
                 return MigrationBannerVariant.preparing
             }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count

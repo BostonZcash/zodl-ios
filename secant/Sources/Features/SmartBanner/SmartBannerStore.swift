@@ -19,13 +19,19 @@ struct SmartBanner {
         /// raised it — ABSORBED into the re-derivation, never added on top. A verdict at 2 s shows
         /// checking for 2 s; a verdict at 0.1 s still shows it until 0.5 s.
         ///
+        /// MEASURED DOWN from 0.5 s (field, 2026-08-03). The real answer arrived in 130 ms on
+        /// broadcast opens — so a 0.5 s floor was showing a spinner for 500 ms to prevent 130 ms of
+        /// staleness, ADDING 370 ms of churn to remove less. 0.2 s still forbids a sub-frame flip
+        /// while costing almost nothing when the answer is quick; the slow cold-launch path, which
+        /// is what this state exists for, is unaffected.
+        ///
         /// NOT a delay-before-show. That variant (hold the stale label ~300 ms, show the spinner
         /// only if the answer is late) optimises for sub-300 ms resolution, and the field says that
         /// is not this app: idle held ~3 s before flipping to a sending state, and transitions
         /// arrive in runs (A -> B -> A, A -> B -> C) rather than singly. Showing the truth
         /// immediately and forbidding a sub-half-second flip is the shape that matches what was
         /// actually observed.
-        static let migrationCheckingMinimumDwell = 0.5
+        static let migrationCheckingMinimumDwell = 0.2
         static let remindMe2days: TimeInterval = 86_400 * 2
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
@@ -561,6 +567,16 @@ struct SmartBanner {
                 }
 
             case let .migrationVariantLoaded(variant):
+                // MOB-1466 (field, 2026-08-03): this path was NOT holding during the dwell, and the
+                // hold only ever covered `.migrationVariantUpdated`. So a variant arriving via the
+                // priority ladder replaced `.checkingStatus` immediately and the dwell then fired
+                // into an empty slot, logging "staying on checking" while the banner had already
+                // moved. Instrumentation that lies is worse than none.
+                if state.isMigrationCheckDwelling {
+                    state.heldMigrationVariant = variant
+                    state.hasHeldMigrationVariant = true
+                    return .none
+                }
                 guard let variant else {
                     // MOB-1466: `nil` conflates "no migration to offer" with "cannot answer YET",
                     // and the walk-down treats both as a firm no — handing the slot to a
