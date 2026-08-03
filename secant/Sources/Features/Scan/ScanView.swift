@@ -90,6 +90,16 @@ struct ScanView: View {
                             
                             if store.isKeystoneSigningInProgress {
                                 signingPill()
+                                // Audit 2026-08-03 (#10): Cancel STAYS during the post-scan leg —
+                                // the pill used to replace it, and with the back button hidden
+                                // (camera up) that left a hung submit with no exit at all. The
+                                // coordinator has always been built for a cancel landing
+                                // mid-proving: the tombstone paths drop the late completion and
+                                // the pop lands back on the signing screen with Reject / Get
+                                // Signature intact.
+                                primaryButton(String(localizable: .generalCancel)) {
+                                    store.send(.cancelTapped)
+                                }
                             } else if !store.isCameraEnabled {
                                 primaryButton(String(localizable: .scanOpenSettings)) {
                                     if let url = URL(string: UIApplication.openSettingsURLString) {

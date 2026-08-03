@@ -124,6 +124,12 @@ struct MigrationComplete {
         case lockExplainerDismissed
         case lockExplainerHelpTapped
         case migrateAnywayTapped
+        /// Audit 2026-08-03 (#11): re-arms "Migrate anyway" on every arrival — the flag used to be
+        /// cleared only on FAILURE, so unlock-success → push → back landed here with the button
+        /// permanently disabled and "Got it" (which wipes the run) as the only live control, with
+        /// the residual already unlocked on chain. Mirrors `MigrationRecovery`'s own `.onAppear`
+        /// reset of its twin flag.
+        case onAppear
 
         enum Delegate: Equatable {
             case done
@@ -191,6 +197,10 @@ struct MigrationComplete {
                 guard !state.isMigratingAnyway else { return .none }
                 state.isMigratingAnyway = true
                 return .send(.delegate(.migrateAnyway))
+
+            case .onAppear:
+                state.isMigratingAnyway = false
+                return .none
             }
         }
     }

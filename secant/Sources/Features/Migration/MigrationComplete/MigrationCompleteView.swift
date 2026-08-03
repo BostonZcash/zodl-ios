@@ -101,6 +101,7 @@ struct MigrationCompleteView: View {
         }
         .padding(.vertical, 1)
         .screenHorizontalPadding()
+        .onAppear { store.send(.onAppear) }
         .navigationBarBackButtonHidden()
         .navigationBarItems(trailing: trailingNavItem)
         .alert($store.scope(state: \.alert, action: \.alert))
