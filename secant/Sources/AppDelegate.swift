@@ -53,6 +53,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         
         rootStore.send(.initialization(.appDelegate(.didFinishLaunching)))
 
+        // MOB-1466: pre-pay the Migration Progress screen's one-time render-metadata cost
+        // off-screen (see `MigrationStatusPrewarm`) — shortly after launch, past the first frames,
+        // so the burn lands while the user is still looking at the freshly launched app instead of
+        // inside their first push animation.
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.75) {
+            MigrationStatusPrewarm.run()
+        }
+
         return true
     }
 

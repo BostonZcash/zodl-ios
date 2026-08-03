@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] Opening Migration Progress for the first time after launch no longer stutters the push animation — the screen's one-time rendering setup now runs invisibly right after the app starts, so even the first open animates smoothly.
 - [MOB-1466] The "Prepare Your Balance" and dust-lock explainer sheets now update live while presented (their content could previously freeze on the state it opened with), and opening Migration Progress no longer floods the debug console with observation warnings.
 - [MOB-1466] Opening an already-synced wallet now reliably shows the migration offer in the banner. Previously, if the app checked for the offer in the first seconds of launch — before sync had formally caught up — the offer was declined once and never asked again, so a wallet with Orchard funds could sit with a currency-conversion banner and no way to start migrating until the app was backgrounded and reopened.
 - [MOB-1466] Opening Migration Progress from the banner no longer shows a long loader on the first open after app launch while transfers are being proven — the progress data is snapshotted just before proving starts, so the screen always opens on content.

@@ -431,6 +431,36 @@ private extension View {
     }
 }
 
+// MARK: - First-render prewarm
+
+/// MOB-1466 (field, 2026-08-03): the FIRST render of this screen's view tree costs the process a
+/// one-time payment — Swift instantiates generic metadata for the whole nested SwiftUI hierarchy
+/// (timeline → rows → badges → …), and in unoptimized debug builds that payment is 1–2 s of main
+/// thread. It was always there; while hydration was slow it happened after the push animation
+/// settled and nobody saw it. Once the DBActor read/write split and the pre-sweep cache warm-up
+/// made hydration fast, the payment moved INTO the push animation and froze it mid-slide — first
+/// open only, because the runtime caches the metadata for the rest of the process.
+///
+/// The payment cannot be deleted, so it is moved: `AppDelegate` calls this once, shortly after
+/// launch, and an off-screen `UIHostingController` renders the screen's heaviest views with the
+/// preview fixtures below. By the time a user can reach the real screen, the metadata is warm and
+/// the push animates clean. Release builds pay milliseconds here; debug pays its 1–2 s while the
+/// user is still looking at the freshly launched Home screen instead of mid-animation.
+enum MigrationStatusPrewarm {
+    @MainActor static func run() {
+        let content = VStack(alignment: .leading, spacing: 0) {
+            MigrationPoolFlowHeader(snapshot: MigrationViewSnapshot.empty)
+            MigrationTransferTimeline(
+                rows: IdentifiedArrayOf<MigrationTransferRow>.previewProgressRows,
+                caption: { _ in "" }
+            )
+        }
+        let host = UIHostingController(rootView: content)
+        host.view.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        host.view.layoutIfNeeded()
+    }
+}
+
 // MARK: - Mock data
 
 private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element == MigrationTransferRow {
