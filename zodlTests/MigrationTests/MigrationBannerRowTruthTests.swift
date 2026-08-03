@@ -129,11 +129,18 @@ import ZcashLightClientKit
     /// Leaving costs the user nothing once the transaction is on the wire. Only work that dies when
     /// the app closes may ask them to stay.
     @Test func aBroadcastRowAloneDoesNotAskTheUserToStay() {
+        // R11 re-pin: a broadcast row's status is `.confirming` now (never `.active`), and the
+        // fixture carries the run's FULL row set — the banner counts the rows the screen renders
+        // (R5), so a 6-transfer run is six rows, not two rows plus a progress claim of six.
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
-                Self.row(index: 0, status: .active, isBroadcasting: true),
-                Self.row(index: 1, status: .pending)
+                Self.row(index: 0, status: .confirming, isBroadcasting: true),
+                Self.row(index: 1, status: .pending),
+                Self.row(index: 2, status: .pending),
+                Self.row(index: 3, status: .pending),
+                Self.row(index: 4, status: .pending),
+                Self.row(index: 5, status: .pending)
             ]
         )
         #expect(variant != .transferSending(number: 1))
@@ -317,12 +324,16 @@ import ZcashLightClientKit
     /// A run is only "preparing" when a row the user is actually waiting on cannot move for want of
     /// its proof. Everything else is progress.
     @Test func aPendingRowThatIsMerelyProvableDoesNotClaimTheRunIsPreparing() {
+        // R11 re-pin: full 6-row fixture — banner counts the rows themselves (R5).
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .active),
                 Self.row(index: 1, status: .pending, isPreparing: true),
-                Self.row(index: 2, status: .pending, isPreparing: true)
+                Self.row(index: 2, status: .pending, isPreparing: true),
+                Self.row(index: 3, status: .pending),
+                Self.row(index: 4, status: .pending),
+                Self.row(index: 5, status: .pending)
             ]
         )
 
@@ -402,11 +413,17 @@ import ZcashLightClientKit
     /// line is a distinct designed state whose trigger rule is open with Andrea
     /// (`migrationBanner.idleInfo` stays in the catalog for it).
     @Test func anIdleRunReadsAsProgressWithTheCountsLine() {
+        // R11 re-pin: full 6-row fixture — the banner's "1 of 6 · 16%" is now literally computed
+        // from the same six rows the screen draws (R5), not from a progress claim beside them.
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 1, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .sent),
-                Self.row(index: 1, status: .pending)
+                Self.row(index: 1, status: .pending),
+                Self.row(index: 2, status: .pending),
+                Self.row(index: 3, status: .pending),
+                Self.row(index: 4, status: .pending),
+                Self.row(index: 5, status: .pending)
             ]
         )
         #expect(variant == .inProgress(done: 1, total: 6, round: nil, totalRounds: nil))

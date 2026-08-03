@@ -345,6 +345,9 @@ enum MigrationTrace {
         if row.isPreparing { return "\(number):preparing" }
         switch row.status {
         case .sent: return "\(number):done"
+        // R11: on the chain's side, wallet not yet counted it. (A still-broadcast row prints
+        // ":broadcast" via the flag check above, so the trace tells the two phases apart for free.)
+        case .confirming: return "\(number):confirming"
         case .invalid: return "\(number):invalid"
         case .expired: return "\(number):expired"
         case .overdue: return "\(number):overdue"

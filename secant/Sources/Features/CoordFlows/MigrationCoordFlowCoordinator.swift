@@ -1328,10 +1328,16 @@ extension MigrationCoordFlow {
     /// reason), so the screen never has to guess which of the two lanes it is on.
     private func recoveryState(accountUUID: AccountUUID?, isExpired: Bool, isFlowRoot: Bool) async -> MigrationRecovery.State {
         let rows = await migrationManager.migrationTransfers(accountUUID)
-        // The affected rows are the ones that are not already sent. Falling back to the whole list's
-        // bounds (rather than to the hardcoded 3–5 the screen defaults to) keeps the copy honest
-        // even if the status classification is momentarily empty.
-        let affected = rows.filter { $0.status != MigrationTransferRow.Status.sent }
+        // The affected rows are the ones that are not already on the chain's side. R11:
+        // `.confirming` is excluded like `.sent` — a broadcast-or-mined transfer awaiting the
+        // wallet's own sync cannot be re-planned any more than a green one can, and naming it in
+        // the recovery range would claim attention over a transfer that is already delivered.
+        // Falling back to the whole list's bounds (rather than to the hardcoded 3–5 the screen
+        // defaults to) keeps the copy honest even if the status classification is momentarily
+        // empty.
+        let affected = rows.filter {
+            $0.status != MigrationTransferRow.Status.sent && $0.status != MigrationTransferRow.Status.confirming
+        }
         let candidates = affected.isEmpty ? rows : affected
         return MigrationRecovery.State(
             reason: isExpired ? .expired : .notesSpent,

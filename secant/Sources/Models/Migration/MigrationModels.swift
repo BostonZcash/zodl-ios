@@ -79,7 +79,23 @@ struct MigrationRowsSnapshot: Equatable, Sendable {
 /// A single row in the migration transfers list UI. Not part of the SDK surface. [ext]
 struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     enum Status: Equatable, Sendable, Codable {
+        /// GROUND_RULES R11 (2026-08-03): DONE — and "done" means WALLET-CONFIRMED: the transaction
+        /// is mined AND the wallet's own transaction store has observed it, the same standard
+        /// Activity and the home balances use. Only this state renders the green check, counts
+        /// toward "N of M", and moves the pool-header figures — because this is the moment the
+        /// transfer has pool impact. Before R11 this fired at broadcast success (two phases early),
+        /// which is how the field got three green checks summing 55.2 ZEC over an Ironwood balance
+        /// of 0.
         case sent
+        /// GROUND_RULES R11: ON THE CHAIN'S SIDE of the turnstile — broadcast (possibly already
+        /// mined per the ENGINE) but not yet observed by the wallet's own store. Routine, not an
+        /// edge: the SDK deliberately holds sync after a broadcast (180 s testnet / 600 s mainnet
+        /// privacy buffer, ZIP 318 session separation), so every transfer sits here for minutes.
+        /// Renders as the neutral (non-green) check with the "Confirming…" caption, no spinner —
+        /// the work is the chain's, not the app's, and closing the app costs nothing
+        /// (see `isInFlight`'s doc for why the spinner is reserved for the app's own work).
+        /// Never actionable: not replannable (it is on the wire), never "next".
+        case confirming
         case active
         case overdue
         case pending

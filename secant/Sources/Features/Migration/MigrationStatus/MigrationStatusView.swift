@@ -283,26 +283,23 @@ struct MigrationStatusView: View {
             return ago >= 60
                 ? String(localizable: .migrationStatusOverdueAgo(ago / 60))
                 : String(localizable: .migrationStatusOverdueMinutesAgo(max(1, ago)))
-        case .active where row.isBroadcasting:
-            // "SENT RECENTLY", not "Sending now" — field-caught 2026-08-01: "there is never ending
-            // sending of split 1".
-            //
-            // `isBroadcasting` comes from the engine's `.broadcast(txid:)`, which means SUBMITTED
-            // and awaiting mining. That is minutes — and on top of the mining itself the SDK's
-            // post-broadcast privacy buffer holds sync for 180 s (600 s mainnet), so the wallet
-            // cannot even observe the confirmation for the first stretch of it. A row captioned
-            // "Sending now" for all of that describes an action that finished in about two seconds,
-            // and reads to the user as a transfer that will not complete.
-            //
-            // "Sent recently" is already the designed word for exactly this — the catalogue's own
-            // `migrationStatus.sentRecently`, which a mined row with no local send record already
-            // uses. It is true the instant the broadcast returns, and it gives the split row an
-            // honest progression: Sent recently → Done. Nothing invented.
-            //
-            // `migrationStatus.sendingNow` stays in the catalogue: it is designed copy, and it is
-            // the right words for a genuinely in-session submit if a surface ever wants to show
-            // one. That window is ~2 s and nothing is watching this list during it.
-            return String(localizable: .migrationStatusSentRecently)
+        case .confirming:
+            // GROUND_RULES R11: on the chain's side — broadcast, possibly already mined per the
+            // engine — but the WALLET's own store has not observed it yet, so no green and no
+            // "Done". The caption stays the DESIGNED "Sent recently"/recency family (the same
+            // honest words the broadcast row used before R11, field-settled 2026-08-01: "there is
+            // never ending sending of split 1"; the SDK's post-broadcast privacy buffer holds sync
+            // 180 s testnet / 600 s mainnet, so this span is minutes, routinely). R1 forbids
+            // minting copy, and the state is already visually distinct: the badge is the NEUTRAL
+            // check, not the green one. Andrea's dedicated confirming copy replaces these words
+            // when it lands — one arm, one swap. The old `.active where isBroadcasting` arm this
+            // absorbs is gone: every broadcast row is `.confirming` now.
+            if let sentMinutesAgo = row.sentMinutesAgo {
+                return String(localizable: .migrationStatusSentMinutesAgo(sentMinutesAgo))
+            }
+            return row.hoursFromNow == 0
+                ? String(localizable: .migrationStatusSentRecently)
+                : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
         default:
             // Pending/queued-active rows: the shared forward-ETA granularity per the frames
             // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders

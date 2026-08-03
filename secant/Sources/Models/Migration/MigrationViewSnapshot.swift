@@ -25,15 +25,14 @@
 //  zatoshi and the Ironwood pool held 949,000,000 — exact. The accounting was never the problem;
 //  the *timing* was, and that is what one snapshot removes.
 //
-//  R9 (2026-08-03), a reversal: the header's bubbles no longer read `ironwoodHeld`/`orchardRemaining`
-//  at all. A field screenshot showed three green checks summing 55.2 ZEC over a bubble reading 0
-//  ZEC — `ironwoodHeld` is the wallet's own live per-pool balance, correct on its own terms, but a
-//  SEPARATE read from the rows the checkmarks are drawn from, which is the same two-clocks shape
-//  this file exists to remove, just moved one level up. So the bubbles now derive from the plan and
-//  the green/Done rows instead (`greenOrchard`/`greenIronwood`), the same rows the timeline already
-//  shows — header and checkmarks agree BY CONSTRUCTION, the same way this file already made the
-//  banner and the screen agree. The wallet's live balance still matters; it lives in the POOLS trace
-//  now (`isPoolFlowSettled`), not the header.
+//  R9 + R11 (2026-08-03, final): the header's bubbles show `orchardRemaining`/`ironwoodHeld` — the
+//  wallet's REAL per-pool balances, the same chain-derived source the home balance sheet reads
+//  ("if pool X has Y zec, must use Y"; derived green-sums were rejected for contradicting the home
+//  sheet). The 55.2-vs-0 field screenshot that once argued against this was never a data problem —
+//  it was a GREEN problem: rows flipped green at broadcast, two phases before the wallet counted
+//  them. R11 fixed the green instead: a row renders Done only when the wallet's OWN store has its
+//  transaction mined (`.sent` vs `.confirming` in the row derivation), so the checkmarks and the
+//  pool balances now move in the same sync write and agree BY CONSTRUCTION — no render gate needed.
 //
 
 import Foundation
@@ -55,12 +54,13 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// exactly the lag we are trying to surface.
     let ironwoodHeld: Zatoshi
 
-    /// Σ of the transfers the timeline shows as done. Compared against `ironwoodHeld` by
-    /// `isPoolFlowSettled` — see there for why they can legitimately differ for a while.
+    /// Σ of the transfers the timeline shows as done — and R11 makes "done" mean WALLET-CONFIRMED
+    /// (`.sent` rows only; `.confirming` rows are excluded), so this moves in the same sync write
+    /// `ironwoodHeld` does. Compared against it by `isPoolFlowSettled`, now trace-only.
     let movedByDoneTransfers: Zatoshi
 
-    /// How many transfers the timeline shows as done, and out of how many — the checkmark count the
-    /// header's numbers have to be consistent with.
+    /// How many transfers the timeline shows as done (wallet-confirmed, R11), and out of how many —
+    /// the checkmark count the header's numbers have to be consistent with.
     let doneTransfers: Int
     let totalTransfers: Int
 
@@ -101,20 +101,16 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         return sessionOrdinal == currentSessionOrdinal
     }
 
-    /// Whether the destination pool has caught up with the checkmarks.
+    /// TRACE-ONLY diagnostic (R11 demoted it from render gate): whether the destination pool's
+    /// balance covers the Σ of wallet-confirmed transfers.
     ///
-    /// FALSE IS NORMAL, not an error, and this is the distinction the header has to render honestly.
-    /// The engine flips a row to done from its OWN tables the moment a transfer mines; the wallet's
-    /// pool balance only moves once a sync writes it. So between those two moments the checkmarks
-    /// legitimately lead the balance — which is precisely the "T1 and T2 done but only T1 moved"
-    /// report, and it was a timing gap, never a miscount.
-    ///
-    /// R9 (amended 2026-08-03): this is the header's RENDER GATE. The bubbles show the wallet's
-    /// REAL per-pool balances (`orchardRemaining`/`ironwoodHeld` — the same chain-derived source
-    /// the home balance sheet reads), and the header renders ONLY while those are consistent with
-    /// the green checkmarks below it. During the settling lag (mined but not yet synced — the
-    /// field's 55.2-vs-0 screenshot) the header HIDES: no stale real number, no invented derived
-    /// one. "Correct data or no header", with "correct" meaning the chain's.
+    /// Under R11 `movedByDoneTransfers` counts only WALLET-CONFIRMED rows, and `ironwoodHeld` is
+    /// the same wallet's balance — both move in the same sync write, so this holds by construction
+    /// in the steady state. It can legitimately go false in exactly one honest way: the user SPENT
+    /// Ironwood funds mid-migration (the balance is current holdings; the checkmarks are history).
+    /// That is also why it must never gate rendering again — a mid-migration spend would have
+    /// hidden the header forever. It lives on only in the POOLS trace, where a false reading now
+    /// means "spent from Ironwood" rather than "settling lag".
     var isPoolFlowSettled: Bool {
         ironwoodHeld >= movedByDoneTransfers
     }

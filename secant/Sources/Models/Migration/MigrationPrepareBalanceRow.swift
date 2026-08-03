@@ -93,6 +93,12 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
             switch row.status {
             case .sent:
                 state = .done
+            case .confirming:
+                // GROUND_RULES R11: on the chain's side, wallet not yet counted it — the sheet's
+                // own designed in-flight state ("broadcast, waiting to mine" per this file's
+                // header table), NOT `.done`: the sheet's green must flip in the same sync write
+                // as the timeline's, or the two surfaces contradict through one disclosure tap.
+                state = .preparing
             case .invalid, .expired:
                 state = .invalid
             case .active, .overdue:

@@ -713,9 +713,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
         let preparations = await migrationPreparationRows(accountUUID: resolved) ?? []
 
-        // R9: the plan total the header's Orchard bubble derives from (X = planTotal − Σ green).
-        // nil when any amount is unknown (W1 fallback) — the header then does not render at all,
-        // per "correct data or no header".
+        // R9 (final): TRACE-ONLY reconciliation figure — Σ of all plan amounts, for the POOLS line
+        // (plan vs green vs pools). Never rendered: bubbles labelled with pool names show the
+        // wallet's real balances, never a derived sum. nil when any amount is unknown (W1
+        // fallback).
         let planTotal: Zatoshi? = rows.isEmpty || rows.contains { $0.amount == nil }
             ? nil
             : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
@@ -890,6 +891,62 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private let summaryCache = OSAllocatedUnfairLock<[AccountUUID: MigrationSummary]>(initialState: [:])
     private let preparationRowsCache = OSAllocatedUnfairLock<[AccountUUID: [MigrationTransferRow]?]>(initialState: [:])
 
+    /// GROUND_RULES R11: the last WALLET-CONFIRMED txid set each account derived — the display-form
+    /// hex ids (`TransactionState.id` ≡ `SentRecord.txId`, both `toHexStringTxId()`) of every
+    /// transaction the wallet's OWN store has observed mined. This is the set that decides which
+    /// rows render green: same standard as Activity and the home balances, because it IS their
+    /// source (`getAllTransactions`).
+    ///
+    /// Kept for the same two reasons the row caches above exist. (1) Starvation: the read queues
+    /// behind prove sweeps like every other DB read here, and rows served from `rowsCache` during a
+    /// sweep must not pay for a fresh confirmation read that cannot change mid-sweep anyway.
+    /// (2) Degradation: a TRANSIENT read failure must not repaint every green row as "Confirming…"
+    /// for one derivation pass — on failure the last known set stands. `nil` (no read has EVER
+    /// succeeded) tells the derivation to fall back to ENGINE truth rather than un-confirm the
+    /// world; see `MigrationDerivations.transferRows`.
+    private let walletMinedTxIdsCache = OSAllocatedUnfairLock<[AccountUUID: Set<String>]>(initialState: [:])
+
+    /// R11: the wallet-confirmed txid set for `accountUUID`, freshly read when possible, served
+    /// from `walletMinedTxIdsCache` on a failed read, and `nil` only when no read has ever
+    /// succeeded for this account (the engine-truth fallback signal).
+    private func walletMinedTxIds(accountUUID: AccountUUID) async -> Set<String>? {
+        if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
+            let set = Set(transactions.filter { $0.minedHeight != nil }.map { $0.id })
+            walletMinedTxIdsCache.withLock { $0[accountUUID] = set }
+            return set
+        }
+        return walletMinedTxIdsCache.withLock { $0[accountUUID] }
+    }
+
+    /// R11, the split's matching gap: the engine's `.mined` state carries NO txid (the SDK model
+    /// deliberately omits it), and a note-split PREPARATION has no `SentRecord` either (those are
+    /// written for `schedule.transfers` only) — so once a split flips engine-mined there is
+    /// nothing left to match against the wallet's store. The txid DOES pass by earlier, in the
+    /// `.broadcast(txid:)` state, so it is remembered here (display form, keyed by the engine's
+    /// stable status id) and consulted when the same id later reads `.mined`.
+    ///
+    /// In-memory by nature: an app kill during a split's confirming window forgets the txid, and
+    /// the split then falls back to ENGINE truth on the next open — a documented, narrow
+    /// degradation, strictly better than the pre-R11 behaviour (green at broadcast) and never
+    /// worse. Retires when the SDK exposes the mined txid (its own doc notes upstream now
+    /// retains it).
+    private let rememberedBroadcastTxIds = OSAllocatedUnfairLock<[AccountUUID: [UInt32: String]]>(initialState: [:])
+
+    /// Harvests `.broadcast(txid:)` payloads from a fresh statuses read into
+    /// `rememberedBroadcastTxIds`, and returns the account's full remembered map.
+    private func rememberBroadcastTxIds(from statuses: [MigrationTransactionStatus], accountUUID: AccountUUID) -> [UInt32: String] {
+        rememberedBroadcastTxIds.withLock { store in
+            var map = store[accountUUID] ?? [:]
+            for status in statuses {
+                if case let MigrationTransactionStatus.State.broadcast(txid) = status.state {
+                    map[status.id] = txid.toHexStringTxId()
+                }
+            }
+            store[accountUUID] = map
+            return map
+        }
+    }
+
     /// The last banner each account derived, kept for the same reason as `rowsCache` and consulted
     /// by the same actor-starvation guard: a banner that takes 32 seconds to decide is a banner the
     /// user never sees.
@@ -1020,7 +1077,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             if let statusRows = MigrationDerivations.statusOnlyTransferRows(
                 statuses: statuses,
                 clock: await chainClock(accountUUID: resolvedAccountUUID),
-                isProvingStalled: isProvingStalled
+                isProvingStalled: isProvingStalled,
+                confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID)
             ) {
                 return statusRows
             }
@@ -1044,7 +1102,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             now: Date(),
             clock: await chainClock(accountUUID: resolvedAccountUUID),
             statuses: statuses,
-            isProvingStalled: isProvingStalled
+            isProvingStalled: isProvingStalled,
+            confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID)
         )
     }
 
@@ -1155,11 +1214,27 @@ final class MigrationManagerImpl: @unchecked Sendable {
         clock: MigrationChainClock
     ) async -> (transfers: [MigrationTransferRow], preparations: [MigrationTransferRow]) {
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
-        let preparations = MigrationDerivations.preparationRows(statuses: statuses, clock: clock, isProvingStalled: isProvingStalled) ?? []
+        // R11: one confirmed-set read and one txid harvest for BOTH row lists of this pass — the
+        // banner's transfers and preparations judge green against the same wallet truth, in the
+        // same pass, or the split flips a session before its transfers do.
+        let rememberedTxIds = rememberBroadcastTxIds(from: statuses, accountUUID: resolvedAccountUUID)
+        let confirmedTxIds = await walletMinedTxIds(accountUUID: resolvedAccountUUID)
+        let preparations = MigrationDerivations.preparationRows(
+            statuses: statuses,
+            clock: clock,
+            isProvingStalled: isProvingStalled,
+            confirmedTxIds: confirmedTxIds,
+            rememberedTxIds: rememberedTxIds
+        ) ?? []
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
-            if let statusRows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, clock: clock, isProvingStalled: isProvingStalled) {
+            if let statusRows = MigrationDerivations.statusOnlyTransferRows(
+                statuses: statuses,
+                clock: clock,
+                isProvingStalled: isProvingStalled,
+                confirmedTxIds: confirmedTxIds
+            ) {
                 return (statusRows, preparations)
             }
             guard let progress else { return ([], preparations) }
@@ -1174,7 +1249,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 now: Date(),
                 clock: clock,
                 statuses: statuses,
-                isProvingStalled: isProvingStalled
+                isProvingStalled: isProvingStalled,
+                confirmedTxIds: confirmedTxIds
             ),
             preparations
         )
@@ -1878,8 +1954,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let transferRows = await migrationTransfers(accountUUID: resolvedAccountUUID)
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         let preparationRows = MigrationDerivations.preparationRows(statuses: statuses, clock: clock) ?? []
+        // R11: `.confirming` excluded alongside `.sent` — a confirming row is on the chain's side
+        // (broadcast or already mined, wallet not yet synced), so it needs no send window either;
+        // counting it would schedule an imminent poke for work that is already done.
         let pendingBroadcast = (preparationRows + transferRows)
-            .filter { $0.status != MigrationTransferRow.Status.sent && !$0.isBroadcasting }
+            .filter { $0.status != MigrationTransferRow.Status.sent && $0.status != MigrationTransferRow.Status.confirming && !$0.isBroadcasting }
             .min { $0.forwardETAMinutes < $1.forwardETAMinutes }
 
         var sendDate: Date?
@@ -2588,7 +2667,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         return MigrationDerivations.preparationRows(
             statuses: statuses,
-            clock: await chainClock(accountUUID: resolvedAccountUUID)
+            clock: await chainClock(accountUUID: resolvedAccountUUID),
+            isProvingStalled: isProvingStalled,
+            confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID),
+            rememberedTxIds: rememberBroadcastTxIds(from: statuses, accountUUID: resolvedAccountUUID)
         )
     }
 
@@ -3300,9 +3382,16 @@ enum MigrationDerivations {
             // MOB-1511 (W2): the round label shows only for a genuinely multi-round migration —
             // a later round in flight, or a known engine estimate above one.
             let displayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
+            // R11: counts from the ROWS, not `progress` — R5 made executable at last. The engine's
+            // `completedTransfers` counts engine-mined; the rows' `.sent` counts WALLET-CONFIRMED,
+            // which is what the screen's checkmarks render. The two agree today only while nothing
+            // is in its confirming window; during one, "2 of 6 done" over a screen showing one
+            // green and one "Confirming…" is exactly the banner/screen split this file exists to
+            // remove. `progress` remains the fallback for a degenerate empty row read.
+            let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
             return MigrationBannerVariant.inProgress(
-                done: progress.completedTransfers,
-                total: progress.totalTransfers,
+                done: transferRows.isEmpty ? progress.completedTransfers : doneRows,
+                total: transferRows.isEmpty ? progress.totalTransfers : transferRows.count,
                 round: displayRound,
                 totalRounds: displayRound != nil ? totalRounds : nil
             )
@@ -3318,6 +3407,24 @@ enum MigrationDerivations {
             }
 
         case MigrationState.complete:
+            // R11: the engine reaches its own `.complete` the moment the last transfer MINES per
+            // its tables — one privacy-window before the wallet has synced it. Declaring "Migration
+            // complete" over a timeline still showing "Confirming…" is the contradiction R4 forbids,
+            // so the banner keeps the counts story until every chain-side row is wallet-confirmed.
+            // Rows empty (schedule already cleared, or reads degenerate) falls through to complete —
+            // engine truth when there is nothing left to render against.
+            let hasUnconfirmed = (transferRows + preparationRows).contains {
+                $0.status == MigrationTransferRow.Status.confirming
+            }
+            if hasUnconfirmed {
+                let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
+                return MigrationBannerVariant.inProgress(
+                    done: doneRows,
+                    total: transferRows.count,
+                    round: round >= 2 || (totalRounds ?? 1) > 1 ? round : nil,
+                    totalRounds: round >= 2 || (totalRounds ?? 1) > 1 ? totalRounds : nil
+                )
+            }
             guard isCompleteAcknowledged else { return MigrationBannerVariant.complete }
             // MOB-1496: `.complete` is per-RUN now — the engine may still have more to migrate (a
             // per-run cap, or funds arriving mid-run). `isMigrationRemainderPending` reflects the
@@ -3474,8 +3581,13 @@ enum MigrationDerivations {
     /// "Waiting" means waiting ON THE USER. A submitted transfer waits on the chain, needs nothing,
     /// and must not be offered a "Send now".
     private static func nextTransferNumber(transferRows: [MigrationTransferRow], progress: MigrationProgress) -> Int {
+        // R11: `.confirming` skipped alongside `.sent` — a confirming row is on the chain's side
+        // and nothing the user does applies to it, so it can never be the "Transfer N" a waiting
+        // or ready banner names.
         let firstActionable = transferRows.first {
-            $0.status != MigrationTransferRow.Status.sent && !$0.isBroadcasting
+            $0.status != MigrationTransferRow.Status.sent
+                && $0.status != MigrationTransferRow.Status.confirming
+                && !$0.isBroadcasting
         }
         guard let firstActionable else {
             // Every remaining row is sent or in flight: nothing is waiting on the user, so the
@@ -3592,7 +3704,14 @@ enum MigrationDerivations {
         now: Date,
         clock: MigrationChainClock,
         statuses: [MigrationTransactionStatus] = [],
-        isProvingStalled: Bool = false
+        isProvingStalled: Bool = false,
+        // GROUND_RULES R11: the display-form hex txids the WALLET'S OWN store has observed mined
+        // (`walletMinedTxIds`) — the set that decides `.sent` vs `.confirming`. `nil` means no
+        // wallet read has ever succeeded: engine truth then stands for engine-MINED rows, while a
+        // merely-broadcast row is `.confirming` even then — it was never green-worthy (see
+        // `chainSideDisposition` below). NOTE nil is NOT the pre-R11 behaviour: before R11 a
+        // sentRecord alone (broadcast success) rendered green.
+        confirmedTxIds: Set<String>? = nil
     ) -> [MigrationTransferRow] {
         struct RowSeed {
             let transferId: String
@@ -3639,27 +3758,74 @@ enum MigrationDerivations {
         }
 
         let seeds = leadingRows + scheduleRows
-        // MOB-1513 (T-A): "sent" prefers a joined live status's `.mined` state over sentRecord
-        // presence — see this function's own doc, precedence item 1.
-        func isSent(_ seed: RowSeed) -> Bool {
-            if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.mined = liveStatus.state {
-                return true
+
+        func isLiveBroadcast(_ seed: RowSeed) -> Bool {
+            guard let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.broadcast = liveStatus.state else {
+                return false
             }
-            return seed.sentRecord != nil
+            return true
         }
-        let firstNonSentIndex = seeds.firstIndex { !isSent($0) }
+        func isEngineMined(_ seed: RowSeed) -> Bool {
+            guard let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.mined = liveStatus.state else {
+                return false
+            }
+            return true
+        }
+        // GROUND_RULES R11 — the three-way judgment that replaced the old boolean "sent".
+        //
+        // Whether a row is ON THE CHAIN'S SIDE of the turnstile (engine-mined, app-recorded
+        // broadcast, or live `.broadcast`) is judged exactly where the old `isSent` was. What R11
+        // changes is which chain-side rows render GREEN: only those the WALLET'S OWN store has
+        // observed mined (`confirmedTxIds` — the same source Activity and the home balances read).
+        // Every other chain-side row is `.confirming`. The old rule made a row green at broadcast
+        // success (sentRecord presence) — two phases before "done" has pool impact, which is how
+        // the field got three green checks summing 55.2 ZEC over an Ironwood balance of 0.
+        //
+        // Fallbacks, deliberate and narrow:
+        // - `confirmedTxIds == nil` (no wallet read has EVER succeeded): ENGINE truth stands for
+        //   engine-MINED rows — un-confirming the whole timeline over a read failure would repaint
+        //   every green as "Confirming…", a worse lie than the one R11 removes. Merely-broadcast
+        //   rows are `.confirming` even then: they were never green-worthy.
+        // - engine-mined with NO matchable txid (`sentRecord` missing or its `txId` nil — the
+        //   record-failed-after-broadcast edge): engine truth stands — a row we can never match
+        //   would otherwise read "Confirming…" forever.
+        func chainSideDisposition(_ seed: RowSeed) -> MigrationTransferRow.Status? {
+            let engineMined = isEngineMined(seed)
+            guard engineMined || seed.sentRecord != nil || isLiveBroadcast(seed) else { return nil }
+
+            guard let confirmedTxIds else {
+                return engineMined ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.confirming
+            }
+            if let txId = seed.sentRecord?.txId, confirmedTxIds.contains(txId) {
+                return MigrationTransferRow.Status.sent
+            }
+            // The wallet's store can know a mined txid the app's own record is missing — the live
+            // `.broadcast` payload carries it in raw byte order; match it in display form too.
+            if let liveStatus = seed.liveStatus,
+                case let MigrationTransactionStatus.State.broadcast(txid) = liveStatus.state,
+                confirmedTxIds.contains(txid.toHexStringTxId()) {
+                return MigrationTransferRow.Status.sent
+            }
+            if engineMined && seed.sentRecord?.txId == nil {
+                return MigrationTransferRow.Status.sent
+            }
+            return MigrationTransferRow.Status.confirming
+        }
+        let firstNonChainSideIndex = seeds.firstIndex { chainSideDisposition($0) == nil }
 
         return seeds.enumerated().map { index, seed in
-            if isSent(seed) {
+            if let chainSideStatus = chainSideDisposition(seed) {
                 guard let sentRecord = seed.sentRecord else {
-                    // MOB-1513 (T-A): live-mined with no app-recorded `sentRecord` — sent, but with
-                    // no known recency (see this function's own doc, precedence item 1).
+                    // MOB-1513 (T-A): live-mined/broadcast with no app-recorded `sentRecord` —
+                    // chain-side, with no known recency (see this function's own doc, precedence
+                    // item 1).
                     return MigrationTransferRow(
                         id: seed.transferId,
                         index: index,
                         amount: seed.amount,
-                        status: MigrationTransferRow.Status.sent,
-                        hoursFromNow: 0
+                        status: chainSideStatus,
+                        hoursFromNow: 0,
+                        isBroadcasting: isLiveBroadcast(seed)
                     )
                 }
                 let elapsedMinutes = max(0, Int(now.timeIntervalSince(sentRecord.sentAt) / 60))
@@ -3667,9 +3833,10 @@ enum MigrationDerivations {
                     id: seed.transferId,
                     index: index,
                     amount: seed.amount,
-                    status: MigrationTransferRow.Status.sent,
+                    status: chainSideStatus,
                     hoursFromNow: elapsedMinutes / 60,
-                    sentMinutesAgo: elapsedMinutes < 60 ? elapsedMinutes : nil
+                    sentMinutesAgo: elapsedMinutes < 60 ? elapsedMinutes : nil,
+                    isBroadcasting: isLiveBroadcast(seed)
                 )
             }
 
@@ -3691,21 +3858,9 @@ enum MigrationDerivations {
                 )
             }
 
-            // MOB-1513 (T-A): a `.broadcast` live status is in flight right now — the existing
-            // broadcasting/sent-pending styling, regardless of position (see this function's own
-            // doc, precedence item 2).
-            if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.broadcast = liveStatus.state {
-                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, clock: clock)
-                return MigrationTransferRow(
-                    id: seed.transferId,
-                    index: index,
-                    amount: seed.amount,
-                    status: MigrationTransferRow.Status.active,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow,
-                    isBroadcasting: true
-                )
-            }
+            // R11: the old standalone `.broadcast` arm (status `.active` + `isBroadcasting`) lived
+            // here — a live-broadcast row is chain-side now and was judged above, so the arm is
+            // gone rather than left dead.
 
             // MOB-1513 (T-A): a live-expired row is unambiguous per-row ground truth (see this
             // function's own doc, precedence item 3).
@@ -3723,7 +3878,7 @@ enum MigrationDerivations {
 
             let status = nonSentRowStatus(
                 transferId: seed.transferId,
-                isFirstNonSent: index == firstNonSentIndex,
+                isFirstNonSent: index == firstNonChainSideIndex,
                 state: state,
                 hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
                 hasLiveStatus: seed.liveStatus != nil
@@ -3905,7 +4060,12 @@ enum MigrationDerivations {
     static func statusOnlyTransferRows(
         statuses: [MigrationTransactionStatus],
         clock: MigrationChainClock,
-        isProvingStalled: Bool = false
+        isProvingStalled: Bool = false,
+        // GROUND_RULES R11 — see `transferRows`. In this lane an engine-`.mined` row carries no
+        // txid to match, and on the one device class that lives here (fresh install / restore, no
+        // persisted schedule) the engine only learns mined-ness FROM the wallet's own scan — so
+        // `.mined` keeps engine truth, and the set gates only the `.broadcast(txid:)` rows.
+        confirmedTxIds: Set<String>? = nil
     ) -> [MigrationTransferRow]? {
         let transferStatuses = statuses
             .compactMap { status -> (crossing: Int, status: MigrationTransactionStatus)? in
@@ -3952,14 +4112,16 @@ enum MigrationDerivations {
                 )
             }
 
-            if case MigrationTransactionStatus.State.broadcast = status.state {
+            if case let MigrationTransactionStatus.State.broadcast(txid) = status.state {
+                // R11: on the chain's side, green only when the WALLET's own store has it mined —
+                // the `.broadcast` payload carries the raw-order txid; the set holds display-form.
+                let isWalletConfirmed = confirmedTxIds?.contains(txid.toHexStringTxId()) == true
                 return MigrationTransferRow(
                     id: String(status.id),
                     index: index,
                     amount: nil,
-                    status: MigrationTransferRow.Status.active,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow,
+                    status: isWalletConfirmed ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.confirming,
+                    hoursFromNow: 0,
                     isBroadcasting: true
                 )
             }
@@ -4101,7 +4263,14 @@ enum MigrationDerivations {
     static func preparationRows(
         statuses: [MigrationTransactionStatus],
         clock: MigrationChainClock,
-        isProvingStalled: Bool = false
+        isProvingStalled: Bool = false,
+        // GROUND_RULES R11 — see `transferRows`. A preparation has no `SentRecord` and its `.mined`
+        // state carries no txid, so the broadcast-time txid remembered by the manager
+        // (`rememberedBroadcastTxIds`, keyed by the engine's stable status id) is the join here;
+        // an id with no remembered txid keeps engine truth (the app-kill degradation, documented
+        // at the cache).
+        confirmedTxIds: Set<String>? = nil,
+        rememberedTxIds: [UInt32: String] = [:]
     ) -> [MigrationTransferRow]? {
         let preparations = statuses
             .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
@@ -4115,15 +4284,24 @@ enum MigrationDerivations {
         return preparations.enumerated().map { position, preparation in
             let status = preparation.status
 
-            // MINED is the only genuinely finished state for a preparation: its whole purpose is to
-            // create spendable notes for the transfers that depend on it, and a merely-broadcast
-            // split has not created them yet.
+            // MINED per the ENGINE used to be this row's green; R11 narrows it further — a split's
+            // "done" is when the WALLET's own store has observed it (same standard as every other
+            // green), matched via the broadcast-time txid the manager remembered. Engine mined-ness
+            // still drives the run's DEPENDENCIES (a merely-broadcast split has not created the
+            // spendable notes its transfers wait on) — that is the engine's side, untouched here.
             if case MigrationTransactionStatus.State.mined = status.state {
+                let isWalletConfirmed: Bool
+                if let confirmedTxIds, let txId = rememberedTxIds[status.id] {
+                    isWalletConfirmed = confirmedTxIds.contains(txId)
+                } else {
+                    // No wallet read ever, or no remembered txid to match — engine truth stands.
+                    isWalletConfirmed = true
+                }
                 return MigrationTransferRow(
                     id: String(status.id),
                     index: position,
                     amount: nil,
-                    status: MigrationTransferRow.Status.sent,
+                    status: isWalletConfirmed ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.confirming,
                     hoursFromNow: 0,
                     kind: MigrationTransferRow.Kind.splitBalance
                 )
@@ -4131,14 +4309,15 @@ enum MigrationDerivations {
 
             let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
 
-            if case MigrationTransactionStatus.State.broadcast = status.state {
+            if case let MigrationTransactionStatus.State.broadcast(txid) = status.state {
+                // R11: on the chain's side — `.confirming` until the wallet's store has it mined.
+                let isWalletConfirmed = confirmedTxIds?.contains(txid.toHexStringTxId()) == true
                 return MigrationTransferRow(
                     id: String(status.id),
                     index: position,
                     amount: nil,
-                    status: MigrationTransferRow.Status.active,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow,
+                    status: isWalletConfirmed ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.confirming,
+                    hoursFromNow: 0,
                     isBroadcasting: true,
                     kind: MigrationTransferRow.Kind.splitBalance
                 )

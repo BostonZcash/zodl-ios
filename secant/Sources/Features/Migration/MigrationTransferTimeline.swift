@@ -149,7 +149,7 @@ struct MigrationTransferTimeline: View {
     }
 
     @ViewBuilder private func captionOrSkeleton(for row: MigrationTransferRow) -> some View {
-        if skeletonPendingCaptions && row.status != .sent {
+        if skeletonPendingCaptions && row.status != .sent && row.status != .confirming {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Design.Surfaces.bgTertiary.color(colorScheme))
                 .frame(width: 60, height: 16)
@@ -192,6 +192,11 @@ struct MigrationTransferTimeline: View {
         switch status {
         case .sent:
             return .sent
+        case .confirming:
+            // R11: on the chain's side but not yet wallet-confirmed — the `.neutral` "ready, not
+            // yet done" check (MOB-1497 T8): check-shaped because it IS sent, not green because
+            // the wallet has not counted it yet.
+            return .neutral
         case .active, .overdue:
             return .active
         case .pending:
@@ -226,11 +231,9 @@ struct MigrationTransferTimeline: View {
         case .warning:
             return Design.Utility.WarningYellow._500
         case .neutral:
-            // MOB-1497 (T8): structurally unreachable here — this switch is fed by the status-only
-            // `badgeStyle(for:)` overload above, which never returns `.neutral` (only the row-aware
-            // overload, driving the badge itself, can); `connectorColor` is only ever called with
-            // `row.status` (never the row), so it can't observe the opt-in either. Handled only for
-            // exhaustiveness, falling back to the same tone as `.pending`.
+            // R11: reachable now — `.confirming` maps to `.neutral` in the status-only overload
+            // above (it was structurally unreachable before, MOB-1497 T8). A confirming row's
+            // trailing segment reads as pending gray: the chain is working, nothing green yet.
             return Design.Surfaces.strokePrimary
         }
     }
