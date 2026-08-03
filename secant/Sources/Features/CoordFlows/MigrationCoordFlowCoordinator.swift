@@ -689,12 +689,8 @@ extension MigrationCoordFlow {
                     scheduleEntries: split.scheduleEntries
                 )
 
-            case .keystoneSigningSubmitted(let context, let pendingScheduleStore):
-                return resumeAfterKeystoneSigning(
-                    context: context,
-                    pendingScheduleStore: pendingScheduleStore,
-                    state: &state
-                )
+            case .keystoneSigningSubmitted(let context):
+                return resumeAfterKeystoneSigning(context: context, state: &state)
 
                 // MARK: - PHASE 7: Keystone ceremony — the two terminal exits
 
@@ -1063,28 +1059,24 @@ extension MigrationCoordFlow {
         )
     }
 
-    /// The store sequence for a signed Keystone batch.
+    /// The store sequence for a signed Keystone batch: the note-split preps (when present), then
+    /// the schedule's own transfers, then the committed-schedule record and a reconcile — one
+    /// straight line, abandoning on the FIRST store failure (the honest-failure surface: the
+    /// ceremony is still up at this point, so `.keystoneScanAbandoned` pops it and cancels the
+    /// stored run) rather than landing on the terminal "Migration Scheduled" screen with anything
+    /// missing.
     ///
-    /// **No preparations:** stores the schedule immediately. Success bookkeeping fires ONLY when the
-    /// store actually succeeds — on failure this abandons instead (the honest-failure surface),
-    /// rather than landing on the terminal "Migration Scheduled" screen with nothing stored.
-    ///
-    /// **Preparations present:** stores ONLY the preps now, abandons on their failure (nothing
-    /// stored, so nothing to resume), and DEFERS the schedule store into `pendingScheduleStore`.
-    ///
-    /// The deferral is load-bearing, and the reason is an engine phase-machine trace: a preparation's
-    /// own broadcast-success record UNCONDITIONALLY overwrites the run's phase to
-    /// `WaitingDenomConfirmations`. A schedule store performed BEFORE that broadcast (which sets
-    /// `BroadcastScheduled`) gets silently clobbered the instant the broadcast lands, and the run
-    /// then never advances again once the prep mines. Storing right AFTER a successful prep
-    /// broadcast is the earliest point provably safe: mining cannot occur in the synchronous window
-    /// between "broadcast accepted" and "schedule stored".
-    ///
-    /// Note the ordering's ORIGINAL premise no longer holds — "the prep store creates the run, so it
-    /// must precede the schedule's store" was true of an earlier engine. The run is now created at
-    /// PCZT-build time (`proposeNoteSplitPCZTs`), and the two stores are order-independent
-    /// per-transaction signature applications over that one run. What still motivates the ordering is
-    /// the phase-machine trace above.
+    /// HISTORY (audit 2026-08-03, P1): the preps-present branch used to DEFER the schedule store
+    /// into a `PendingScheduleStore` "until a preparation broadcast lands" — and the deferred
+    /// payload had NO consumer, so a preps-present ceremony's schedule transfers were silently
+    /// dropped while the flow reported success. The deferral's own doc traced its motivation to a
+    /// run-level phase overwrite ("a prep broadcast-success unconditionally sets
+    /// `WaitingDenomConfirmations`, clobbering `BroadcastScheduled`") — a state machine the
+    /// current engine no longer has: migration state is now PER-TRANSACTION
+    /// (`MigrationTxState`: `apply_signature` moves one row `AwaitingSignature → Signed`; a prep
+    /// broadcast moves ITS row to `Broadcast`), so the two stores are order-independent signature
+    /// applications over one run, exactly as the old doc's own "original premise no longer holds"
+    /// note already conceded for the run-creation half. Both entries store here, immediately.
     private func storeKeystoneSignedBatch(
         context: KeystoneSigningContext,
         accountUUID: AccountUUID,
@@ -1093,34 +1085,32 @@ extension MigrationCoordFlow {
         scheduleEntries: [MigrationSignedTransferPczt]
     ) -> Effect<Action> {
         .run { [sdkSynchronizer, migrationManager, context, accountUUID, schedule, prepEntries, scheduleEntries] send in
-            guard !prepEntries.isEmpty else {
-                do {
-                    try await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, scheduleEntries)
-                } catch {
-                    LoggerProxy.error("[MOB-1466] Keystone schedule store failed: \(error)")
-                    await send(.keystoneScanAbandoned)
-                    return
-                }
-                if let schedule {
-                    await migrationManager.recordCommittedSchedule(accountUUID, schedule)
-                }
-                await migrationManager.reconcile()
-                await send(.keystoneSigningSubmitted(context: context, pendingScheduleStore: nil))
-                return
-            }
             do {
-                try await sdkSynchronizer.storeSignedNoteSplits(accountUUID, prepEntries)
+                if !prepEntries.isEmpty {
+                    try await sdkSynchronizer.storeSignedNoteSplits(accountUUID, prepEntries)
+                }
             } catch {
                 LoggerProxy.error("[MOB-1466] Keystone note-split store failed: \(error)")
                 await send(.keystoneScanAbandoned)
                 return
             }
-            let pendingScheduleStore = PendingScheduleStore(
-                accountUUID: accountUUID,
-                scheduleEntries: scheduleEntries,
-                schedule: schedule
-            )
-            await send(.keystoneSigningSubmitted(context: context, pendingScheduleStore: pendingScheduleStore))
+            do {
+                if !scheduleEntries.isEmpty {
+                    try await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, scheduleEntries)
+                }
+            } catch {
+                // The preps DID store; the abandon's run-cancel still applies — the engine
+                // re-serves the whole batch on the next ceremony rather than resuming a
+                // half-signed one.
+                LoggerProxy.error("[MOB-1466] Keystone schedule store failed: \(error)")
+                await send(.keystoneScanAbandoned)
+                return
+            }
+            if let schedule {
+                await migrationManager.recordCommittedSchedule(accountUUID, schedule)
+            }
+            await migrationManager.reconcile()
+            await send(.keystoneSigningSubmitted(context: context))
         }
     }
 
@@ -1187,7 +1177,6 @@ extension MigrationCoordFlow {
     /// else pops 1 (a build failure never pushed `scan`).
     private func resumeAfterKeystoneSigning(
         context: KeystoneSigningContext,
-        pendingScheduleStore: PendingScheduleStore?,
         state: inout State
     ) -> Effect<Action> {
         state.pendingKeystoneSigning = nil
@@ -1195,8 +1184,6 @@ extension MigrationCoordFlow {
         // Belt — the last round's store handoff already cleared the rounds state.
         state.keystoneBatchRounds = nil
         state.path.removeLast(state.path.last?.is(\.scan) == true ? 2 : 1)
-
-        state.pendingKeystoneScheduleStore = pendingScheduleStore
 
         return resumeCommittedMigrationChain(context: context, state: &state)
     }

@@ -75,15 +75,6 @@ struct MigrationCoordFlow {
         var accumulatedSigned: [MigrationSignedTransferPczt] = []
     }
 
-    /// PHASE 7: the ALREADY-SIGNED schedule payload a Keystone-with-preparations commit must store
-    /// only after a preparation broadcast succeeds — see `storeKeystoneSignedBatch`'s doc for the
-    /// engine phase-machine trace behind that ordering.
-    struct PendingScheduleStore: Equatable {
-        let accountUUID: AccountUUID
-        let scheduleEntries: [MigrationSignedTransferPczt]
-        let schedule: MigrationSchedule?
-    }
-
     /// Which destination the coordinator stashed while the Tor bottom sheet is presented — resumed
     /// once the user confirms ("Got it") or swipes the sheet away (identical outcome, using
     /// whatever toggle state is showing at that moment).
@@ -176,10 +167,6 @@ struct MigrationCoordFlow {
         /// The batch ceremony's multi-round bookkeeping — non-`nil` exactly while a batch ceremony
         /// is in flight; `nil` for the immediate lane. See `KeystoneBatchRounds`.
         var keystoneBatchRounds: KeystoneBatchRounds?
-        /// The already-signed schedule entries held back from `storeSignedMigrationTransactions`
-        /// until a preparation broadcast lands — see `storeKeystoneSignedBatch`'s doc. Consumed by
-        /// the post-confirm first-delivery kick.
-        var pendingKeystoneScheduleStore: PendingScheduleStore?
         /// The dotted `major.minor.build` firmware version the decode envelope (or PCZT stamp)
         /// reported for a ceremony that failed the minimum-firmware gate; `nil` when none was
         /// reported at all. A formatted `String` deliberately, not a `KeystoneDisplayFirmwareVersion`: the
@@ -257,14 +244,10 @@ struct MigrationCoordFlow {
 
         // PHASE 7 — the Keystone ceremony.
 
-        /// Internal: the batch ceremony's store step finished — pops `scan` + `keystoneSign` and
-        /// resumes whichever chain `context` represents. `pendingScheduleStore` is non-nil only when
-        /// preparations rode the batch (their schedule half is deferred); `nil` for a no-prep batch,
-        /// whose schedule already stored inline.
-        case keystoneSigningSubmitted(
-            context: KeystoneSigningContext,
-            pendingScheduleStore: PendingScheduleStore?
-        )
+        /// Internal: the batch ceremony's store step finished — every entry (note-split preps AND
+        /// the schedule's own transfers) stored, the committed schedule recorded — pops `scan` +
+        /// `keystoneSign` and resumes whichever chain `context` represents.
+        case keystoneSigningSubmitted(context: KeystoneSigningContext)
         /// Internal: `applyKeystoneBatchSignatures` returned. `unsignedPczts` is the ORIGINAL array
         /// handed to `buildKeystoneSignBatchQRParts`; `signed` is the returned, positionally-paired
         /// result. Dispatched from a `.run` effect (apply is `async throws`) rather than handled
