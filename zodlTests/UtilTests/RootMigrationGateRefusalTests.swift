@@ -63,7 +63,11 @@ import Testing
         startError: Error?,
         visitKind: MigrationVisit = .sync,
         lastMigrationSyncGateBlocked: Bool = false,
-        syncDeferredByMigrationGate: Bool = false
+        syncDeferredByMigrationGate: Bool = false,
+        // (#12): the not-prepared-guard test drives `.retryStart`'s `isPrepared` guard, which
+        // reads this mocked status; `SDKSynchronizerClient`'s members are `let`, so the variation
+        // has to enter here rather than by post-construction override.
+        latestSyncStatus: SyncStatus = .upToDate
     ) -> TestStore<Root.State, Root.Action> {
         var initialState = Root.State(
             destinationState: Root.DestinationState(internalDestination: .welcome),
@@ -88,6 +92,11 @@ import Testing
             Root()
         } withDependencies: {
             $0.mainQueue = .immediate
+            // (#7) `.synchronizerStartFailed` now schedules a delayed retry on this clock; an
+            // unstubbed (unimplemented) test clock records an issue the moment that effect runs.
+            // A quiet, never-advanced TestClock parks the retry instead — tests that want it to
+            // fire advance their own clock.
+            $0.continuousClock = TestClock()
 
             $0.exchangeRate = .noOp
             $0.autolockHandler = .noOp
@@ -139,7 +148,7 @@ import Testing
                 stateStream: { Empty().eraseToAnyPublisher() },
                 latestState: {
                     var syncState = SynchronizerState.zero
-                    syncState.syncStatus = .upToDate
+                    syncState.syncStatus = latestSyncStatus
                     return syncState
                 },
                 prepareWith: { _, _, _, _ in .success },
@@ -245,7 +254,6 @@ import Testing
 
         await store.send(.migrationSyncGateChanged(false)) { state in
             state.lastMigrationSyncGateBlocked = false
-            state.syncDeferredByMigrationGate = false
         }
 
         await store.receive(
@@ -255,6 +263,75 @@ import Testing
             },
             timeout: .seconds(5)
         )
+
+        // Audit 2026-08-03 (#12): the arming flag is consumed by `.retryStart` PAST its guards,
+        // no longer by the gate-resume reducer — clearing before the guards meant a disk-space or
+        // not-prepared early return swallowed the resume with the flags already gone.
+        #expect(!store.state.syncDeferredByMigrationGate, "retryStart consumed the arming flag once past its guards")
+
+        await drain(store)
+    }
+
+    /// Audit 2026-08-03 (#12): the swallowed-resume shape, pinned. A gate-clear that lands while
+    /// the SDK is momentarily NOT prepared reaches `.retryStart`'s guard and returns — and the
+    /// arming flags must SURVIVE that, so the gate's next emission can retry the whole resume.
+    @Test func notPreparedGuardLeavesTheResumeFlagsArmed() async throws {
+        let calls = LockIsolated<[String]>([])
+        let store = makeStore(
+            calls: calls,
+            startError: nil,
+            visitKind: .sync,
+            lastMigrationSyncGateBlocked: true,
+            syncDeferredByMigrationGate: true,
+            latestSyncStatus: .unprepared
+        )
+
+        await store.send(.migrationSyncGateChanged(false)) { state in
+            state.lastMigrationSyncGateBlocked = false
+        }
+
+        await store.receive(
+            { action in
+                guard case .initialization(.retryStart) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        #expect(
+            store.state.syncDeferredByMigrationGate,
+            "a not-prepared early return must leave the resume flag armed for the next emission"
+        )
+
+        await drain(store)
+    }
+
+    /// Audit 2026-08-03 (#7): a NON-gate start failure must not strand the foreground — the catch
+    /// re-arms the subscriptions (state stream + gate feed keep flowing) and schedules exactly one
+    /// delayed retry per foreground.
+    @Test func startFailureStillRegistersSubscriptionsAndArmsOneRetry() async throws {
+        let calls = LockIsolated<[String]>([])
+        let store = makeStore(calls: calls, startError: OtherStartError(), visitKind: .sync)
+
+        await store.send(.initialization(.retryStart))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        await store.receive(
+            { action in
+                guard case .initialization(.synchronizerStartFailed) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        #expect(store.state.didScheduleStartFailureRetry, "the failure must arm its one-shot delayed retry")
 
         await drain(store)
     }
@@ -288,9 +365,7 @@ import Testing
         // register-time seed read racing it.
         await drain(store)
 
-        await store.send(.migrationSyncGateChanged(false)) { state in
-            state.syncDeferredByMigrationGate = false
-        }
+        await store.send(.migrationSyncGateChanged(false))
 
         await store.receive(
             { action in
@@ -299,6 +374,9 @@ import Testing
             },
             timeout: .seconds(5)
         )
+
+        // (#12) Cleared by `.retryStart` past its guards, not by the gate-resume reducer.
+        #expect(!store.state.syncDeferredByMigrationGate, "retryStart consumed the flag the refusal armed")
 
         await drain(store)
     }

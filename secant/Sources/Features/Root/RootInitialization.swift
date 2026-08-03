@@ -142,6 +142,10 @@ extension Root {
                 let migrationCheck: Effect<Action> = state.featureFlags.migration
                     ? .send(.home(.smartBanner(.migrationForegroundCheckStarted)))
                     : .none
+                // (#7) A fresh foreground grants a fresh one-shot start-failure retry — reset here
+                // as well as at background, because an inactive-without-background cycle never
+                // runs the background boundary at all.
+                state.didScheduleStartFailureRetry = false
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
                     return .merge(migrationTickEffect, migrationCheck, .send(.initialization(.initialSetups)))
                 } else {
@@ -192,6 +196,15 @@ extension Root {
                 state.bgTask = nil
                 state.appStartState = .didEnterBackground
                 state.isLockedInKeychainUnavailableState = false
+                // Audit 2026-08-03 (#12): the migration edge detector resets at every stop
+                // boundary — the state stream is cancelled below BEFORE the SDK's `.stopped`
+                // emission can arrive, so without this the flag stays `true` across the round
+                // trip and the next foreground's first `.upToDate` snapshot reads as "no edge":
+                // no `recordSyncCompleted()`, no `advance(.afterSync)` for that whole foreground.
+                state.wasSyncUpToDateForMigration = false
+                // (#7) The one-shot start-failure retry is a foreground mechanism, same as the
+                // tick loop: cancel it and reset its latch so the next foreground starts clean.
+                state.didScheduleStartFailureRetry = false
                 return .merge(
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId),
@@ -199,7 +212,8 @@ extension Root {
                     // anything once backgrounded (there is no background lane), so its whole reason
                     // to exist stops the instant sync itself does, on the same boundary. The next
                     // foreground respawns it fresh if the spawn condition still holds.
-                    .cancel(id: state.migrationTickCancelId)
+                    .cancel(id: state.migrationTickCancelId),
+                    .cancel(id: state.startFailureRetryCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):
@@ -341,6 +355,12 @@ extension Root {
                     LoggerProxy.event("BGTask setTaskCompleted(success: \(successOfBGTask)) from TCA")
                     state.bgTask?.setTaskCompleted(success: successOfBGTask)
                     state.bgTask = nil
+                    // Audit 2026-08-03 (#12): same edge-detector reset as `didEnterBackground` —
+                    // this path cancels the state stream with the flag frequently `true` (the
+                    // task just synced to `.upToDate`), and the next foreground's re-subscription
+                    // would otherwise see `.upToDate == .upToDate`: no edge, no
+                    // `recordSyncCompleted()`, no `advance(.afterSync)` for that foreground.
+                    state.wasSyncUpToDateForMigration = false
                     return .merge(
                         migrationReconcileEffect,
                         .cancel(id: state.CancelStateId),
@@ -363,7 +383,19 @@ extension Root {
                 return .none
 
             case .initialization(.synchronizerStartFailed):
-                return .none
+                // Audit 2026-08-03 (#7): this was `return .none` — a dead end. A transient start
+                // failure (network blip, Tor bootstrap, disconnected) now schedules ONE bounded
+                // delayed retry per foreground; a second failure waits for the next external
+                // trigger (a foreground, a gate emission) rather than self-retrying in a loop.
+                // The subscriptions were re-armed by the catch that sent this action, so the gate
+                // and state streams keep flowing meanwhile.
+                guard !state.didScheduleStartFailureRetry else { return .none }
+                state.didScheduleStartFailureRetry = true
+                return .run { send in
+                    try await continuousClock.sleep(for: .seconds(15))
+                    await send(.initialization(.retryStart))
+                }
+                .cancellable(id: state.startFailureRetryCancelId, cancelInFlight: true)
                 
             // THE OTHER HALF of `SDKSynchronizerClient.stopSyncBeforeMigrationBroadcast()`
             // (matrix B12). A migration broadcast stops sync so the two are not correlated; without
@@ -613,8 +645,11 @@ extension Root {
 
                 guard shouldResume else { return .merge(reconcileEffect, stopEffect, probeCancelEffect) }
 
-                state.syncDeferredByMigrationGate = false
-                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+                // The flags this resume consumed are cleared by `.retryStart` itself, PAST its
+                // guards (audit 2026-08-03, #12): clearing them here — before the send — meant a
+                // disk-space or not-yet-prepared early return swallowed the resume with the flags
+                // already gone, and with `lastMigrationSyncGateBlocked` now false and the SDK
+                // stream collapsing duplicates, no later emission re-attempted it.
                 return .merge(
                     reconcileEffect,
                     probeCancelEffect,
@@ -637,6 +672,12 @@ extension Root {
                 guard sdkSynchronizer.latestState().syncStatus.isPrepared else {
                     return .none
                 }
+                // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
+                // #12 — see the gate-resume comment above). An early return above leaves them
+                // armed so the gate's next emission can retry the whole resume.
+                state.syncDeferredByMigrationGate = false
+                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
                 return .run { [state] send in
                     do {
                         // ZIP 318 session separation, decided BEFORE the wire is touched: if any
@@ -717,10 +758,16 @@ extension Root {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
                         }
+                        // Audit 2026-08-03 (#7): subscriptions must SURVIVE a failed start. The
+                        // register used to be reachable only through the success path, so a
+                        // transient start error left BOTH the sync state stream and the migration
+                        // gate feed unsubscribed for the whole foreground — no edges, no gate
+                        // emissions, no resume until the next background→foreground round trip.
+                        await send(.initialization(.registerForSynchronizersUpdate))
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
                     }
                 }
-                
+
             case .initialization(.registerForSynchronizersUpdate):
                 let stateStreamEffect = Effect.publisher {
                     sdkSynchronizer.stateStream()

@@ -377,12 +377,16 @@ struct MigrationManagerClient: Sendable {
     // SUCCESSFUL broadcast and dedupes via `removeDuplicates()`, so a pre-broadcast throw or a
     // `.networkError`/`.invalidNote`/`.expired` result — which never flips the SDK's gate — would
     // otherwise leave `RootInitialization.swift`'s `.migrationSyncGateChanged` handler waiting for an
-    // event that never arrives, stranding sync stopped all session. `migrationSyncGateFeed()` returns
-    // the SAME long-lived stream on every call (a fresh `AsyncStream` per subscriber would each get
-    // their own continuation and miss each other's pushes) — subscribed exactly once, alongside the
-    // SDK's own stream, in `.registerForSynchronizersUpdate`. `refreshMigrationSyncGate()` is a
-    // read+yield only: it does NOT acquire `MigrationManagerSerialExecutor` (mutates nothing this
-    // class owns) and does NOT touch `transactionGuard` (not a broadcast/server-switch).
+    // event that never arrives, stranding sync stopped all session. `migrationSyncGateFeed()` builds
+    // a FRESH `AsyncStream` per call, retaining only the LATEST continuation (audit 2026-08-03, #9 —
+    // this doc used to claim one long-lived shared stream, which the implementation never was): the
+    // single subscriber is `.registerForSynchronizersUpdate`, whose `cancelInFlight` re-subscription
+    // tears the old stream down before the new one registers. A nudge landing in that window is a
+    // silent no-op against the dead continuation — which is why every fresh subscription SEEDS
+    // itself with a live gate read at install, subsuming whatever a dropped nudge would have said.
+    // `refreshMigrationSyncGate()` is a read+yield only: it does NOT acquire
+    // `MigrationManagerSerialExecutor` (mutates nothing this class owns) and does NOT touch
+    // `transactionGuard` (not a broadcast/server-switch).
     var migrationSyncGateFeed: @Sendable () -> AsyncStream<Bool> = { AsyncStream { _ in } }
     var refreshMigrationSyncGate: @Sendable () async -> Void = { }
     // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in

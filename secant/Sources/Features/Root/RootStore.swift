@@ -73,6 +73,12 @@ struct Root {
         /// false edge, since the probe's work is moot once sync is no longer blocked. See
         /// `.migrationSyncGateChanged`'s stop half.
         var migrationGateStopProbeCancelId = UUID()
+        /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
+        /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
+        var startFailureRetryCancelId = UUID()
+        /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
+        /// the second failure waits for the next external trigger (foreground, gate emission).
+        var didScheduleStartFailureRetry = false
         /// MOB-1466: how many `.migrationTick` wake-ups THIS loop instance has seen — effect-adjacent
         /// bookkeeping for the heartbeat log line (`.migrationTick`'s handler), not itself read by any
         /// decision. Deliberately never reset except by a fresh `Root.State` — an occasional

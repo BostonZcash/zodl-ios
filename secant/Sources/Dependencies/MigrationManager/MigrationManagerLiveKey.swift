@@ -1571,6 +1571,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func migrationSyncGateFeed() -> AsyncStream<Bool> {
         AsyncStream<Bool> { continuation in
             migrationSyncGateContinuation.withLock { $0 = continuation }
+            // SELF-HEALING SEED (audit 2026-08-03, #9): a `refreshMigrationSyncGate()` nudge that
+            // lands between the old subscription's teardown and THIS continuation's install is a
+            // silent no-op — and the nudge sites are exactly the broadcast-failure recovery paths
+            // that already stopped sync, so one lost yield used to strand sync for the session.
+            // Every fresh subscription therefore re-reads the gate and yields the answer itself:
+            // whatever a dropped nudge would have said is subsumed by this read.
+            Task { [sdkSynchronizer] in
+                continuation.yield(await sdkSynchronizer.isMigrationSyncBlocked())
+            }
         }
     }
 
