@@ -155,6 +155,7 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.shouldWarnBeforeManualSend(accountUUID: accountUUID, proposal: proposal)
             },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
+            migrationSnapshotEvents: { accountUUID in impl.migrationSnapshotEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
             isManualDelivery: { impl.isManualDelivery(accountUUID: $0) },
@@ -362,6 +363,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.notStarted` seed: a first real reconcile reading `.notStarted`/no-balance pushes nothing
     /// (value unchanged).
     private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
+    /// R13 Brick 1: one `CurrentValueSubject` per account `migrationSnapshotEvents` has ever been
+    /// asked about, seeded `nil` (no derivation yet). THE published channel — the full
+    /// `MigrationViewSnapshot`, not `stateEvents`' coarse enum, so a subscriber renders the payload
+    /// instead of answering a doorbell with its own query at its own time. Fed exclusively by
+    /// `scheduleSnapshotRepublish` (coalesced, value-deduplicated); every writer edge funnels there
+    /// via `pushStateIfChanged`/`pokeStateEvent`/`recordSyncCompleted`.
+    private let snapshotSubjects = OSAllocatedUnfairLock<[AccountUUID: CurrentValueSubject<MigrationViewSnapshot?, Never>]>(initialState: [:])
+    /// R13 Brick 1: the republish coalescer — a snapshot build is several FFI reads (measured
+    /// 4.75 s quiet, 18.3 s under a sweep), so poke bursts must collapse: one build in flight per
+    /// account, at most one queued behind it (`dirty`), never a pile-up.
+    private let snapshotRepublishState = OSAllocatedUnfairLock<(inFlight: Set<AccountUUID>, dirty: Set<AccountUUID>)>(initialState: ([], []))
     /// A13: accounts whose broadcast is IN FLIGHT right now, in this app session
     /// (`runBroadcastSession`). Read by `bannerVariant` to raise `.transferSending`.
     ///
@@ -708,7 +720,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
             return MigrationViewSnapshot.empty
         }
-        let rows = await migrationTransfers(accountUUID: resolved)
+        // R13 Brick 1: the BUNDLE, not just rows — the correction below must derive from the same
+        // engine read the rows did (one clock; see `transferDerivation`). Unstamped rows are fine
+        // here: the builder reads `status`/`amount`, which the submit stamp never touches — the
+        // snapshot's own `isSubmitting` field is taken separately, last, below.
+        let derivation = await transferDerivation(accountUUID: resolved)
+        let rows = derivation.rows
         let balances = try? await sdkSynchronizer.getAccountsBalances()
         let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
         let preparations = await migrationPreparationRows(accountUUID: resolved) ?? []
@@ -721,12 +738,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
             ? nil
             : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
 
+        // R13 refinement 1 — the loader's first canonical query: pools render as if every
+        // migration transaction not wallet-mined never happened. The SDK's figures count
+        // stored-unmined migration outputs (store-at-prove, DB-autopsy-pinned); the bubbles must
+        // not, or the header claims "migrated" over checkmarks that say otherwise. Both bubbles
+        // move by the same figure, so the flip to green and the value move land in the SAME
+        // derivation — the contradiction is structurally impossible, not carefully avoided.
+        let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: derivation.statuses)
+        let sdkIronwood = balances?[resolved]?.ironwoodBalance.total() ?? Zatoshi.zero
+        let honestIronwood = Zatoshi(max(0, sdkIronwood.amount - correction.ironwoodOverstatement.amount))
+        if sdkIronwood.amount < correction.ironwoodOverstatement.amount {
+            // Impossible-state telemetry: the SDK figure SHOULD always cover the in-flight sum it
+            // counted. A clamp firing means the storage semantics shifted under us — trace, never
+            // render negative.
+            MigrationTrace.event(
+                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(sdkIronwood.decimalString())"
+                + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
+            )
+        }
+
         let snapshot = MigrationViewSnapshot(
-            orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved),
-            // The wallet's OWN per-pool figure (B10), never inferred from the rows: the two agreeing
-            // is the claim, so deriving one from the other would make it vacuous and hide the very
-            // settling lag the header exists to render honestly.
-            ironwoodHeld: balances?[resolved]?.ironwoodBalance.total() ?? Zatoshi.zero,
+            orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved) + correction.orchardUnderstatement,
+            // The wallet's OWN per-pool figure (B10), never inferred from the rows — corrected by
+            // the in-flight sum above so it renders R11's standard: what has truly crossed. The
+            // two agreeing with the greens is the claim; deriving one from the other would make it
+            // vacuous, and rendering the raw figure would make it future-tense.
+            ironwoodHeld: honestIronwood,
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,
@@ -736,7 +773,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // the snapshot claims to be. Same flag the banner's split arm reads, so the banner's
             // "keep Zodl open" and the timeline's spinner turn on and off together.
             isSubmitting: broadcastsInFlight.withLock { $0.contains(resolved) },
-            sessionOrdinal: MigrationTrace.currentSessionOrdinal
+            sessionOrdinal: MigrationTrace.currentSessionOrdinal,
+            asOfSyncedAt: gateStorage.lastSyncCompletedAt()
         )
         // Goal #6: both header figures, every derivation, so the claim can be READ rather than
         // eyeballed on a device. `settled false` is the destination trailing the checkmarks and is
@@ -749,6 +787,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             + " · settled \(snapshot.isPoolFlowSettled)"
             + " · plan \(planTotal.map { $0.decimalString() } ?? "?")"
             + " · splits \(preparations.count)"
+            + (correction.ironwoodOverstatement.amount > 0
+                ? " · inflight −\(correction.ironwoodOverstatement.decimalString())"
+                + (derivation.statuses == nil ? " (partial: engine unread)" : "")
+                : "")
             + (snapshot.isSubmitting ? " · SUBMITTING" : "")
         )
         return snapshot
@@ -831,7 +873,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the live chain tip (MOB-1513 A3) for each row's real forward ETA. No payload persisted falls
     /// back to the W1 progress-only approximation, kept verbatim below.
     ///
-    func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
+    /// R13 Brick 1: THE one derivation entry both public readers share — `migrationTransfers` and
+    /// `migrationViewSnapshot` — returning the rows, the engine statuses those rows were derived
+    /// from (`nil` when the engine was not readable in this pass: cache-served, degraded read, or
+    /// the synthesized fallback), and whether the cache served. The side effects that must happen
+    /// exactly once per REAL derivation (rows-cache fill, view-freshness stamp) live here, so the
+    /// two readers cannot drift apart.
+    private func transferDerivation(
+        accountUUID: AccountUUID?
+    ) async -> (rows: [MigrationTransferRow], statuses: [MigrationTransactionStatus]?, servedFromCache: Bool) {
         // THE ACTOR-STARVATION GUARD (field-caught 2026-08-02: a 33-second blank screen).
         //
         // `SlipstreamSynchronizer` is an ACTOR, and `finalizeReadyMigrationTransfers` — the prove
@@ -852,11 +902,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // finished. The caller renders the snapshot with its "updating…" note, and the poke fired
         // when the sweep completes brings the real values in.
         if isMigrationWorkInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
-            return cached.transfers
+            return (cached.transfers, nil, true)
         }
-        let rows = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
-        // (The cache-serve return above already carries the stamp — `cachedTransferRows` stamps
-        // its own exit, so both callers of that path agree.)
+        let derived = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
         // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
         // result is worth keeping: `[]` means "nothing derivable", and prefilling a screen with it
         // would be the blank screen again, just without the spinner to explain itself.
@@ -865,14 +913,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // cached copy of it would keep a "Sending now" caption alive after the submit returned —
         // the exact never-ending-spinner class the field keeps catching. Both accessors stamp on
         // the way OUT instead (see `stampingActiveSubmit`).
-        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !rows.isEmpty {
-            rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: rows, computedAt: Date()) }
+        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !derived.rows.isEmpty {
+            rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: derived.rows, computedAt: Date()) }
             // The view is FRESH as of this session — see `isMigrationViewFresh`. Stamped here, at
             // the one place the rows are actually derived, so no surface can mark itself fresh
             // without having done the work.
             viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
         }
-        return stampingActiveSubmit(rows, accountUUID: accountUUID)
+        return (derived.rows, derived.statuses, false)
+    }
+
+    func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
+        let derivation = await transferDerivation(accountUUID: accountUUID)
+        // The cache-serve path already carries the submit stamp — `cachedTransferRows` stamps its
+        // own exit — so only a real derivation stamps here (both callers of that path agree).
+        return derivation.servedFromCache
+            ? derivation.rows
+            : stampingActiveSubmit(derivation.rows, accountUUID: accountUUID)
     }
 
     /// D3/D6: overlays `isSubmitting` on the one transfer row whose id the CURRENT broadcast
@@ -1097,8 +1154,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
     /// screens behind the banner wait on THIS, and a blank screen with a spinner is this function
     /// not having returned yet.
-    private func migrationTransfersUntimed(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
+    /// R13 Brick 1: the untimed derivation now returns the BUNDLE — the rows AND the engine
+    /// statuses they were derived from — so `migrationViewSnapshot` can compute the pool-truth
+    /// correction from the SAME read its rows came from (one clock; a second statuses fetch inside
+    /// the snapshot builder would be exactly the second clock `MigrationViewSnapshot`'s header
+    /// forbids). `statuses` is `nil` — meaning "the engine was not readable in this pass", never
+    /// "no transactions" — for the synthesized fallback and for a degraded/empty read.
+    private func migrationTransfersUntimed(
+        accountUUID: AccountUUID?
+    ) async -> (rows: [MigrationTransferRow], statuses: [MigrationTransactionStatus]?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return ([], nil) }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             // [MOB-1513] W1 fallback, statuses-first: no persisted schedule yet (a restore, or a
@@ -1114,10 +1179,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 isProvingStalled: isProvingStalled,
                 confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID)
             ) {
-                return statusRows
+                return (statusRows, statuses.isEmpty ? nil : statuses)
             }
-            guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
-            return Self.synthesizedTransferRows(progress: progress)
+            guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return ([], nil) }
+            return (Self.synthesizedTransferRows(progress: progress), nil)
         }
 
         let state = await migrationState(accountUUID: resolvedAccountUUID) ?? MigrationState.notStarted
@@ -1129,7 +1194,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // persisted-schedule derivation fully in play — never a crash, never a blank screen.
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
 
-        return MigrationDerivations.transferRows(
+        let rows = MigrationDerivations.transferRows(
             committedSchedule: committedSchedule,
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
@@ -1139,6 +1204,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isProvingStalled: isProvingStalled,
             confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID)
         )
+        return (rows, statuses.isEmpty ? nil : statuses)
     }
 
     /// [MOB-1496] W1 fallback of last resort: no persisted schedule AND no live transfer statuses
@@ -1835,6 +1901,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func recordSyncCompleted() {
         MigrationTrace.recordSyncCompleted()
         gateStorage.recordSyncCompleted(at: Date())
+        // R13 Brick 1: sync finishing is a WRITER edge — the wallet store just advanced, so every
+        // wallet-derived snapshot fact (greens, pool values, `asOfSyncedAt`) may have moved. This
+        // edge is exactly the one the old world could miss: a sync that mines a transfer without
+        // flipping `MigrationState` never fired `stateEvents`, and the 30-second pulse was the
+        // patch. Republish every observed account.
+        snapshotSubjects.withLock { Array($0.keys) }.forEach { scheduleSnapshotRepublish(for: $0) }
     }
 
     /// MOB-1496 (R8-T4, #3): backing continuation for `migrationSyncGateFeed()` — see
@@ -3075,6 +3147,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// firing it on a balance-only flip re-delivers the (unchanged) state value, which is enough to
     /// prompt a subscriber to re-derive its rows/summary/banner off the fresh balance read.
     private func pushStateIfChanged(_ state: MigrationState, hasBalanceToMigrate: Bool, for accountUUID: AccountUUID) {
+        // R13 Brick 1: every CALL here is a writer edge — republish the snapshot regardless of
+        // whether the coarse state dedupes below. A sync can mine a transfer without changing
+        // `MigrationState` at all; the snapshot channel dedupes on VALUE equality instead, so a
+        // no-op edge costs one compared build, never a stale screen.
+        scheduleSnapshotRepublish(for: accountUUID)
+
         let subject = subject(for: accountUUID)
         let previousHasBalance = lastPushedHasBalance.withLock { $0[accountUUID] ?? false }
 
@@ -3094,8 +3172,74 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.notStarted`, and subscribers would read that seed as a real state change — closing the
     /// banner instead of refreshing it.
     private func pokeStateEvent(for accountUUID: AccountUUID) {
+        // R13 Brick 1: a poke IS a writer edge (broadcast started/finished, reconcile landed) —
+        // the snapshot channel republishes on the same signal its subscribers used to requery on.
+        scheduleSnapshotRepublish(for: accountUUID)
+
         guard let subject = stateSubjects.withLock({ $0[accountUUID] }) else { return }
         subject.send(subject.value)
+    }
+
+    // MARK: - R13 Brick 1: the published snapshot channel
+
+    /// THE observer entry (GROUND_RULES R13): one loader, one value, every surface. Subscribing
+    /// creates the account's subject (seeded `nil`) and kicks one refresh so the first real value
+    /// arrives without waiting for the next writer edge. Emissions are deduplicated on value
+    /// equality by the republisher, so a subscriber may render every emission verbatim.
+    func migrationSnapshotEvents(accountUUID: AccountUUID?) -> AnyPublisher<MigrationViewSnapshot?, Never> {
+        guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
+            return Just(MigrationViewSnapshot?.none).eraseToAnyPublisher()
+        }
+        let subject = snapshotSubjects.withLock { subjects -> CurrentValueSubject<MigrationViewSnapshot?, Never> in
+            if let existing = subjects[resolved] {
+                return existing
+            }
+            let fresh = CurrentValueSubject<MigrationViewSnapshot?, Never>(nil)
+            subjects[resolved] = fresh
+            return fresh
+        }
+        scheduleSnapshotRepublish(for: resolved)
+        return subject.eraseToAnyPublisher()
+    }
+
+    /// The coalesced republisher. No subject → no work (mirrors `pokeStateEvent`'s no-create rule:
+    /// republishing for an account nothing observes would be derivation for nobody). A build in
+    /// flight absorbs later requests into ONE follow-up build (`dirty`), so a poke burst during a
+    /// sweep costs at most two derivations, and the second one sees the sweep's final truth.
+    private func scheduleSnapshotRepublish(for accountUUID: AccountUUID) {
+        guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
+
+        let shouldStart = snapshotRepublishState.withLock { state -> Bool in
+            if state.inFlight.contains(accountUUID) {
+                state.dirty.insert(accountUUID)
+                return false
+            }
+            state.inFlight.insert(accountUUID)
+            return true
+        }
+        guard shouldStart else { return }
+
+        Task { [weak self] in
+            await self?.republishSnapshotDrainingDirty(for: accountUUID)
+        }
+    }
+
+    private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID) async {
+        while true {
+            let snapshot = await migrationViewSnapshot(accountUUID: accountUUID)
+            if let subject = snapshotSubjects.withLock({ $0[accountUUID] }), subject.value != snapshot {
+                subject.send(snapshot)
+            }
+
+            let buildAgain = snapshotRepublishState.withLock { state -> Bool in
+                if state.dirty.remove(accountUUID) != nil {
+                    return true
+                }
+                state.inFlight.remove(accountUUID)
+                return false
+            }
+            guard buildAgain else { return }
+        }
     }
 }
 
@@ -3107,6 +3251,77 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
+    /// R13 Brick 1 — the loader's FIRST CANONICAL QUERY (GROUND_RULES R13, refinement 1): what the
+    /// SDK's pool figures count that the wallet has NOT mined, so the header's bubbles can render
+    /// R11's standard — as if every migration transaction not wallet-mined never happened.
+    ///
+    /// THE LIE THIS CORRECTS, pinned by DB autopsy (2026-08-03, data34): the SDK stores a migration
+    /// transaction into the wallet's own `transactions` table at PROVE time, not at broadcast.
+    /// Storing it stores its decrypted outputs, and the wallet's balance then counts value that has
+    /// not crossed — the field wallet showed "3.02 in Ironwood" (exactly crossings 1+2+9) with ZERO
+    /// transfers broadcast. Store-at-broadcast (SP3 #3, Michal's lane) removes that cause at the
+    /// root; this correction is still needed AFTER it, for the broadcast→wallet-mined window every
+    /// transfer routinely sits in (R11's confirming span).
+    ///
+    /// ONE CLOCK: the correction derives from the SAME row set the checkmarks render — a transfer
+    /// row that is not `.sent` contributes its amount when its ENGINE state says its transaction
+    /// exists (`.proved`/`.broadcast`/`.mined`; store-at-prove makes "proved" mean "stored"). Both
+    /// bubbles move by the same figure — the destination sheds what has not truly arrived, the
+    /// source regains what has not truly left — so the header can never contradict the greens it
+    /// sits above: they flip together, on the same `walletMinedTxIds` read.
+    struct PoolTruthCorrection: Equatable {
+        /// Value the destination pool's SDK figure counts that has NOT wallet-mined — subtract.
+        let ironwoodOverstatement: Zatoshi
+        /// Value the source pool's SDK figure already shed that has NOT wallet-mined — add back.
+        let orchardUnderstatement: Zatoshi
+
+        static let none = PoolTruthCorrection(ironwoodOverstatement: .zero, orchardUnderstatement: .zero)
+    }
+
+    /// See `PoolTruthCorrection`. Precision bounds, deliberate and documented:
+    /// - FEES: the add-back excludes the in-flight transaction's fee, which is unknowable app-side
+    ///   before broadcast (`.proved` carries no txid to look one up by). The source bubble reads
+    ///   LOW by at most one fee per in-flight transfer (~10–20k zatoshi, transient) — conservative,
+    ///   never future-tense, exact at rest.
+    /// - `statuses == nil` means the engine could not be read in the rows' own pass (cache-served
+    ///   during a sweep, a degraded read, or the synthesized fallback): only `.confirming` rows
+    ///   contribute then — those are stored BY CONSTRUCTION (broadcast). Freshly-proved pollution
+    ///   inside a sweep window corrects itself at the post-sweep poke's full pass.
+    /// - `.invalid` engine states contribute nothing: whether their stored transaction still counts
+    ///   is unknowable here; the residual dies with store-at-broadcast.
+    /// - SPLITS are exempt: intra-Orchard, their net unmined effect is −fee only (same bound).
+    static func inFlightPoolCorrection(
+        rows: [MigrationTransferRow],
+        statuses: [MigrationTransactionStatus]?
+    ) -> PoolTruthCorrection {
+        let stateById: [String: MigrationTransactionStatus.State]? = statuses.map { list in
+            Dictionary(list.map { (String($0.id), $0.state) }, uniquingKeysWith: { first, _ in first })
+        }
+
+        var inFlight = Zatoshi.zero
+        for row in rows where row.kind == MigrationTransferRow.Kind.transfer && row.status != MigrationTransferRow.Status.sent {
+            guard let amount = row.amount else { continue }
+
+            let isStoredUnmined: Bool
+            if let stateById {
+                switch stateById[row.id] {
+                case .proved, .broadcast, .mined:
+                    isStoredUnmined = true
+                case .awaitingSignature, .signed, .invalid, nil:
+                    isStoredUnmined = false
+                }
+            } else {
+                isStoredUnmined = row.status == MigrationTransferRow.Status.confirming
+            }
+
+            if isStoredUnmined {
+                inFlight = inFlight + amount
+            }
+        }
+
+        return PoolTruthCorrection(ironwoodOverstatement: inFlight, orchardUnderstatement: inFlight)
+    }
+
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
     /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
@@ -4495,6 +4710,12 @@ final class MigrationGateStorage: @unchecked Sendable {
         }
 
         return Date(timeIntervalSince1970: interval)
+    }
+
+    /// R13 (refinement 3): the same stored timestamp `sendGate(now:buffer:)` measures from, exposed
+    /// as the snapshot's `asOfSyncedAt` — the age label for every wallet-derived fact on screen.
+    func lastSyncCompletedAt() -> Date? {
+        storedLastSyncCompletedAt()
     }
 
     // MARK: Mode / manual delivery / network privacy / acknowledge / dust-lock

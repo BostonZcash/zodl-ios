@@ -149,6 +149,14 @@ struct MigrationManagerClient: Sendable {
     var shouldWarnBeforeManualSend: @Sendable (_ accountUUID: AccountUUID?, _ proposal: Proposal?) async -> Bool = { _, _ in false }
 
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
+    /// R13 Brick 1 — THE published snapshot channel (GROUND_RULES R13): one loader, one immutable
+    /// value, every surface. Unlike `stateEvents` (a doorbell carrying only the coarse
+    /// `MigrationState`, which every listener answered with its own query at its own time), this
+    /// emits the full freshly-derived `MigrationViewSnapshot` whenever a WRITER commits — engine
+    /// step done, sync finished, reconcile landed, broadcast edges — deduplicated on value
+    /// equality, `nil` until the first derivation. Brick 2 moves every surface onto this and
+    /// retires their private pulls; until then it runs beside them (same derivation, same values).
+    var migrationSnapshotEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationViewSnapshot?, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
     // accounts choose independently.

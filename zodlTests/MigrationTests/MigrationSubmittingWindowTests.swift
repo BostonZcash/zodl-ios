@@ -102,7 +102,8 @@ import ZcashLightClientKit
             preparations: [Self.row(status: .active)],
             planTotal: Zatoshi(900_000_000),
             isSubmitting: true,
-            sessionOrdinal: 1
+            sessionOrdinal: 1,
+            asOfSyncedAt: nil
         )
 
         #expect(submitting.isSubmitting)
