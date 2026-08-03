@@ -31,6 +31,16 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationPoolFlowHeader: View {
+    /// The app's appearance, resolved per render — NOT a hardcoded `.light`.
+    ///
+    /// The first cut of this file passed `.color(.light)` to the bubble fills, which pinned them to
+    /// the light-mode surface while `zFont` kept resolving text against the real appearance: in dark
+    /// mode that put near-white text on a pale grey bubble and the destination amount was
+    /// unreadable. Every sibling view here — `MigrationDetailRow`, `MigrationTransferTimeline`,
+    /// `MigrationStepBadge` — reads the environment and passes it to `.color(_:)`, and that is the
+    /// design system's contract: the token carries both values, the caller supplies the appearance.
+    @Environment(\.colorScheme) private var colorScheme
+
     /// GOAL #5: the same shared exchange rate the timeline rows read
     /// (`MigrationTransferTimeline`), so a wallet with currency conversion ON shows fiat in BOTH
     /// places or neither. Shipping the header without it would have made this screen the one place
@@ -87,10 +97,12 @@ struct MigrationPoolFlowHeader: View {
         .background {
             RoundedRectangle(cornerRadius: 12)
                 // The destination is the one the user is watching fill, so it carries the emphasis;
-                // the source is draining and deliberately reads quieter.
+                // the source is draining and deliberately reads quieter. Both tokens hold a light
+                // AND a dark value (gray50/shark900, gray100/shark800), so the pair stays
+                // distinguishable in either appearance — see the `colorScheme` note above.
                 .fill(isSource
-                    ? Design.Surfaces.bgSecondary.color(.light)
-                    : Design.Surfaces.bgTertiary.color(.light))
+                    ? Design.Surfaces.bgSecondary.color(colorScheme)
+                    : Design.Surfaces.bgTertiary.color(colorScheme))
         }
     }
 }

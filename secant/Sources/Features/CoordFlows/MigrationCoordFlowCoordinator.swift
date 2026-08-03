@@ -1256,9 +1256,12 @@ extension MigrationCoordFlow {
         // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
         // set it already — this widens the claim, it never retracts one.
         state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
+        // D14 + GOAL #4: the snapshot CARRIES the run's preparation rows, so this one read hydrates
+        // the collapsed Split Balance row, its "· N steps" count, the "Show details" gate and the
+        // sheet. The separate `migrationPreparationRows` read that used to sit here was a second
+        // call to the same manager function at a different moment — one clock too many, and the
+        // reason a row could disagree with its own step count.
         state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
-        // D14: the run's REAL split rows; `nil` leaves the store on its synthesized single row.
-        state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
     }
 
@@ -1279,9 +1282,9 @@ extension MigrationCoordFlow {
         // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
         // set it already — this widens the claim, it never retracts one.
         state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
+        // D14 + GOAL #4: as in `statusResumeState` — the snapshot carries the preparation rows, so
+        // there is no second read to drift from.
         state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
-        // D14: as in `statusResumeState` — real preparation rows when the engine has them.
-        state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
     }
 

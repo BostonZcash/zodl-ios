@@ -34,6 +34,11 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationStatusView: View {
+    /// Passed to every `.color(_:)` on this screen. The `updatingNote` spinner shipped with a
+    /// hardcoded `.light` and was invisible in dark mode — same defect as the pool header's bubbles,
+    /// same fix: the token holds both values, the caller supplies the appearance.
+    @Environment(\.colorScheme) private var colorScheme
+
     @Perception.Bindable var store: StoreOf<MigrationStatus>
 
     init(store: StoreOf<MigrationStatus>) {
@@ -68,21 +73,6 @@ struct MigrationStatusView: View {
                             MigrationPoolFlowHeader(snapshot: store.poolFlow)
                         }
 
-                        // GOAL #4 (Figma 5207-16322): the split's parts moved out of the timeline,
-                        // so this is the door to them. Shown whenever there is more than one part —
-                        // a single-part split has no detail the collapsed row does not already say,
-                        // which is the one case the design omits the button.
-                        if store.poolFlow.hasSplitDetail {
-                            Button {
-                                store.send(.showSplitDetailTapped)
-                            } label: {
-                                Text(localizable: .migrationSplitShowDetails)
-                                    .zFont(.medium, size: 14, style: Design.Text.primary)
-                                    .underline()
-                            }
-                            .padding(.bottom, 16)
-                        }
-
                         if store.isUpdating {
                             updatingNote
                         }
@@ -91,6 +81,18 @@ struct MigrationStatusView: View {
                             rows: store.rows,
                             caption: caption(for:),
                             splitRows: store.splitRows,
+                            // GOAL #4 (Figma 5207-16322): "Show details ⌄" belongs to the split row —
+                            // under its caption, in its text column — NOT floating above the list as
+                            // an unrelated link. `MigrationTransferTimeline` already renders exactly
+                            // that affordance for any caller that opts in, so this screen adopts the
+                            // same one the Confirm Transfer Plan screen has always shown; nothing new
+                            // is drawn here.
+                            //
+                            // `nil` when the split has one part: the design omits the disclosure
+                            // there, and a one-part split has no detail the row does not already say.
+                            onSplitDetailsTapped: store.poolFlow.hasSplitDetail
+                                ? { store.send(.showSplitDetailTapped) }
+                                : nil,
                             skeletonPendingCaptions: store.isRescheduling,
                             captionStyle: { row in
                                 // MOB-1511 (W4): the Split Balance row's "Done" renders green,
@@ -205,6 +207,26 @@ struct MigrationStatusView: View {
         if row.kind == .splitBalance && row.status == .sent {
             return String(localizable: .migrationStatusDone)
         }
+        // The collapsed split keeps the count of what it collapsed: "Ready now · 4 steps", the
+        // designed caption (Figma 5207-16322, `migrationPlan.splitBalanceCaption`) that the Confirm
+        // Transfer Plan screen has always used via `MigrationTransferPlan.State.splitCaption`.
+        //
+        // Collapsing four rows into one WITHOUT the count is a straight loss of information: the row
+        // stops saying how much work it stands for, and the only remaining hint is a disclosure the
+        // user has to open. The count is why the collapse is honest.
+        if row.kind == .splitBalance, store.poolFlow.hasSplitDetail {
+            return String(
+                localizable: .migrationPlanSplitBalanceCaption(
+                    unsplitCaption(for: row),
+                    store.poolFlow.preparations.count
+                )
+            )
+        }
+        return unsplitCaption(for: row)
+    }
+
+    /// The row's own status caption, before the split row's step-count suffix is applied.
+    private func unsplitCaption(for row: MigrationTransferRow) -> String {
         switch row.status {
         case .sent:
             if let sentMinutesAgo = row.sentMinutesAgo {

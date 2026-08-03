@@ -133,15 +133,19 @@ struct MigrationStatus {
         /// without going through `.statusLoaded` — and so it doesn't force every
         /// `.statusLoaded`/`.rescheduleCompleted` call site (and every existing exhaustive
         /// `TestStore` assertion) to separately track a parallel stored field.
-        /// D14: the run's REAL note-preparation rows, from its `.preparation`-kind transaction
-        /// statuses (`MigrationManagerClient.migrationPreparationRows`). Non-nil once the
-        /// coordinator/`.statusLoaded` path has read them; `nil` means "no preparation statuses
-        /// readable", and `splitRows` falls back to the single synthesized row below — exactly what
-        /// this screen showed before D14.
+        /// D14: the run's REAL note-preparation rows — now read from `poolFlow`, NOT from a stored
+        /// second copy.
         ///
-        /// Stored, not computed, because unlike `rows` these do not derive from anything already in
-        /// state: they are a separate engine read.
-        var preparationRows: [MigrationTransferRow]?
+        /// It WAS a separate stored field, hydrated by its own `migrationPreparationRows` call one
+        /// line below the coordinator's snapshot read. Both ultimately call the same manager
+        /// function, but at two moments, which is the two-clocks shape this whole pass exists to
+        /// remove — and it bit immediately: the collapsed row was built from one copy while the
+        /// row's own "· N steps" count and the "Show details" gate read the other. A row that
+        /// disagrees with its own step count is worse than either version alone.
+        ///
+        /// Empty means "no preparation statuses readable", and `splitRows` falls back to the single
+        /// synthesized row below — exactly what this screen showed before D14.
+        var preparationRows: [MigrationTransferRow] { poolFlow.preparations }
 
         var splitRows: IdentifiedArrayOf<MigrationTransferRow> {
             // GOAL #4 (field, 2026-08-03): the timeline shows ONE Split Balance row, ALWAYS.
@@ -157,7 +161,7 @@ struct MigrationStatus {
             // truthful for a multi-layer split that is genuinely part-way through, rather than
             // falling back to the `.sent` placeholder below (which is only correct when there is no
             // engine data at all).
-            if let preparationRows, !preparationRows.isEmpty {
+            if !preparationRows.isEmpty {
                 return [Self.collapsedSplitRow(from: preparationRows, transfers: rows)]
             }
 
