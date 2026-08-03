@@ -77,6 +77,7 @@ import ZcashLightClientKit
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
+        activeBroadcastTxId: UInt32? = nil,
         progressCompleted: Int = 0,
         progressTotal: Int = 6
     ) -> MigrationBannerVariant? {
@@ -91,7 +92,8 @@ import ZcashLightClientKit
             isMigrationRemainderPending: false,
             transferRows: transferRows,
             preparationRows: preparationRows,
-            isBroadcastInFlight: isBroadcastInFlight
+            isBroadcastInFlight: isBroadcastInFlight,
+            activeBroadcastTxId: activeBroadcastTxId
         )
     }
 
@@ -159,20 +161,39 @@ import ZcashLightClientKit
         #expect(variant == .transferSending(number: 1))
     }
 
-    /// The NUMBER still comes from row position — that half of the row-truth pass stands, and it is
-    /// what makes the banner and the timeline agree on WHICH transfer. Here the engine has seen
-    /// transfer 1 mined while `completedTransfers` still reads 0: the mined count would have said
-    /// Transfer 1, the rows correctly say Transfer 2.
-    @Test func theSendingNumberIsThePositionNotTheMinedCount() {
+    /// GROUND_RULES D6: the NUMBER is the id the session is ACTUALLY submitting, carried from the
+    /// manager's own record — never inferred from `isBroadcasting` rows. The old inference named
+    /// the PREVIOUS transfer whenever one was still broadcast-but-unmined while a new one went out
+    /// (field: "T8 is sending..." during T9's submit). Here the active id names row index 1 and the
+    /// banner says Transfer 2 — where the mined count would have said 1, and the old row inference
+    /// would have too if an earlier unmined broadcast were present.
+    @Test func theSendingNumberIsTheSessionsOwnId() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .sent),
                 Self.row(index: 1, status: .active, isBroadcasting: true)
             ],
-            isBroadcastInFlight: true
+            isBroadcastInFlight: true,
+            activeBroadcastTxId: 1
         )
         #expect(variant == .transferSending(number: 2), "the mined count would have said Transfer 1")
+    }
+
+    /// THE FIELD CASE, pinned: T8 broadcast-but-unmined from the previous window, T9 submitting
+    /// NOW. Two rows on the wire; the banner names the session's own (T9), not the older one the
+    /// row inference used to pick.
+    @Test func aPreviousUnminedBroadcastDoesNotStealTheSendingNumber() {
+        let variant = Self.variant(
+            state: .inProgress(Self.progress(completed: 7, total: 12)),
+            transferRows: [
+                Self.row(index: 7, status: .active, isBroadcasting: true),
+                Self.row(index: 8, status: .active, isBroadcasting: true)
+            ],
+            isBroadcastInFlight: true,
+            activeBroadcastTxId: 8
+        )
+        #expect(variant == .transferSending(number: 9), "must name T9 (the session's id), not the unmined T8")
     }
 
     /// Same lag, the waiting arm. A run whose first transfer has landed but whose progress read has
@@ -250,7 +271,7 @@ import ZcashLightClientKit
     }
 
     /// But a broadcast already in flight outranks it — that transfer is past preparing, and naming
-    /// the delivery is the more specific truth.
+    /// the delivery is the more specific truth. D6: the number comes from the session's active id.
     @Test func sendingBeatsPreparing() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
@@ -258,7 +279,8 @@ import ZcashLightClientKit
                 Self.row(index: 0, status: .active, isBroadcasting: true),
                 Self.row(index: 1, status: .pending, isPreparing: true)
             ],
-            isBroadcastInFlight: true
+            isBroadcastInFlight: true,
+            activeBroadcastTxId: 0
         )
         #expect(variant == .transferSending(number: 1))
     }
