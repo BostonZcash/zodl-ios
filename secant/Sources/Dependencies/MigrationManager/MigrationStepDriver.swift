@@ -310,6 +310,7 @@ extension MigrationManagerImpl {
         phase: MigrationOpenPhase
     ) async -> MigrationStepVerdict {
         var fallback = MigrationStepVerdict.noRun
+        var firstHeld: MigrationStepVerdict?
 
         // The plan's one status-aware cell (the `.prove` row's `.tick` column) keys off whether
         // sync currently reads `.upToDate` — read ONCE per driver call, from the same live source
@@ -325,6 +326,19 @@ extension MigrationManagerImpl {
             let action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
             let verdict = await execute(action, accountUUID: accountUUID, phase: phase)
 
+            // `.held` is a PER-ACCOUNT outcome (audit 2026-08-03, #4): the mode belt and the
+            // manual-delivery read hold ONE account's step, not the wallet's. Returning on the
+            // first hold starved every later account — an `.immediate` account's permanently-due
+            // broadcast blocked a `.privateScheduled` sibling's delivery on every single tick.
+            // Remember the first hold as the session's summary and keep discharging; a later
+            // account's SUBSTANTIVE verdict still wins the return below. (The wallet-wide
+            // privacy buffer holds every account identically, so continuing under it just
+            // collects the same hold once.)
+            if case .held = verdict {
+                if firstHeld == nil { firstHeld = verdict }
+                continue
+            }
+
             // Not substantive on its own, but a better summary than `noRun` — keep the most
             // informative one seen so far and let a later account override it.
             let isQuiet = [
@@ -338,7 +352,7 @@ extension MigrationManagerImpl {
             if fallback == MigrationStepVerdict.noRun { fallback = verdict }
         }
 
-        return fallback
+        return firstHeld ?? fallback
     }
 
     /// One action, executed. The switch is exhaustive over `MigrationStepAction` (I1) — every case
@@ -454,7 +468,10 @@ extension MigrationManagerImpl {
             )
         }
 
-        let didBroadcast = await runBroadcastSession()
+        // The account THIS discharge vetted (mode belt, manual delivery, send gate above) is the
+        // one the session delivers — see `runBroadcastSession(vettedAccountUUID:)`'s doc for the
+        // held-account submission its own sweep used to make.
+        let didBroadcast = await runBroadcastSession(vettedAccountUUID: accountUUID)
         return didBroadcast
             ? MigrationStepVerdict.broadcast(id: id)
             : MigrationStepVerdict.held(reason: "broadcast session submitted nothing for transfer \(id)")

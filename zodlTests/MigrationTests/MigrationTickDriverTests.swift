@@ -240,6 +240,89 @@ import ComposableArchitecture
         #expect(sweepCalls.value == 0, "the sweep must never run off the tip")
     }
 
+    // MARK: - Held accounts must not starve their siblings (audit 2026-08-03, #4)
+
+    private static let secondAccountUUID = AccountUUID(id: [UInt8](repeating: 0x0C, count: 16))
+
+    private static func secondAccount() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: secondAccountUUID,
+                name: "Keystone",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(1),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// The starvation shape: the SELECTED account is `.immediate` with a permanently-due
+    /// broadcast (the mode belt holds it on every tick), the second account is `.privateScheduled`
+    /// with its own due transfer. The first hold used to end the discharge loop — account B's
+    /// delivery never ran, on every tick, for as long as A stayed due.
+    @Test func aHeldAccountDoesNotStarveTheNextAccountsDelivery() async {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+        $walletAccounts.withLock { $0 = [Self.account(), Self.secondAccount()] }
+
+        let submittedFor = LockIsolated<[AccountUUID]>([])
+        let storage = Self.freshGateStorage(mode: .immediate)
+        storage.setMigrationMode(.privateScheduled, for: Self.secondAccountUUID)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { accountUUID in
+                    accountUUID == Self.secondAccountUUID ? .broadcast(id: 7) : .broadcast(id: 1)
+                },
+                executeNextPendingMigrationTransfer: { accountUUID, _, _ in
+                    submittedFor.withValue { $0.append(accountUUID) }
+                    return .executed(.success(txId: "efgh"))
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: storage)
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(verdict == .broadcast(id: 7), "the second account's due transfer must discharge past the first's hold, got \(verdict)")
+        #expect(submittedFor.value == [Self.secondAccountUUID], "exactly one submission, for the scheduled account")
+    }
+
+    // MARK: - A broadcast verdict means a broadcast LANDED (audit 2026-08-03, #5)
+
+    /// `runBroadcastSession` used to return `true` unconditionally — a `.nothingDue` disagreement
+    /// (and every failure) read as `.broadcast(id:)` upstream, making a permanently-failing run
+    /// indistinguishable in the log from a healthy one.
+    @Test func aNothingDueAttemptAnswersHeldNotBroadcast() async {
+        Self.installCandidateAccount()
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .tick)
+        }
+
+        guard case .held = verdict else {
+            Issue.record("an attempt that submitted nothing must answer .held, got \(verdict)")
+            return
+        }
+    }
+
     // MARK: - Step-read failure honesty (audit 2026-08-03, P1)
 
     /// A THROWN engine read must never flatten into `.noRun` — that verdict self-cancels the tick

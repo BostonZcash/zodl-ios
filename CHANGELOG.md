@@ -20,6 +20,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] On wallets with more than one account, one account's held migration transfer (for example an account set to manual delivery, or to immediate mode) no longer blocks the other account's scheduled deliveries from running.
+- [MOB-1466] Migration status and logs now report a broadcast only when one actually went out — a failed or empty send attempt previously looked identical to a successful one, which made a stuck run read as healthy.
 - [MOB-1466] A momentary failure while restarting sync (a network blip, Tor still bootstrapping) no longer freezes the wallet for the rest of the session — the app keeps listening for recovery signals and automatically retries once shortly after.
 - [MOB-1466] Fixed a rare race where a failed migration transfer's recovery signal could be lost if it arrived at the exact moment the app was re-establishing its internal subscriptions, which left syncing stopped until the next app open.
 - [MOB-1466] A migration sync resume that arrives while the device is briefly low on disk space, or while the wallet is still preparing, is no longer swallowed — it is retried at the next opportunity. Background sync completions also no longer suppress the following foreground's migration processing.

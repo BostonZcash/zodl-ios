@@ -2024,10 +2024,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// Deliberately OUTSIDE `serialExecutor`, same reasoning as `runProveSweep`: a submission is a
     /// long network operation (Tor bootstrap included), and holding the mutex that serializes
     /// reconcile/commit across it would block the very `reconcile()` that runs at the end of it.
-    func runBroadcastSession() async -> Bool {
+    /// `vettedAccountUUID` (audit 2026-08-03, #4): the driver's discharge is PER-ACCOUNT — its
+    /// mode belt and manual-delivery checks vet one account's step, then this session used to
+    /// re-sweep EVERY candidate itself, selected-first, and could submit for exactly the account
+    /// the belt had just held (an `.immediate` account's due transfer delivered off a tick). The
+    /// driver now passes the account it vetted and the session delivers THAT one; the wallet-wide
+    /// sweep remains for the parameterless client member (no production caller today).
+    func runBroadcastSession(vettedAccountUUID: AccountUUID? = nil) async -> Bool {
         guard isIronwoodActivated() else { return false }
 
-        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+        let accountUUIDs = vettedAccountUUID.map { [$0] } ?? MigrationDerivations.candidateAccountUUIDs(
             selectedAccountUUID: selectedWalletAccount?.id,
             walletAccounts: walletAccounts
         )
@@ -2101,16 +2107,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
             setMigrationWorkInFlight(true)
 
             pokeStateEvent(for: accountUUID)
-            await broadcastOneTransfer(accountUUID: accountUUID)
+            let didBroadcast = await broadcastOneTransfer(accountUUID: accountUUID)
             // Cleared BEFORE the closing poke, so that one derives fresh — it is the edge that
             // reveals the row this broadcast just changed.
             setMigrationWorkInFlight(false)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
             pokeStateEvent(for: accountUUID)
 
-            // ZIP 318: a session carries ONE broadcast. A second account's due transfer waits for
-            // the next app-open, which is also the next delivery window the user gives us.
-            return true
+            // ZIP 318: a session carries ONE broadcast ATTEMPT — the session touched the wire, so
+            // a second account waits for the next open either way. The RETURN, though, is the
+            // attempt's real outcome (audit 2026-08-03, #5): this used to be an unconditional
+            // `true`, so a `.nothingDue`, an `.awaitingProof`, a rejected result and a thrown
+            // submit all read as "broadcast" upstream — the driver logged `.broadcast(id:)` on
+            // every open, forever, while nothing went out, and `.failed` was unreachable from
+            // this lane.
+            return didBroadcast
         }
 
         return false
@@ -2120,7 +2131,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// landed broadcast (the SDK's own migration gate transitions, and nothing needs nudging) or
     /// reopens the app-side sync gate — sync was stopped for a broadcast that did not land, and
     /// without the nudge nothing else would ever restart it.
-    private func broadcastOneTransfer(accountUUID: AccountUUID) async {
+    ///
+    /// Returns whether a broadcast actually LANDED (a `.success` result, or the
+    /// landed-but-record-failed shape, which is a landed broadcast by definition).
+    private func broadcastOneTransfer(accountUUID: AccountUUID) async -> Bool {
         let options = await migrationNetworkOptions(accountUUID: accountUUID)
         await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
 
@@ -2140,14 +2154,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 await reconcile()
                 guard case MigrationTransferResult.success = result else {
                     await refreshMigrationSyncGate()
-                    return
+                    return false
                 }
+                return true
 
             case .nothingDue:
                 // The advance step said broadcast and the executor disagrees — a tip moved under
                 // us, or another lane got there first. Nothing was sent; let sync resume.
                 LoggerProxy.event("\(Self.logTag) broadcast result: nothing due — the executor disagreed with the step")
                 await refreshMigrationSyncGate()
+                return false
 
             case .awaitingProof(let id):
                 // Proving is sync-bound, so it must NOT happen in a send session. Reopening the
@@ -2155,17 +2171,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // later send visit delivers it.
                 LoggerProxy.event("\(Self.logTag) transfer \(id) due but awaiting proof — deferring to the next sync visit")
                 await refreshMigrationSyncGate()
+                return false
             }
         } catch ZcashError.migrationRecordFailedAfterBroadcast {
             // The broadcast LANDED and only recording it failed (the engine self-heals later) —
             // treated exactly as a success: not a failure to route, and no gate nudge.
             await reconcile()
+            return true
         } catch {
             if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
                 _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             }
             LoggerProxy.event("\(Self.logTag) headless broadcast failed — \(error.toZcashError())")
             await refreshMigrationSyncGate()
+            return false
         }
     }
 
