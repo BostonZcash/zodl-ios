@@ -105,17 +105,19 @@ struct MigrationCompleteView: View {
         .navigationBarBackButtonHidden()
         .navigationBarItems(trailing: trailingNavItem)
         .alert($store.scope(state: \.alert, action: \.alert))
+        // `$store.<flag>.sending` rather than a hand-rolled `Binding(get:set:)`: SwiftUI invokes a
+        // hand-rolled binding's `get` during ITS update cycle, outside the `WithPerceptionTracking`
+        // scope this body established, which trips "Perceptible state was accessed but is not being
+        // tracked" on every hosted screen — see MigrationCoordFlowView's identical note.
         .zashiSheet(
-            isPresented: Binding(
-                get: { store.isLockExplainerPresented },
-                set: { presented in
-                    if !presented {
-                        store.send(.lockExplainerDismissed)
-                    }
-                }
-            )
+            isPresented: $store.isLockExplainerPresented.sending(\.lockExplainerPresentedChanged)
         ) {
-            lockExplainerSheetContent()
+            // The content builder runs inside the PRESENTATION's hosting body, outside this body's
+            // tracking scope, and it reads store state (dust, dustResolution) — so it needs a
+            // tracking scope of its own.
+            WithPerceptionTracking {
+                lockExplainerSheetContent()
+            }
         }
     }
 

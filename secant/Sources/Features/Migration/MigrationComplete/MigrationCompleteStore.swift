@@ -123,6 +123,10 @@ struct MigrationComplete {
         case lockDustFailed(ZcashError)
         case lockDustSucceeded
         case lockExplainerDismissed
+        /// The sheet's presentation BINDING (`$store...sending`) — SwiftUI writes `false` here on
+        /// drag-dismiss. Distinct from `lockExplainerDismissed` (the sheet's own button) only in
+        /// who sends it; both land on the same flag.
+        case lockExplainerPresentedChanged(Bool)
         case lockExplainerHelpTapped
         case migrateAnywayTapped
         /// Audit 2026-08-03 (#11): re-arms "Migrate anyway" on every arrival — the flag used to be
@@ -183,6 +187,10 @@ struct MigrationComplete {
 
             case .lockExplainerDismissed:
                 state.isLockExplainerPresented = false
+                return .none
+
+            case .lockExplainerPresentedChanged(let presented):
+                state.isLockExplainerPresented = presented
                 return .none
 
             case .lockExplainerHelpTapped:

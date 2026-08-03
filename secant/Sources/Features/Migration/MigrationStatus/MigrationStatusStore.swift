@@ -255,6 +255,10 @@ struct MigrationStatus {
         case gotItTapped
         case showSplitDetailTapped
         case splitDetailDismissed
+        /// The sheet's presentation BINDING (`$store...sending`) — SwiftUI writes `false` here on
+        /// drag-dismiss. Distinct from `splitDetailDismissed` (the sheet's own button) only in who
+        /// sends it; both land on the same flag.
+        case splitDetailPresentedChanged(Bool)
         case delegate(Delegate)
         /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
         case migrationStateChanged
@@ -324,6 +328,10 @@ struct MigrationStatus {
 
             case .showSplitDetailTapped:
                 state.isSplitDetailPresented = true
+                return .none
+
+            case .splitDetailPresentedChanged(let presented):
+                state.isSplitDetailPresented = presented
                 return .none
 
             case .splitDetailDismissed:

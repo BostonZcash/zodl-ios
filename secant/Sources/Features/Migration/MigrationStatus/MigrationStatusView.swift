@@ -129,23 +129,28 @@ struct MigrationStatusView: View {
             .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
+        // `$store.<flag>.sending` rather than a hand-rolled `Binding(get:set:)`: SwiftUI invokes a
+        // hand-rolled binding's `get` during ITS update cycle, outside the `WithPerceptionTracking`
+        // scope this body established, which trips "Perceptible state was accessed but is not being
+        // tracked" on every hosted screen — see MigrationCoordFlowView's identical note.
         .zashiSheet(
-            isPresented: Binding(
-                get: { store.isSplitDetailPresented },
-                set: { presented in
-                    if !presented {
-                        store.send(.splitDetailDismissed)
-                    }
-                }
-            )
+            isPresented: $store.isSplitDetailPresented.sending(\.splitDetailPresentedChanged)
         ) {
-            // Steps AND total both from `poolFlow` — one derivation, four observers. The sheet is
-            // the fourth (banner, timeline, pool header, this), and the first three already agree.
-            MigrationPrepareBalanceSheet(
-                steps: MigrationPrepareBalanceRow.from(preparations: store.poolFlow.preparations),
-                amountBeingSplit: store.splitRows.first?.amount
-            ) {
-                store.send(.splitDetailDismissed)
+            // A sheet's content builder runs inside the PRESENTATION's hosting body, outside the
+            // screen body's `WithPerceptionTracking` above — exactly the escaping-closure case the
+            // Perception runtime warns about (and it did, once per state read per evaluation, on
+            // every open of this screen). The wrapper both silences the warning and makes the
+            // presented sheet actually re-render when `poolFlow` moves under it mid-sweep.
+            WithPerceptionTracking {
+                // Steps AND total both from `poolFlow` — one derivation, four observers. The sheet
+                // is the fourth (banner, timeline, pool header, this), and the first three already
+                // agree.
+                MigrationPrepareBalanceSheet(
+                    steps: MigrationPrepareBalanceRow.from(preparations: store.poolFlow.preparations),
+                    amountBeingSplit: store.splitRows.first?.amount
+                ) {
+                    store.send(.splitDetailDismissed)
+                }
             }
         }
         .onAppear {
