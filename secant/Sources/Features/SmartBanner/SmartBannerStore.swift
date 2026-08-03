@@ -492,6 +492,18 @@ struct SmartBanner {
                 }
 
             case .migrationCheckDwellElapsed:
+                // GROUND_RULES R3: the floor may have elapsed, but the state ends ONLY on the
+                // session's verdict. If it has not arrived, keep checking and re-poll on the same
+                // cadence — a 0.2s banner-local poll that terminates the moment the driver marks
+                // the verdict. This is the "floor, not timeout" rule made structural: the old code
+                // ended the hold on the timer and the very next pre-verdict answer was the lie.
+                guard migrationManager.isMigrationSessionVerdictKnown() else {
+                    MigrationTrace.event("banner check dwell elapsed — verdict pending, staying on checking (R3)")
+                    return .run { send in
+                        try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                        await send(.migrationCheckDwellElapsed)
+                    }
+                }
                 state.isMigrationCheckDwelling = false
                 MigrationTrace.event(
                     "banner check dwell elapsed — held answer: \(state.hasHeldMigrationVariant ? "yes, applying" : "none yet, staying on checking")"
@@ -508,7 +520,27 @@ struct SmartBanner {
                 return .send(.migrationVariantUpdated(held))
 
             case .migrationVariantUpdated(let variant):
-                if state.isMigrationCheckDwelling {
+                // GROUND_RULES R3: while migration OWNS the slot, no variant may replace what is on
+                // screen before the session's first engine verdict — a pre-verdict answer is fresh
+                // but answers the wrong question (the flicker: idle at +0.5s, "keep open" at +2.5s,
+                // both individually true). Hold it and show `.checkingStatus`; the verdict edge
+                // (step driver → `markSessionVerdictKnown`) plus the dwell re-poll below release it.
+                // Scoped to an owned slot on purpose: the cold walk-down's first claim must keep
+                // flowing, or the ladder would stall with no banner and no re-trigger.
+                let verdictPending = state.priorityContent == .priorityMigration
+                    && !migrationManager.isMigrationSessionVerdictKnown()
+                if state.isMigrationCheckDwelling || verdictPending {
+                    if verdictPending, state.migrationBannerVariant != .checkingStatus {
+                        MigrationTrace.event("banner → checkingStatus (verdict pending — R3)")
+                        state.migrationBannerVariant = .checkingStatus
+                        state.isMigrationCheckDwelling = true
+                        state.heldMigrationVariant = variant
+                        state.hasHeldMigrationVariant = true
+                        return .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            await send(.migrationCheckDwellElapsed)
+                        }
+                    }
                     // Resolved inside the dwell — hold it. Last write wins, so a burst of updates
                     // collapses to the newest rather than queueing a run of visible flips.
                     state.heldMigrationVariant = variant
@@ -572,7 +604,22 @@ struct SmartBanner {
                 // priority ladder replaced `.checkingStatus` immediately and the dwell then fired
                 // into an empty slot, logging "staying on checking" while the banner had already
                 // moved. Instrumentation that lies is worse than none.
-                if state.isMigrationCheckDwelling {
+                //
+                // R3: same verdict gate as `.migrationVariantUpdated`, same owned-slot scope.
+                let loadedVerdictPending = state.priorityContent == .priorityMigration
+                    && !migrationManager.isMigrationSessionVerdictKnown()
+                if state.isMigrationCheckDwelling || loadedVerdictPending {
+                    if loadedVerdictPending, state.migrationBannerVariant != .checkingStatus {
+                        MigrationTrace.event("banner → checkingStatus (verdict pending — R3)")
+                        state.migrationBannerVariant = .checkingStatus
+                        state.isMigrationCheckDwelling = true
+                        state.heldMigrationVariant = variant
+                        state.hasHeldMigrationVariant = true
+                        return .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            await send(.migrationCheckDwellElapsed)
+                        }
+                    }
                     state.heldMigrationVariant = variant
                     state.hasHeldMigrationVariant = true
                     return .none

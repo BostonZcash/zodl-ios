@@ -255,6 +255,11 @@ struct MigrationManagerClient: Sendable {
     /// Defaults `true` so no test or preview accidentally renders a permanent "checking" state.
     var isMigrationViewFresh: @Sendable () -> Bool = { true }
 
+    /// GROUND_RULES R3: whether the CURRENT app-open's first engine verdict has been heard. The
+    /// smart banner holds `.checkingStatus` (Figma 5679-8225) until this is `true` — the state
+    /// ends on the verdict, never on a timer. Defaults `true` for the same reason as above.
+    var isMigrationSessionVerdictKnown: @Sendable () -> Bool = { true }
+
     /// THE SINGLE DERIVATION of the migration view — see `MigrationViewSnapshot`. Every observer
     /// reads this; none of them derives its own.
     var migrationViewSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationViewSnapshot = { _ in .empty }

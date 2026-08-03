@@ -238,6 +238,11 @@ extension MigrationManagerImpl {
         let verdictLine = "\(Self.logTag) ▸ session verdict (\(phase)): \(verdict)"
         isQuietTick ? LoggerProxy.debug(verdictLine) : LoggerProxy.event(verdictLine)
 
+        // GROUND_RULES R3: the session's verdict now EXISTS — this is the one edge that releases
+        // the banner's `.checkingStatus` hold. Marked before the arming/poke below so the very
+        // emissions that arming triggers already pass the banner's verdict gate.
+        markSessionVerdictKnown()
+
         // MOB-1466: ARMING HYGIENE. Wake-ups are re-armed on every `.beforeSync`/`.afterSync` path,
         // not only the `.waiting` one — unchanged, see the doc this replaces. A QUIET `.tick`,
         // though, changed none of the run's rows (nothing to re-derive a schedule from), so arming

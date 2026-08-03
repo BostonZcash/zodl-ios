@@ -173,6 +173,7 @@ extension MigrationManagerClient: DependencyKey {
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
             isMigrationViewFresh: { impl.isMigrationViewFresh },
+            isMigrationSessionVerdictKnown: { impl.isMigrationSessionVerdictKnown() },
             migrationViewSnapshot: { accountUUID in await impl.migrationViewSnapshot(accountUUID: accountUUID) },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
@@ -371,6 +372,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// is running is a no-op rather than a double submit.
     private let broadcastsInFlight = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
 
+    /// GROUND_RULES D6: the transaction id the CURRENT broadcast session is actually submitting.
+    ///
+    /// The `.transferSending` banner used to infer its number from `first { $0.isBroadcasting }` —
+    /// which names the PREVIOUS transfer whenever one is still broadcast-but-unmined while a new one
+    /// submits (field: "T8 is sending..." during T9's submit). The session KNOWS the id — it logs
+    /// `broadcasting migration tx N` — so it records it here and the banner renders it instead of
+    /// re-guessing. Set/cleared around the submit, exactly like `broadcastsInFlight`.
+    private let activeBroadcastTxIds = OSAllocatedUnfairLock<[AccountUUID: UInt32]>(initialState: [:])
+
+    /// GROUND_RULES R3: the session ordinal whose engine verdict has been heard. The banner may not
+    /// publish any migration state before the CURRENT session's first verdict — until then it shows
+    /// `.checkingStatus` (Figma 5679-8225). Ordinal-keyed so a new app-open invalidates it for free.
+    private let sessionVerdictOrdinal = OSAllocatedUnfairLock<Int?>(initialState: nil)
+
     /// MOB-1466: single-flight latch guarding the WHOLE body of `advance(phase:)` — see
     /// `MigrationStepDriver.swift`'s acquire/release functions for the mechanism, and its file
     /// header (I1-I5) for why `advance` cannot simply overlap itself. A `.tick` fires every 30s from
@@ -543,6 +558,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // read above has settled, so the answer is as close to "now" as this function gets.
             // MOB-1466: now only an ACCELERATOR — the durable `.broadcast` row is checked first.
             isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
+            activeBroadcastTxId: activeBroadcastTxIds.withLock { $0[resolvedAccountUUID] },
             round: roundContext.round,
             totalRounds: roundContext.totalRounds,
             // The same verdict the ROWS already consult to drop their "Preparing transaction…"
@@ -691,6 +707,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
         let preparations = await migrationPreparationRows(accountUUID: resolved) ?? []
 
+        // R9: the plan total the header's Orchard bubble derives from (X = planTotal − Σ green).
+        // nil when any amount is unknown (W1 fallback) — the header then does not render at all,
+        // per "correct data or no header".
+        let planTotal: Zatoshi? = rows.isEmpty || rows.contains { $0.amount == nil }
+            ? nil
+            : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
+
         let snapshot = MigrationViewSnapshot(
             orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved),
             // The wallet's OWN per-pool figure (B10), never inferred from the rows: the two agreeing
@@ -701,6 +724,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             doneTransfers: done.count,
             totalTransfers: rows.count,
             preparations: preparations,
+            planTotal: planTotal,
             // The in-session "a submit call is open right now" fact, taken LAST so it is as fresh as
             // the snapshot claims to be. Same flag the banner's split arm reads, so the banner's
             // "keep Zodl open" and the timeline's spinner turn on and off together.
@@ -953,6 +977,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     func setMigrationWorkInFlight(_ inFlight: Bool) {
         migrationWorkInFlight.withLock { $0 = inFlight }
+    }
+
+    /// GROUND_RULES R3: called by the step driver the moment a session's engine verdict exists.
+    /// Ordinal-stamped, so a new app-open (new trace session) automatically reads as "not yet".
+    func markSessionVerdictKnown() {
+        sessionVerdictOrdinal.withLock { $0 = MigrationTrace.currentSessionOrdinal }
+    }
+
+    /// Whether the CURRENT session has heard its first engine verdict. The banner holds
+    /// `.checkingStatus` until this is true (R3): iOS presents remembered state before any async
+    /// truth can exist, and every migration fact is chain-height-dependent — so no foregrounded
+    /// state is provably valid until the engine answers. Outside a traced session (ordinal nil)
+    /// this reports `true`: there is no session to hold for, and holding forever would be worse
+    /// than the staleness it prevents.
+    func isMigrationSessionVerdictKnown() -> Bool {
+        guard let ordinal = MigrationTrace.currentSessionOrdinal else { return true }
+        return sessionVerdictOrdinal.withLock { $0 } == ordinal
     }
 
     /// See `migrationTransfers` — the body, wrapped so the flow's own load time is measurable. The
@@ -2228,6 +2269,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
             MigrationTrace.recordBroadcast()
             LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
+            // D6: the id THIS session submits — the banner renders it, never a row-inferred guess.
+            activeBroadcastTxIds.withLock { $0[accountUUID] = id }
 
             // Warm the caches BEFORE the submit takes the actor, then flag — the same order that
             // fixed the prove sweep, applied to the occupant that fix did not reach. A Tor bootstrap
@@ -2244,6 +2287,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // reveals the row this broadcast just changed.
             setMigrationWorkInFlight(false)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+            activeBroadcastTxIds.withLock { $0[accountUUID] = nil }
             pokeStateEvent(for: accountUUID)
 
             // ZIP 318: a session carries ONE broadcast ATTEMPT — the session touched the wire, so
@@ -2973,6 +3017,9 @@ enum MigrationDerivations {
         preparationRows: [MigrationTransferRow] = [],
         isTorHoldActive: Bool = false,
         isBroadcastInFlight: Bool = false,
+        // GROUND_RULES D6: the id the current broadcast session is ACTUALLY submitting, from the
+        // manager's own record — the `.transferSending` number renders this, never a row guess.
+        activeBroadcastTxId: UInt32? = nil,
         round: Int = 1,
         totalRounds: Int? = nil,
         // Defaulted `false` so every existing caller and test keeps its exact behaviour: the stall
@@ -3176,13 +3223,17 @@ enum MigrationDerivations {
             // mid-broadcast. `isBroadcastInFlight` stays only as a same-session ACCELERATOR for the
             // seconds between "we started submitting" and the engine writing `.broadcast`.
             if isBroadcastInFlight {
-                // The number still comes from the rows — that half of the row-truth pass stands, and
-                // it is what makes the banner and the timeline agree on WHICH transfer. A row the
-                // engine has already marked `.broadcast` is preferred (it names the one actually on
-                // the wire); otherwise the first unsent row, which is what is about to be.
-                let sendingRow = transferRows.first { $0.isBroadcasting }
+                // GROUND_RULES D6. The number is the id the session is ACTUALLY submitting — the
+                // manager records it the moment the submit starts. The previous source, `first {
+                // $0.isBroadcasting }`, named the WRONG transfer whenever an earlier one was still
+                // broadcast-but-unmined while a new one went out (field: "T8 is sending..." during
+                // T9's submit; the screen, reading the durable rows, was right both times). Two
+                // transfers can be on the wire at once; only the session knows which one is its own.
+                let activeRow = activeBroadcastTxId.flatMap { id in
+                    transferRows.first { $0.id == String(id) }
+                }
                 return MigrationBannerVariant.transferSending(
-                    number: sendingRow.map { $0.index + 1 } ?? nextTransferNumber(transferRows: transferRows, progress: progress)
+                    number: activeRow.map { $0.index + 1 } ?? nextTransferNumber(transferRows: transferRows, progress: progress)
                 )
             }
             // PREPARING, ahead of both waiting arms below, and this ordering is the field fix.
@@ -3662,7 +3713,11 @@ enum MigrationDerivations {
                 status: status,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
-                isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled)
+                isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled),
+                // D4: real elapsed for the overdue caption (Figma B8 "Overdue · 5h ago").
+                overdueMinutesAgo: status == MigrationTransferRow.Status.overdue
+                    ? MigrationETA.overdueMinutes(scheduledHeight: scheduledHeight, clock: clock)
+                    : nil
             )
         }
     }
@@ -3906,7 +3961,11 @@ enum MigrationDerivations {
                 status: rowStatus,
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
-                isPreparing: isPreparing(status, isProvingStalled: isProvingStalled)
+                isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
+                // D4: real elapsed for the overdue caption, W1-fallback lane.
+                overdueMinutesAgo: rowStatus == MigrationTransferRow.Status.overdue
+                    ? MigrationETA.overdueMinutes(scheduledHeight: status.scheduledHeight, clock: clock)
+                    : nil
             )
         }
     }
