@@ -261,7 +261,8 @@ extension Root {
                 let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
                 state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
-                    ? .run { [migrationManager] _ in
+                    ? .merge(
+                        .run { [migrationManager] _ in
                         migrationManager.recordSyncCompleted()
                         // (P3's invalidation sweep used to run here, first. Both of its jobs are
                         // the ENGINE's now: foreign-spent funding notes are recorded by the
@@ -285,7 +286,17 @@ extension Root {
                         // candidate account, not just the selected one, which is what a wallet with a
                         // Zodl and a Keystone account migrating in parallel actually needs.
                         await migrationManager.advance(.afterSync)
-                    }
+                        },
+                        // The belt for SmartBanner's own `.upToDate` recheck (field-caught
+                        // 2026-08-03, the launch race on an already-synced wallet): this edge is
+                        // the one place that provably knows sync just completed, so it also sends
+                        // the banner funnel — independent of the slot's occupant and the banner's
+                        // own stream timing. A funnel re-render is a no-op when nothing changed;
+                        // feature-gated like every other funnel caller.
+                        state.featureFlags.migration
+                            ? .send(.home(.smartBanner(.migrationReevaluationRequested)))
+                            : .none
+                    )
                     : .none
 
                 // MOB-1466 (07-31, field-caught): `migrationReconcileEffect` must reach EVERY return

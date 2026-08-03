@@ -982,10 +982,6 @@ struct SmartBanner {
                 // a final low-remainder update) and spuriously re-show the banner.
                 state.lastKnownBlocksRemaining = -1
                 if state.featureFlags.migration {
-                    // Gate the empty-slot disjunct on the cheap, synchronous `isIronwoodActivated()`:
-                    // pre-activation there is no migration banner to open, so it must not pay for the
-                    // manager hydration on every genuine `.upToDate` transition of every synced wallet.
-                    let emptySlotMigrationRecheckArmed = state.priorityContent == nil && migrationManager.isIronwoodActivated()
                     // A restore/resync just completed — this gets the BOUNDED-POLL arm rather than a
                     // one-shot re-read, because the recovered balance can still be invisible to
                     // `bannerVariant` for a bounded window after `.upToDate`.
@@ -1005,20 +1001,31 @@ struct SmartBanner {
                     if state.priorityContent == .priorityMigration {
                         return .send(.migrationReevaluationRequested)
                     }
-                    // Plain sync completion, or sync completing on an empty slot: one deterministic
-                    // re-check on THIS transition. Closing here used to leave the slot empty with NO
-                    // re-evaluation, which on a migration wallet let a lower-ranked banner (currency
-                    // conversion) claim the slot with nothing left to displace it. Sent from a SINGLE
-                    // `.run` that awaits the close directly (`.closeBanner(true)`, not
-                    // `.closeAndCleanupBanner`) before re-reading: the latter wraps its send in its own
-                    // `.run`, which only SCHEDULES that nested effect, so a second `await send(...)`
-                    // right after would race the close instead of following it. On an empty slot the
-                    // close is a harmless no-op and a nil variant opens nothing.
-                    if state.priorityContent == .priority4 || emptySlotMigrationRecheckArmed {
+                    // The syncing banner must not outlive the sync it narrates: close it, THEN
+                    // re-read. Sent from a SINGLE `.run` that awaits the close directly
+                    // (`.closeBanner(true)`, not `.closeAndCleanupBanner`) before re-reading: the
+                    // latter wraps its send in its own `.run`, which only SCHEDULES that nested
+                    // effect, so a second `await send(...)` right after would race the close
+                    // instead of following it.
+                    if state.priorityContent == .priority4 {
                         return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                             await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
                             await send(.migrationVariantUpdated(migrationManager.bannerVariant(accountUUID)))
                         }
+                    }
+                    // EVERY remaining slot state — empty, or held by any lower banner. Field-caught
+                    // 2026-08-03: on an already-synced wallet the launch ladder ran while the
+                    // engine was still stamping its final pass, Goal-1 correctly declined the
+                    // offer, the walk-down seated currency conversion (`priority8`) — and this
+                    // transition then matched NO arm, so the declined offer was never asked again
+                    // for the process lifetime. One re-read through the single funnel: a nil
+                    // variant changes nothing (the occupant stays), a real one claims the slot
+                    // through the arbiter — the rank guard lets `priorityMigration` (-1) displace
+                    // every banner the walk-down can seat. Gated on the cheap latched
+                    // `isIronwoodActivated()` so a synced wallet with no migration in its future
+                    // pays no manager hydration here.
+                    if migrationManager.isIronwoodActivated() {
+                        return .send(.migrationReevaluationRequested)
                     }
                 } else if state.priorityContent == .priority3
                             || state.priorityContent == .priority45
