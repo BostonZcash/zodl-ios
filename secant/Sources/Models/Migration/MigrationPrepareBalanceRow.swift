@@ -22,7 +22,7 @@
 //  |-----------------------------------------------|-----------------|
 //  | `MigrationTxState::Mined`                     | `.done`         |
 //  | `ready` + `NextAction::Prove` / `.Broadcast`   | `.readyToSend`  |
-//  | `MigrationTxState::Broadcast`                 | `.preparing`    |
+//  | `MigrationTxState::Broadcast`                 | `.sent`         |
 //  | `Blocker::Dependencies` (+ `depends_on`)      | `.waitsOn([…])` |
 //
 //  Until that exists, `interimLadder(count:)` supplies a shaped placeholder so the sheet, its copy
@@ -35,8 +35,13 @@ import Foundation
 struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
     /// What this step is doing. Ordered as the sheet reads top to bottom.
     enum State: Equatable, Sendable {
-        /// Mined: this step is behind us.
+        /// Mined AND counted by the wallet's own store: this step is behind us (GROUND_RULES
+        /// R11 — same standard as every green in the app).
         case done
+        /// On the chain's side — broadcast, possibly engine-mined — but the wallet has not counted
+        /// it yet. Andrea's five-state ladder (2026-08-03): the word is "Sent", the check is the
+        /// neutral one, and there is NO spinner — the chain is working, not the app.
+        case sent
         /// Built and due — the wallet can act on it now.
         case readyToSend
         /// In flight: broadcast, waiting to mine.
@@ -94,11 +99,11 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
             case .sent:
                 state = .done
             case .confirming:
-                // GROUND_RULES R11: on the chain's side, wallet not yet counted it — the sheet's
-                // own designed in-flight state ("broadcast, waiting to mine" per this file's
-                // header table), NOT `.done`: the sheet's green must flip in the same sync write
-                // as the timeline's, or the two surfaces contradict through one disclosure tap.
-                state = .preparing
+                // GROUND_RULES R11 + Andrea's ladder: on the chain's side, wallet not yet counted
+                // it — "Sent", NOT `.done` (the sheet's green must flip in the same sync write as
+                // the timeline's, or the two surfaces contradict through one disclosure tap) and
+                // NOT `.preparing` (that word claims the APP is working; here the chain is).
+                state = .sent
             case .invalid, .expired:
                 state = .invalid
             case .active, .overdue:

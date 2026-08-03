@@ -4265,7 +4265,9 @@ enum MigrationDerivations {
                 state = MigrationPrepareBalanceRow.State.done
 
             case MigrationTransactionStatus.State.broadcast:
-                state = MigrationPrepareBalanceRow.State.preparing
+                // Andrea's ladder (2026-08-03): a broadcast step reads "Sent", never "Preparing" —
+                // the word "Preparing" is reserved for work the app itself is doing.
+                state = MigrationPrepareBalanceRow.State.sent
 
             case MigrationTransactionStatus.State.invalid:
                 // SDK addendum §3. Below `.mined` for the same reason every other surface puts it

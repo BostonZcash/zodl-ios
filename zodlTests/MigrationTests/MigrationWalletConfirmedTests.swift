@@ -449,10 +449,11 @@ import ZcashLightClientKit
     // MARK: - E. Cross-surface: one count, printed twice (R5)
 
     /// Contradiction-suite style: the Prepare Balance sheet and the banner read the SAME rows, and
-    /// a `.confirming` row must tell the same story through one disclosure tap — the sheet's
-    /// designed in-flight state (`.preparing`, "broadcast, waiting to mine"), never `.done` with
-    /// its green check. And the banner's done-count is literally `rows.filter { .sent }.count` —
-    /// the identical filter both surfaces derive from, so they cannot disagree by construction.
+    /// a `.confirming` row must tell the same story through one disclosure tap — Andrea's ladder
+    /// word for the on-chain span (`.sent`, "Sent", neutral check), never `.done` with its green
+    /// check and never `.preparing` (a word that claims the APP is working while the chain is).
+    /// And the banner's done-count is literally `rows.filter { .sent }.count` — the identical
+    /// filter both surfaces derive from, so they cannot disagree by construction.
     @Test func theSheetAndTheBannerAgreeOnWhatConfirmingMeans() {
         let rows = [
             Self.row(index: 0, status: .sent, kind: .splitBalance),
@@ -462,10 +463,10 @@ import ZcashLightClientKit
         ]
         let sentCount = rows.filter { $0.status == .sent }.count
 
-        // The sheet's mapping: the confirming step is exactly `.preparing` — the designed
-        // "broadcast, waiting to mine" state — which is by construction not `.done`.
+        // The sheet's mapping: the confirming step is exactly `.sent` — Andrea's word for the
+        // on-chain span — which is by construction neither `.done` nor `.preparing`.
         let steps = MigrationPrepareBalanceRow.from(preparations: rows)
-        #expect(steps[1].state == .preparing)
+        #expect(steps[1].state == .sent)
         #expect(steps.filter { $0.state == .done }.count == sentCount)
 
         // The banner's count over the SAME array: done == the same filter, and the whole variant

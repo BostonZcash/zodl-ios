@@ -99,7 +99,25 @@ struct MigrationPrepareBalanceSheet: View {
     @ViewBuilder private func stepRow(_ step: MigrationPrepareBalanceRow, isLast: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
-                MigrationStepBadge(number: step.index + 1, style: badgeStyle(for: step.state))
+                // Field, 2026-08-03: the banner asked "Keep Zodl open" with a spinner while this
+                // sheet answered with one quiet word — the keep-open ask had no counterpart where
+                // the user went looking for it. A step the app is PROVING right now wears a live
+                // spinner in the badge slot (the design's 5139-34627 language: spinner where the
+                // number goes); every other state keeps its badge. Spinner strictly for app-work:
+                // `.sent` (chain's side) and `.waitsOn`/`.readyToSend` stay static.
+                if step.state == .preparing {
+                    ZStack {
+                        Circle()
+                            .fill(Design.Text.primary.color(colorScheme))
+                            .frame(width: 24, height: 24)
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.6)
+                    }
+                    .frame(width: 24, height: 24)
+                } else {
+                    MigrationStepBadge(number: step.index + 1, style: badgeStyle(for: step.state))
+                }
 
                 if !isLast {
                     Rectangle()
@@ -145,6 +163,10 @@ struct MigrationPrepareBalanceSheet: View {
         switch state {
         case .done:
             return .sent
+        case .sent:
+            // R11/Andrea's ladder: check-shaped because it IS sent, not green because the wallet
+            // has not counted it — the same `.neutral` check the timeline's confirming rows wear.
+            return .neutral
         case .readyToSend, .preparing:
             return .active
         case .waitsOn:
@@ -164,6 +186,10 @@ struct MigrationPrepareBalanceSheet: View {
             return String(localizable: .migrationPrepareStateDone)
         case .readyToSend:
             return String(localizable: .migrationPrepareStateReady)
+        case .sent:
+            // The shared one-word caption Andrea's ladder gave the whole on-chain span
+            // (`migrationStatus.sent`) — one key, every surface.
+            return String(localizable: .migrationStatusSent)
         case .preparing:
             return String(localizable: .migrationPrepareStatePreparing)
         case .invalid:

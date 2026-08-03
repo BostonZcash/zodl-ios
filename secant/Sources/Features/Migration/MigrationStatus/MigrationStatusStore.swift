@@ -262,14 +262,28 @@ struct MigrationStatus {
                 : transfers.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
 
             let allSent = preparations.allSatisfy { $0.status == MigrationTransferRow.Status.sent }
+            // Field, 2026-08-03 ("took me a while to see why"): the banner said "Keep Zodl open"
+            // with a spinner while this collapsed row showed a bare ETA — the PROVING child's
+            // in-flight state was dropped by the collapse, so the one row on screen never said
+            // why staying mattered, and the user had to open the sheet to find a single quiet
+            // "Preparing". The collapse now picks its REPRESENTATIVE child by story priority
+            // rather than list order: a child the app is proving RIGHT NOW outranks one merely
+            // waiting on the chain (`.confirming`), which outranks one waiting on its schedule —
+            // so the collapsed caption and spinner (`isInFlight` = the propagated `isPreparing`)
+            // tell the most actionable truth the parts contain, and the banner's keep-open ask
+            // has its on-screen counterpart again.
+            let proving = preparations.first { $0.isPreparing && $0.status != MigrationTransferRow.Status.sent }
+            let confirming = preparations.first { $0.status == MigrationTransferRow.Status.confirming }
             let unfinished = preparations.first { $0.status != MigrationTransferRow.Status.sent }
+            let representative = proving ?? confirming ?? unfinished
 
             return MigrationTransferRow(
                 id: "split-balance",
                 index: 0,
                 amount: total,
-                status: allSent ? MigrationTransferRow.Status.sent : (unfinished?.status ?? MigrationTransferRow.Status.sent),
+                status: allSent ? MigrationTransferRow.Status.sent : (representative?.status ?? MigrationTransferRow.Status.sent),
                 hoursFromNow: preparations.map(\.hoursFromNow).max() ?? 0,
+                isPreparing: !allSent && proving != nil,
                 isSubmitting: isSubmitting,
                 kind: MigrationTransferRow.Kind.splitBalance
             )
