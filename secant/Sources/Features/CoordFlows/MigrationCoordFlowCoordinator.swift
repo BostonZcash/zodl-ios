@@ -197,10 +197,11 @@ extension MigrationCoordFlow {
                 guard case let .transferPlan(planState) = state.path.last else { return .none }
 
                 guard planState.requiresSigning else {
-                    // PHASE 3: #1930 additionally forks here on `isExpiredRecoveryReview` (Phase 5).
-                    // The remaining `requiresSigning == false` screen is the RESCHEDULED variant,
-                    // whose confirm is a plain acknowledgment of an already-committed reschedule —
-                    // no re-sign, no terminal screen, straight out ("Got it" per the spec).
+                    // A `requiresSigning == false` confirm is a plain acknowledgment of an
+                    // already-committed schedule — no re-sign, no terminal screen, straight out
+                    // ("Got it" per the spec). (Audit 2026-08-03, C10: #1930's planned
+                    // `isExpiredRecoveryReview` fork was never built and its flag was deleted —
+                    // both acknowledge-only screens route here identically.)
                     return .send(.flowFinished)
                 }
 

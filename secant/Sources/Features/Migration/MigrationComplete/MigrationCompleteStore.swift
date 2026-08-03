@@ -33,13 +33,13 @@
 //  sheet, never the screen.
 //
 //  MOB-1458 (code review — F4): `migrateAnywayTapped` gains a single-flight guard
-//  (`State.isMigratingAnyway`). The coordinator's device-authentication gate that follows this tap
-//  is an async prompt with no local state of its own to disable the button on its behalf — and on a
-//  device with no passcode set (or the simulator) it resolves instantly with NO visible sheet — so
-//  two fast taps could otherwise both emit `.delegate(.migrateAnyway)` and each run its own
-//  unlock/propose/broadcast. See `MigrationCoordFlowCoordinator.swift`'s
-//  `.complete(.delegate(.migrateAnyway))`/`.migrateAnywayAuthenticated` cases for the coordinator
-//  side, which clears the flag again on a refusal or a post-gate failure.
+//  (`State.isMigratingAnyway`) — two fast taps could otherwise both emit
+//  `.delegate(.migrateAnyway)` and each run its own unlock/propose leg. (Audit 2026-08-03, C10 —
+//  truth over intention: the coordinator device-authentication gate and the
+//  `.migrateAnywayAuthenticated`/`.migrateAnywayAuthenticationCancelled` cases this doc once
+//  named were never built; the coordinator goes straight from the delegate to
+//  `unlockMigrationResidual`. The flag clears on `.migrateAnywayFailed` and re-arms on every
+//  `.onAppear`.)
 //
 
 import ComposableArchitecture
@@ -85,10 +85,11 @@ struct MigrationComplete {
         /// COORDINATOR sets on their path elements — those flags guard coordinator-owned async work
         /// that starts asynchronously from the coordinator's own handler, while this tap's own
         /// reducer runs synchronously and can set its own guard before ever delegating out. CLEARED
-        /// by the coordinator (which owns the gate + the unlock/propose that follows it) via
-        /// `.migrateAnywayAuthenticationCancelled`/`.migrateAnywayFailed` — see
-        /// `MigrationCoordFlowCoordinator.swift`. Deliberately not part of the memberwise `init`
-        /// below, matching `isLockExplainerPresented`'s own precedent just above.
+        /// by the coordinator via `.migrateAnywayFailed` (audit 2026-08-03, C10: the
+        /// `.migrateAnywayAuthenticationCancelled` case this doc once named was never built — no
+        /// authentication gate exists on this leg) and re-armed by `.onAppear` on every arrival.
+        /// Deliberately not part of the memberwise `init` below, matching
+        /// `isLockExplainerPresented`'s own precedent just above.
         var isMigratingAnyway = false
 
         var hasDust: Bool {

@@ -17,6 +17,11 @@ struct MigrationEntry {
     @ObservableState
     struct State: Equatable {
         var isInAppBrowserOn = false
+        /// Audit 2026-08-03 (C10): single-flight for Next — two fast taps used to emit two
+        /// `.chose` delegates and push two identical next screens. Mirrors
+        /// `MigrationComplete.isMigratingAnyway`; re-armed by `.onAppear` when the user backs
+        /// onto this screen.
+        var isProceeding = false
         var selectedMode = MigrationMode.privateScheduled
         var orchardBalance = Zatoshi.zero
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
@@ -106,9 +111,12 @@ struct MigrationEntry {
                 return .none
 
             case .nextTapped:
+                guard !state.isProceeding else { return .none }
+                state.isProceeding = true
                 return .send(.delegate(.chose(state.selectedMode)))
 
             case .onAppear:
+                state.isProceeding = false
                 let accountUUID = state.selectedWalletAccount?.id
                 return .run { send in
                     let balance = await migrationManager.orchardBalanceToMigrate(accountUUID)

@@ -125,19 +125,6 @@ struct MigrationTransferPlan {
             case commit
         }
 
-        /// MOB-1513 (C7, Figma Error & Recovery row 3): the expired-transfer recovery's KEYSTONE
-        /// lane batch, already proposed (`MigrationCommitPipeline.proposeKeystoneBatch`) by the time
-        /// the review screen this rides on exists — carried HERE (rather than on coordinator state,
-        /// where every other pending-ceremony context lives) so popping this screen without
-        /// confirming discards it for free when TCA tears the element down, the same no-partial-
-        /// state guarantee `keystoneScanAbandoned` gives every later stage of the same ceremony. See
-        /// `pendingKeystoneRecoveryBatch` below and `MigrationCoordFlowCoordinator.recreatedPlanState`/
-        /// `expiredRecoveryReviewConfirmed`.
-        struct PendingKeystoneRecoveryBatch: Equatable {
-            let pczts: [MigrationUnsignedTransferPczt]
-            let schedule: MigrationSchedule
-        }
-
         /// MOB-1458 (regression fix, F1): what a Confirm tap will actually do, decided
         /// SYNCHRONOUSLY at tap time (`State.confirmIntent` below) and carried end-to-end in
         /// `.confirmAuthenticated` — nothing about WHAT to sign/propose is re-read from state after
@@ -187,23 +174,12 @@ struct MigrationTransferPlan {
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
         /// (recovery) variant signs a fresh schedule, so it keeps the default `true`.
         var requiresSigning = true
-        /// MOB-1513 (C7, Figma Error & Recovery row 3): `true` only for the EXPIRED-transfer
-        /// recovery's review screen (`MigrationCoordFlowCoordinator.recreatedPlanState`, its
-        /// `isExpiredRecoveryReview:` param) — ALSO `requiresSigning == false` like the rescheduled
-        /// variant above (nothing left to sign either way), but this screen's Confirm must route
-        /// differently: push `.scheduled` (software), or resume the already-proposed Keystone
-        /// ceremony (`pendingKeystoneRecoveryBatch` below) — never just acknowledge straight to
-        /// `.flowFinished`. The coordinator reads this off `state.path.last` at
-        /// `.transferPlan(.delegate(.confirmed))` to tell the two `requiresSigning == false`
-        /// screens apart (`variant`/`requiresSigning` alone can't — this screen is also `.recreated`,
-        /// the same variant the pre-existing `.notesSpent`/restart lane uses). This screen never
-        /// signs anything itself either way, so `confirmTapped`'s own logic below needs no awareness
-        /// of it.
-        var isExpiredRecoveryReview = false
-        /// MOB-1513 (C7): non-nil only for the Keystone lane of the expired-recovery review screen
-        /// above — see `PendingKeystoneRecoveryBatch`'s doc for why it lives here. `nil` for the
-        /// software lane (nothing left to sign) and every other variant/screen.
-        var pendingKeystoneRecoveryBatch: PendingKeystoneRecoveryBatch?
+        // (Audit 2026-08-03, C10: the MOB-1513 C7 `isExpiredRecoveryReview` flag and
+        // `pendingKeystoneRecoveryBatch` carrier that lived here were DELETED — nothing ever set
+        // or read either, and the coordinator functions their docs named
+        // (`recreatedPlanState`/`expiredRecoveryReviewConfirmed`) do not exist: the
+        // expired-recovery lane commits one screen earlier and every `requiresSigning == false`
+        // confirm routes to `.flowFinished`.)
         /// MOB-1513 (B4): true while an async confirm leg is in flight — the device-authentication
         /// prompt itself (MOB-1458), the software commit, the Keystone PCZT-batch propose, or a
         /// propose-failure Retry's re-propose. Drives the Confirm button's disabled+spinner state
@@ -370,10 +346,9 @@ struct MigrationTransferPlan {
         /// in the coordinator derives the real spending key, calls `refreshStaleMigrationTransfers`
         /// (which re-signs every rebuilt transfer in-process), then `recordCommittedSchedule` +
         /// `reconcile` — by the time THIS review screen appears the run is already fully committed,
-        /// and its Confirm is pure navigation. The authentication gate now lives on
-        /// `.recovery(.delegate(.recreate))` instead, so each recovery prompts exactly once, at the
-        /// point funds are actually committed, rather than a second time on a screen that no longer
-        /// does anything but acknowledge. Kept as its own named computed property (rather than
+        /// and its Confirm is pure navigation. (Audit 2026-08-03, C10 — truth over intention: no
+        /// authentication gate exists on `.recovery(.delegate(.recreate))` either; the recreate
+        /// leg runs UNGATED today. If a per-recovery prompt is wanted, it must still be built.) Kept as its own named computed property (rather than
         /// inlined to `requiresSigning` at call sites) since it remains the documented seam a
         /// future `requiresSigning == false` variant author will look at first, and its
         /// truth-table tests (`confirmRequiresAuthenticationIsTrueWheneverRequiresSigningIsTrue` /

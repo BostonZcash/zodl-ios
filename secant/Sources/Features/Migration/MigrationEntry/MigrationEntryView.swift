@@ -75,6 +75,7 @@ struct MigrationEntryView: View {
                     ZashiButton(String(localizable: .generalNext)) {
                         store.send(.nextTapped)
                     }
+                    .disabled(store.isProceeding)
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                 }

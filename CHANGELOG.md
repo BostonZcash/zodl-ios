@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] Double-tapping "Next" on the migration entry screen, or "Allow"/"Skip" on its notifications step, can no longer push the next screen twice — a duplicate that could also invalidate the migration plan being prepared underneath.
 - [MOB-1466] Opening the migration flow now pauses the automatic completion check that could otherwise invalidate the very plan you were reviewing, which surfaced as a "plan is stale" error on confirm.
 - [MOB-1466] The migration's round counter no longer over-counts when a completion check hits a momentary error — labels like "Round 4 of 2" can no longer occur.
 - [MOB-1466] While the Send-now privacy wait is counting down, a foreground sync restart can no longer cut the wait short and re-stamp the very quiet-period it exists to let pass.

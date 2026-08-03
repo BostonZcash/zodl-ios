@@ -55,12 +55,14 @@ struct MigrationNotificationsView: View {
                 ZashiButton(String(localizable: .migrationAllow)) {
                     store.send(.allowTapped)
                 }
+                .disabled(store.isProceeding)
                 .screenHorizontalPadding()
                 .padding(.bottom, 24)
             }
             .zashiBack()
         }
         .applyScreenBackground()
+        .onAppear { store.send(.onAppear) }
     }
 
     // MARK: - Description
