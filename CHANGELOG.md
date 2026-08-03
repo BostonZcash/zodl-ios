@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] When the migration needs something only you can do — a Keystone signature for a rebuilt transfer, a re-plan after a problem, or proving that has stalled — the app now schedules a reminder notification. Previously a blocked run armed no wake-up at all, so a backgrounded wallet never told you it was waiting.
 - [MOB-1466] "Migrate anyway" on the migration Complete screen no longer ends up permanently disabled after a successful unlock followed by going back — the button re-arms every time the screen appears.
 - [MOB-1466] Scanning a Keystone signature now keeps its Cancel button available while the signed transaction is being processed — a hung submission previously left the screen with no way out (the back button is hidden while the camera is up, and Cancel used to be replaced by the progress indicator).
 - [MOB-1466] Abandoned migration attempts no longer leave a stale server preference behind: closing the migration flow without confirming — or the app quitting mid-flow — now clears the provisional network settings that attempt formed, so automatic server selection and the server-switch privacy warning stop acting on a migration that doesn't exist, and a later real broadcast can no longer inherit an abandoned attempt's endpoint or Tor choice.

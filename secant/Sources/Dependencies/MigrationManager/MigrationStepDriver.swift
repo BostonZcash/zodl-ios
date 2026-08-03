@@ -326,6 +326,15 @@ extension MigrationManagerImpl {
             let action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
             let verdict = await execute(action, accountUUID: accountUUID, phase: phase)
 
+            // Audit 2026-08-03 (#13): remember per-account whether this discharge needs the USER —
+            // `armNextWindowNotifications` turns that into a near-term poke, because a blocked run
+            // has no prove/send window of its own to wake anyone for.
+            if case .needsUser = verdict {
+                recordStepBlocker(accountUUID: accountUUID, isBlocked: true)
+            } else {
+                recordStepBlocker(accountUUID: accountUUID, isBlocked: false)
+            }
+
             // `.held` is a PER-ACCOUNT outcome (audit 2026-08-03, #4): the mode belt and the
             // manual-delivery read hold ONE account's step, not the wallet's. Returning on the
             // first hold starved every later account — an `.immediate` account's permanently-due

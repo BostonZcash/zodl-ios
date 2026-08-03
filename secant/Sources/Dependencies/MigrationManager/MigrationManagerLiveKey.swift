@@ -832,6 +832,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// fresh one; neither is a correctness problem.
     private let migrationWorkInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
 
+    /// Audit 2026-08-03 (#13): the accounts whose LAST driver discharge answered `.needsUser` —
+    /// a step the app cannot take alone (a Keystone rebuild's signing ceremony, attention that
+    /// survived a sync, stalled proving). Recorded by the driver's discharge loop, consumed by
+    /// `armNextWindowNotifications`: a blocked run has no prove/send window of its own to poke
+    /// about, so without this a backgrounded wallet NEVER learned it was waiting on the user.
+    /// In-memory by design — a relaunch re-derives the blocker from the engine on its first open.
+    private let stepBlockerAccounts = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
+
+    /// The driver's per-account blocker record — see `stepBlockerAccounts`.
+    func recordStepBlocker(accountUUID: AccountUUID, isBlocked: Bool) {
+        stepBlockerAccounts.withLock {
+            if isBlocked {
+                $0.insert(accountUUID)
+            } else {
+                $0.remove(accountUUID)
+            }
+        }
+    }
+
     var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
 
     func setMigrationWorkInFlight(_ inFlight: Bool) {
@@ -1728,7 +1747,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
 
         let accountHex = Data(resolvedAccountUUID.id).hexEncodedString()
-        guard let nextStepDate = [proveDate, sendDate].compactMap({ $0 }).min() else {
+        // Audit 2026-08-03 (#13): a `.needsUser`-blocked run has no prove or send window of its
+        // own, so both dates read nil and the no-pending branch below would retire the poke —
+        // leaving a backgrounded wallet with NO armed mechanism to learn it is waiting on the
+        // user (a Keystone rebuild's ceremony, attention needing a re-plan, stalled proving).
+        // The blocker contributes a near-term candidate instead; the poke's copy is deliberately
+        // generic ("no number, no account — a promise the app might not keep"), which is exactly
+        // right for "come back, the run needs you".
+        let blockerDate: Date? = stepBlockerAccounts.withLock { $0.contains(resolvedAccountUUID) }
+            ? now.addingTimeInterval(60)
+            : nil
+        guard let nextStepDate = [proveDate, sendDate, blockerDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire THIS ACCOUNT's poke rather than leaving a stale one
             // armed. Scoped (audit 2026-08-03, P1): the wallet-wide sweep this used to be erased
             // the OTHER account's just-armed poke on every per-account arming pass — the

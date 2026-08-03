@@ -323,6 +323,50 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - A blocked run arms a wake-up (audit 2026-08-03, #13)
+
+    /// A `.needsUser` verdict has no prove or send window of its own, so the arming pass used to
+    /// retire the poke entirely — a backgrounded wallet NEVER learned it was waiting on the user.
+    /// The blocker now contributes a near-term poke candidate.
+    @Test func aNeedsUserVerdictArmsANearTermPoke() async {
+        Self.installCandidateAccount()
+        let scheduled = LockIsolated<[(MigrationNotification, Date?)]>([])
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .requiresAttention(id: 2) },
+                migrationTransactionStatuses: { _ in [] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { notification, date, _ in
+                    scheduled.withValue { $0.append((notification, date)) }
+                },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            // `.afterSync` — the phase whose plan escalates surviving attention to `.needsUser`.
+            return await manager.advance(phase: .afterSync)
+        }
+
+        guard case .needsUser = verdict else {
+            Issue.record("attention at .afterSync must escalate to .needsUser, got \(verdict)")
+            return
+        }
+        #expect(scheduled.value.count == 1, "the blocked run must arm exactly one poke")
+        if let date = scheduled.value.first?.1 {
+            #expect(date.timeIntervalSinceNow < 120, "the blocker poke is near-term, not a window projection")
+        } else {
+            Issue.record("the blocker poke must carry a date")
+        }
+    }
+
     // MARK: - Step-read failure honesty (audit 2026-08-03, P1)
 
     /// A THROWN engine read must never flatten into `.noRun` — that verdict self-cancels the tick
