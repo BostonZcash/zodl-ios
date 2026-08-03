@@ -474,6 +474,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return nil
         }
 
+        // GOAL 1 — DO NOT OFFER A MIGRATION ON A WALLET THAT IS NOT CAUGHT UP.
+        //
+        // The gate above is ACTIVATION (is the chain past NU6.3), not FRESHNESS. Those are
+        // different questions and only the first was ever asked. A wallet that has not been opened
+        // for six months answers "activated: yes" the moment it learns the tip, while its Orchard
+        // balance is still whatever it was six months ago — so the app would offer to migrate a
+        // number it has not verified, and size a plan from it.
+        //
+        // Every test so far ran immediately after a restore, where the wallet is caught up by
+        // construction, which is exactly why this never showed.
+        //
+        // Scoped to `.notStarted` DELIBERATELY. A run already in flight must keep rendering through
+        // sync gaps — its plan was committed against a verified balance, and a broadcast session
+        // deliberately does not sync at all (ZIP 318), so demanding `.upToDate` mid-run would blank
+        // the banner exactly when the user most needs it.
+        if case .notStarted = rawState, !isCaughtUpForMigrationOffer() {
+            let syncState = sdkSynchronizer.latestState()
+            MigrationTrace.event(
+                "offer HELD — wallet not caught up"
+                + " · status \(syncState.syncStatus)"
+                + " · height \(syncState.latestBlockHeight)"
+            )
+            return nil
+        }
+
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
         async let balanceTask = orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
@@ -828,6 +853,34 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
+
+    /// GOAL 1: whether the wallet is caught up enough to be ASKED about migrating — see the gate in
+    /// `bannerVariantUntimed`.
+    ///
+    /// `.upToDate` is the SDK's own definitive answer and is deliberately preferred to comparing
+    /// heights here: a height comparison would need its own tolerance, its own tip source, and would
+    /// drift from whatever the synchronizer means by "done". One authority, not two.
+    ///
+    /// Logs the first transition in each direction rather than every call, because this runs on
+    /// every banner derivation and a per-call line would bury the sessions that matter.
+    func isCaughtUpForMigrationOffer() -> Bool {
+        let caughtUp = sdkSynchronizer.latestState().syncStatus == .upToDate
+        let previous = offerGateWasOpen.withLock { was -> Bool? in
+            defer { was = caughtUp }
+            return was
+        }
+        if previous != caughtUp {
+            let syncState = sdkSynchronizer.latestState()
+            MigrationTrace.event(
+                "offer gate \(caughtUp ? "OPEN — wallet caught up" : "CLOSED — wallet syncing")"
+                + " · status \(syncState.syncStatus) · height \(syncState.latestBlockHeight)"
+            )
+        }
+        return caughtUp
+    }
+
+    /// Last observed value of the offer gate, so only its EDGES are logged.
+    private let offerGateWasOpen = OSAllocatedUnfairLock<Bool?>(initialState: nil)
 
     func setMigrationWorkInFlight(_ inFlight: Bool) {
         migrationWorkInFlight.withLock { $0 = inFlight }
