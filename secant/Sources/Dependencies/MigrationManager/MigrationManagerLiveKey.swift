@@ -3376,11 +3376,34 @@ enum MigrationDerivations {
     /// Reading position from the same rows the timeline renders makes them agree by construction:
     /// the row list is contiguous across prior-run sent rows and the current schedule, and display
     /// numbers are `index + 1` in both places.
+    /// The transfer the banner NAMES — "Transfer N is waiting", "Transfer N is ready".
+    ///
+    /// Skips rows already on the wire (`isBroadcasting`), and that omission was the bug (field,
+    /// 2026-08-03). This predicate knew two states, sent and not-sent, while a row has three: sent,
+    /// SUBMITTED-AWAITING-MINING, and actually waiting. A submitted row is `.active` — not `.sent` —
+    /// so it counted as "the next transfer" and the banner asked the user to send a transaction that
+    /// was already on the network. From one log line:
+    ///
+    ///     BANNER → transferWaiting(number: 4)
+    ///     ROWS: T1:done T2:done T3:done T4:broadcast T5:ready …
+    ///
+    /// The timeline, reading the SAME row, captioned T4 "Sent recently" (`isBroadcasting`). Two
+    /// surfaces, one row, opposite claims — and unlike every earlier instance of this, not a timing
+    /// gap: both were derived from one read, in one pass, and still disagreed, because only one of
+    /// them knew the third state existed.
+    ///
+    /// "Waiting" means waiting ON THE USER. A submitted transfer waits on the chain, needs nothing,
+    /// and must not be offered a "Send now".
     private static func nextTransferNumber(transferRows: [MigrationTransferRow], progress: MigrationProgress) -> Int {
-        guard let firstUnsent = transferRows.first(where: { $0.status != MigrationTransferRow.Status.sent }) else {
+        let firstActionable = transferRows.first {
+            $0.status != MigrationTransferRow.Status.sent && !$0.isBroadcasting
+        }
+        guard let firstActionable else {
+            // Every remaining row is sent or in flight: nothing is waiting on the user, so the
+            // progress count is the only honest number left to name.
             return progress.completedTransfers + 1
         }
-        return firstUnsent.index + 1
+        return firstActionable.index + 1
     }
 
     /// Bounds for `.transfersExpired(first:last:)`: 1-based first/last position among rows whose
