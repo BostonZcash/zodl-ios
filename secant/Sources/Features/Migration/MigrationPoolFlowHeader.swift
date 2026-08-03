@@ -31,6 +31,12 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationPoolFlowHeader: View {
+    /// GOAL #5: the same shared exchange rate the timeline rows read
+    /// (`MigrationTransferTimeline`), so a wallet with currency conversion ON shows fiat in BOTH
+    /// places or neither. Shipping the header without it would have made this screen the one place
+    /// that ignores the setting — a gap introduced by the header itself, closed in the same pass.
+    @Shared(.inMemory(.exchangeRate)) private var currencyConversion: CurrencyConversion?
+
     let snapshot: MigrationViewSnapshot
 
     var body: some View {
@@ -69,6 +75,11 @@ struct MigrationPoolFlowHeader: View {
 
             Text("\(amount.decimalString()) ZEC")
                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
+
+            if let currencyConversion {
+                Text(currencyConversion.convert(amount))
+                    .zFont(size: 12, style: Design.Text.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)

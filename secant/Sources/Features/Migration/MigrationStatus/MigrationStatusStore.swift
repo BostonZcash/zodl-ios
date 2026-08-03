@@ -140,10 +140,21 @@ struct MigrationStatus {
         var preparationRows: [MigrationTransferRow]?
 
         var splitRows: IdentifiedArrayOf<MigrationTransferRow> {
-            // Real rows win whenever we have them: each carries its own state (a split part-way
-            // through a multi-layer preparation is genuinely half-done) and its own ETA.
+            // GOAL #4 (field, 2026-08-03): the timeline shows ONE Split Balance row, ALWAYS.
+            //
+            // It used to return the real per-split rows as soon as the engine had them, so the
+            // screen changed shape the moment a migration started: the "Split Balance" summary of
+            // Figma 5207-16024 at the start, then abruptly Split 1 / Split 2 / Split 3 as separate
+            // timeline entries once splitting began. Lukas's call, and the right one — the split is
+            // ONE step in the user's story of the migration, and its parts belong in the sheet, not
+            // in the same list as the transfers.
+            //
+            // The real rows are still the SOURCE: collapsed here so the row's state and ETA stay
+            // truthful for a multi-layer split that is genuinely part-way through, rather than
+            // falling back to the `.sent` placeholder below (which is only correct when there is no
+            // engine data at all).
             if let preparationRows, !preparationRows.isEmpty {
-                return IdentifiedArrayOf(uniqueElements: preparationRows)
+                return [Self.collapsedSplitRow(from: preparationRows, transfers: rows)]
             }
 
             guard !rows.isEmpty else { return [] }
@@ -163,6 +174,37 @@ struct MigrationStatus {
                     kind: .splitBalance
                 )
             ]
+        }
+
+        /// GOAL #4: the per-split engine rows as ONE timeline entry — see `splitRows`.
+        ///
+        /// AMOUNT is the total being migrated (the transfers' sum), NOT the preparations' sum:
+        /// preparations are self-sends that repeatedly re-split the same balance, so adding them
+        /// would multiply-count the user's own money. Taken from the transfers keeps the figure
+        /// identical before and after splitting starts, which is the point — the number must not
+        /// jump when the shape of the list stops changing.
+        ///
+        /// STATUS is the least-finished part: a split is done only when every part of it is.
+        /// ETA is the furthest-out part, for the same reason.
+        static func collapsedSplitRow(
+            from preparations: [MigrationTransferRow],
+            transfers: IdentifiedArrayOf<MigrationTransferRow>
+        ) -> MigrationTransferRow {
+            let total: Zatoshi? = transfers.isEmpty || transfers.contains { $0.amount == nil }
+                ? nil
+                : transfers.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
+
+            let allSent = preparations.allSatisfy { $0.status == MigrationTransferRow.Status.sent }
+            let unfinished = preparations.first { $0.status != MigrationTransferRow.Status.sent }
+
+            return MigrationTransferRow(
+                id: "split-balance",
+                index: 0,
+                amount: total,
+                status: allSent ? MigrationTransferRow.Status.sent : (unfinished?.status ?? MigrationTransferRow.Status.sent),
+                hoursFromNow: preparations.map(\.hoursFromNow).max() ?? 0,
+                kind: MigrationTransferRow.Kind.splitBalance
+            )
         }
 
         init(
