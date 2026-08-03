@@ -48,6 +48,10 @@ struct MigrationStatus {
             case rescheduleConfirmed(first: Int, last: Int)
         }
 
+        /// Goal #6: the ORCHARD -> IRONWOOD header's data, from the SINGLE derivation the timeline
+        /// rows also come from — so the header's Ironwood figure and the checkmarks below it cannot
+        /// drift. See `MigrationViewSnapshot`.
+        var poolFlow = MigrationViewSnapshot.empty
         var presentation = Presentation.progress
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         /// The schedule's total remaining-duration estimate. `nil` when not derivable — a W1

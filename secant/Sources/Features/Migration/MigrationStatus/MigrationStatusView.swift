@@ -61,6 +61,13 @@ struct MigrationStatusView: View {
                                 .padding(.bottom, 24)
                         }
 
+                        // Goal #6: pools first — the user watching funds move should see them
+                        // move, not read that a numbered step finished. Only for a run that has
+                        // one; a fresh screen with an empty snapshot shows nothing.
+                        if store.poolFlow.totalTransfers > 0 {
+                            MigrationPoolFlowHeader(snapshot: store.poolFlow)
+                        }
+
                         if store.isUpdating {
                             updatingNote
                         }

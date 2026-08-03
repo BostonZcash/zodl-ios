@@ -173,6 +173,7 @@ extension MigrationManagerClient: DependencyKey {
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
             isMigrationViewFresh: { impl.isMigrationViewFresh },
+            migrationViewSnapshot: { accountUUID in await impl.migrationViewSnapshot(accountUUID: accountUUID) },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
@@ -673,6 +674,33 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
 
         return route
+    }
+
+    /// THE SINGLE DERIVATION — see `MigrationViewSnapshot`.
+    ///
+    /// Rows, both pool balances and the done-total are read in ONE pass, so a header claiming an
+    /// Ironwood figure and a timeline of checkmarks summing to it agree by construction rather than
+    /// by coincidence. Three independent readers could not have guaranteed that however carefully
+    /// each was written — which is exactly why the header waited for this.
+    func migrationViewSnapshot(accountUUID: AccountUUID?) async -> MigrationViewSnapshot {
+        guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
+            return MigrationViewSnapshot.empty
+        }
+        let rows = await migrationTransfers(accountUUID: resolved)
+        let balances = try? await sdkSynchronizer.getAccountsBalances()
+        let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
+
+        return MigrationViewSnapshot(
+            orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved),
+            // The wallet's OWN per-pool figure (B10), never inferred from the rows: the two agreeing
+            // is the claim, so deriving one from the other would make it vacuous and hide the very
+            // settling lag the header exists to render honestly.
+            ironwoodHeld: balances?[resolved]?.ironwoodBalance.total() ?? Zatoshi.zero,
+            movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
+            doneTransfers: done.count,
+            totalTransfers: rows.count,
+            sessionOrdinal: MigrationTrace.currentSessionOrdinal
+        )
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {

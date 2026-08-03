@@ -1256,6 +1256,7 @@ extension MigrationCoordFlow {
         // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
         // set it already — this widens the claim, it never retracts one.
         state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
+        state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
         // D14: the run's REAL split rows; `nil` leaves the store on its synthesized single row.
         state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
@@ -1278,6 +1279,7 @@ extension MigrationCoordFlow {
         // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
         // set it already — this widens the claim, it never retracts one.
         state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
+        state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
         // D14: as in `statusResumeState` — real preparation rows when the engine has them.
         state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state

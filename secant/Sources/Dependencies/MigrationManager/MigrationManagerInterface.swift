@@ -254,6 +254,10 @@ struct MigrationManagerClient: Sendable {
     ///
     /// Defaults `true` so no test or preview accidentally renders a permanent "checking" state.
     var isMigrationViewFresh: @Sendable () -> Bool = { true }
+
+    /// THE SINGLE DERIVATION of the migration view — see `MigrationViewSnapshot`. Every observer
+    /// reads this; none of them derives its own.
+    var migrationViewSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationViewSnapshot = { _ in .empty }
     // (Audit 2026-08-03, #16: the MOB-1497 T5/T6 "pending background Tor prompt" latch that lived
     // here was DELETED — its arm site (`RootInitialization.executeBroadcastAction`) never existed
     // in this codebase, its reader (`MigrationTorFailureSheet`) is never presented, and so the
