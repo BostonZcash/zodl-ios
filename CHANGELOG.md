@@ -20,6 +20,11 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] Opening the migration flow now pauses the automatic completion check that could otherwise invalidate the very plan you were reviewing, which surfaced as a "plan is stale" error on confirm.
+- [MOB-1466] The migration's round counter no longer over-counts when a completion check hits a momentary error — labels like "Round 4 of 2" can no longer occur.
+- [MOB-1466] While the Send-now privacy wait is counting down, a foreground sync restart can no longer cut the wait short and re-stamp the very quiet-period it exists to let pass.
+- [MOB-1466] Fixed two narrow races in how the app listens for the migration sync gate: an edge arriving at the exact moment of re-subscription is no longer dropped, and the listener now shuts down while the app is backgrounded instead of being able to restart sync from the background.
+- [MOB-1466] Backing out of the Migration Progress screen while a reschedule is still finishing no longer fires internal warnings — a result whose screen is gone is dropped cleanly.
 - [MOB-1466] When the migration needs something only you can do — a Keystone signature for a rebuilt transfer, a re-plan after a problem, or proving that has stalled — the app now schedules a reminder notification. Previously a blocked run armed no wake-up at all, so a backgrounded wallet never told you it was waiting.
 - [MOB-1466] "Migrate anyway" on the migration Complete screen no longer ends up permanently disabled after a successful unlock followed by going back — the button re-arms every time the screen appears.
 - [MOB-1466] Scanning a Keystone signature now keeps its Cancel button available while the signed transaction is being processed — a hung submission previously left the screen with no way out (the back button is hidden while the camera is up, and Cancel used to be replaced by the progress indicator).

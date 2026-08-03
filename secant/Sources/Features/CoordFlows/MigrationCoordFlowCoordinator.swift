@@ -44,10 +44,13 @@ extension MigrationCoordFlow {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                // PHASE 3: #1930 (:379) also arms `migrationManager.setMigrationFlowPresented` here
-                // — a guard whose only consumer is the Phase 6 remainder evaluation. Re-entry
-                // routing itself IS wired: a flow opened over a committed run lands on its live
-                // screen rather than back at the fork.
+                // Audit 2026-08-03 (#15): THE ARM the guard's docs always promised — with zero
+                // arm sites, `isMigrationFlowPresented` read false forever and `reconcile()`'s
+                // remainder evaluation could overwrite the SDK's one-slot plan cache underneath an
+                // open flow's uncommitted propose (the documented `migrationPlanStale` race).
+                // Armed unconditionally: the flow is on screen whether this open is fresh or a
+                // re-entry mid-stack; disarmed at `flowFinished`/`switchServerRequested`.
+                migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, true)
                 // A screen is already on the stack, so nothing is about to be decided and the root
                 // must not stay hidden behind a resolution that will never run — see
                 // `State.isReentryResolved`.
@@ -785,36 +788,35 @@ extension MigrationCoordFlow {
                 } else {
                     currentRows = []
                 }
+                // Audit 2026-08-03 (#17): the result routes through `.rescheduleResultReady`, a
+                // COORDINATOR action whose reducer checks the element still exists before
+                // forwarding — this parent-level effect survives the element's removal (forEach
+                // teardown does not cancel it), so a back-tap mid-reschedule used to deliver the
+                // result to a missing element (the same runtime-warning class the status screen's
+                // own pulse fix eliminated).
                 return .run { [accountUUID = state.selectedWalletAccount?.id, currentRows] send in
                     guard let accountUUID else {
-                        await send(
-                            .path(.element(id: id, action: .status(
-                                .rescheduleCompleted(rows: currentRows, totalDurationHours: nil)
-                            )))
-                        )
+                        await send(.rescheduleResultReady(id: id, rows: currentRows, totalDurationHours: nil))
                         return
                     }
                     _ = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID)
                     await migrationManager.reconcile()
                     let rows = await migrationManager.migrationTransfers(accountUUID)
                     let summary = await migrationManager.migrationSummary(accountUUID)
-                    await send(
-                        .path(.element(id: id, action: .status(
-                            .rescheduleCompleted(rows: rows, totalDurationHours: summary.estimatedDurationHours)
-                        )))
-                    )
+                    await send(.rescheduleResultReady(id: id, rows: rows, totalDurationHours: summary.estimatedDurationHours))
                 }
 
             case .path(.element(id: _, action: .status(.delegate(.done)))):
                 return .send(.flowFinished)
 
-            case .sendNowCompleted(let rows):
-                // Re-render whichever Status screen is on top with the refreshed rows, rather than
-                // pushing a second one.
-                guard case .status(var statusState) = state.path.last, let id = state.path.ids.last else { return .none }
-                statusState.rows = IdentifiedArrayOf(uniqueElements: rows)
-                state.path[id: id] = .status(statusState)
-                return .none
+            case let .rescheduleResultReady(id, rows, totalDurationHours):
+                // (#17) The element-existence gate: a result whose screen was popped mid-flight is
+                // dropped here, silently and deliberately — the screen that would render it is
+                // gone, and `isRescheduling` died with its state.
+                guard state.path[id: id] != nil else { return .none }
+                return .send(.path(.element(id: id, action: .status(
+                    .rescheduleCompleted(rows: rows, totalDurationHours: totalDurationHours)
+                ))))
 
                 // MARK: - Sending (#1930 :1161)
 

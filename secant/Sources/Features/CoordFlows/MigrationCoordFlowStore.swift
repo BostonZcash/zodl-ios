@@ -229,9 +229,13 @@ struct MigrationCoordFlow {
         /// Same, for the Status screen — kept separate because re-entry hydrates it from a
         /// different source (rows + summary) than a fresh push.
         case pushHydratedStatus(MigrationStatus.State)
-        /// A "Send now" tap finished its broadcast; carries the refreshed rows so Status re-renders
-        /// without a second round trip.
-        case sendNowCompleted(rows: [MigrationTransferRow])
+        /// Audit 2026-08-03 (#17): the reschedule effect's landing pad — a COORDINATOR action so
+        /// the reducer can check the target element still exists before forwarding (the parent-
+        /// level effect survives the element's removal, so a back-tap mid-reschedule used to
+        /// deliver into a missing element). Replaces the dead `sendNowCompleted`, whose scenario
+        /// (a Send-now returning to a live Status screen) no longer exists — Send-now's close
+        /// ends the whole flow.
+        case rescheduleResultReady(id: StackElementID, rows: [MigrationTransferRow], totalDurationHours: Int?)
         /// The Tor sheet's "switch server" escape — `Root` opens Server Setup and tears the flow
         /// down (N6: a manual switch mid-run is a privacy decision, not a silent one).
         case switchServerRequested

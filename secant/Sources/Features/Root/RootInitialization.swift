@@ -213,7 +213,13 @@ extension Root {
                     // to exist stops the instant sync itself does, on the same boundary. The next
                     // foreground respawns it fresh if the spawn condition still holds.
                     .cancel(id: state.migrationTickCancelId),
-                    .cancel(id: state.startFailureRetryCancelId)
+                    .cancel(id: state.startFailureRetryCancelId),
+                    // Audit 2026-08-03 (#19): the merged gate subscription (SDK stream + app feed)
+                    // is FOREGROUND machinery like everything above — left alive, a background
+                    // gate emission ran the full resume (clearing the arming flags, sending
+                    // `.retryStart`, restarting the sync this boundary just stopped). The next
+                    // foreground's `.registerForSynchronizersUpdate` respawns it.
+                    .cancel(id: state.migrationSyncGateCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):
@@ -672,6 +678,18 @@ extension Root {
                 guard sdkSynchronizer.latestState().syncStatus.isPrepared else {
                     return .none
                 }
+                // Audit 2026-08-03 (#19, unblocked by #8): the Send-now silence-window fence's
+                // promised reader — the fence was written (set while `.waiting`, cleared on
+                // broadcast-start/cancel/close) but nothing ever read it, and with the Send-now
+                // lane now actually armed a foreground trigger routing through here could restart
+                // sync mid-wait, re-stamping the very quiet-period the wait exists to let pass.
+                // Defer WITHOUT alerting and WITHOUT consuming the resume flags — the wait's own
+                // exit paths clear the fence and sync resumes through the normal roads.
+                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+                if migrationSendWaitActive {
+                    LoggerProxy.event("\(MigrationManagerImpl.logTag) retryStart deferred — Send-now silence window active")
+                    return .none
+                }
                 // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
                 // #12 — see the gate-resume comment above). An early return above leaves them
                 // armed so the gate's next emission can retry the whole resume.
@@ -790,8 +808,13 @@ extension Root {
                             await send(.migrationSyncGateChanged(await sdkSynchronizer.isMigrationSyncBlocked()))
                         },
                         Effect.publisher {
+                            // No `.dropFirst()` (audit 2026-08-03, #19): the subscribe-time replay
+                            // can be the ONLY carrier of an edge that flipped between the explicit
+                            // seed read above and this subscription landing — dropping it lost that
+                            // edge for the whole cycle. The `.migrationSyncGateChanged` handler
+                            // dedupes (`isGenuineChange`/`shouldResume`), so the duplicate a kept
+                            // seed usually produces is a no-op, never a double resume.
                             sdkSynchronizer.migrationSyncBlockedStream()
-                                .dropFirst()
                                 .map(Root.Action.migrationSyncGateChanged)
                         }
                     ),

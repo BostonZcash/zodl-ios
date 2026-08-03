@@ -272,12 +272,33 @@ extension Root {
                 // rather than a second route to the same screen.
                 state.serverSetupState = .initial
                 state.path = .serverSwitch
-                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
-                    await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
-                }
+                // Audit 2026-08-03 (#15+#19): this teardown is a flow CLOSE like `flowFinished` —
+                // it must disarm the flow-presented guard and re-run the re-arms the other close
+                // path always had (the banner poke, and the tick respawn a mid-session commit
+                // relies on), or a tick loop that self-cancelled earlier stays dead until the
+                // next app-open. The Send-now fence dies with the flow for the same reason as at
+                // `flowFinished`.
+                migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, false)
+                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+                $migrationSendWaitActive.withLock { $0 = false }
+                return .merge(
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                    },
+                    .send(.home(.smartBanner(.migrationReevaluationRequested))),
+                    migrationTickLoopEffect(state: state)
+                )
 
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil
+                // Audit 2026-08-03 (#15): the flow-presented guard's disarm — see the coordinator
+                // `.onAppear` arm for the plan-cache race this pair closes.
+                migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, false)
+                // (#19) The Send-now silence-window fence dies with the flow: with `.retryStart`
+                // now honouring it, a fence leaked past a mid-wait teardown would defer every
+                // sync restart for the rest of the session.
+                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+                $migrationSendWaitActive.withLock { $0 = false }
                 // A finished run has usually changed what there is to migrate — after the manual
                 // lane, to nothing at all. Poke the banner to re-derive rather than waiting for a
                 // sync transition to do it: on an already-`.upToDate` wallet no transition is
