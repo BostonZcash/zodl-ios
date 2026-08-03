@@ -183,6 +183,30 @@ import Testing
         }
     }
 
+    // MARK: - Launch snapshot sweep (audit 2026-08-03, #6)
+
+    /// The launch-time sweep the snapshot docs always named but nothing implemented: every
+    /// candidate account's abandoned pre-commit network snapshot is cleared at launch-done, so a
+    /// flow the app died inside can no longer pin auto-server selection forever.
+    @Test func launchDoneSweepsAbandonedSnapshotsForEveryCandidate() async {
+        let spy = TickSpy()
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock)
+        let sweptFor = LockIsolated<[AccountUUID]>([])
+        store.dependencies.migrationManager.clearAbandonedNetworkSnapshot = { accountUUID in
+            if let accountUUID {
+                sweptFor.withValue { $0.append(accountUUID) }
+            }
+        }
+
+        await store.send(.initialization(.initializationSuccessfullyDone))
+        await waitUntil { !sweptFor.value.isEmpty }
+
+        #expect(sweptFor.value == [Self.accountUUID], "every candidate account gets the abandoned-snapshot sweep at launch")
+
+        await drain(store)
+    }
+
     // MARK: - First tick, never at t=0
 
     @Test func noTickBeforeThirtySecondsElapse() async {

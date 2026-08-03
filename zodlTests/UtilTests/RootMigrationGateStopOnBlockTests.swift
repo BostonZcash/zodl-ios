@@ -676,6 +676,34 @@ import Testing
         await teardown(store)
     }
 
+    /// Audit 2026-08-03 (#6): a flow that closed without committing leaves its Tor-sheet snapshot
+    /// provisional, and nothing ever cleared it — flowFinished now runs the provisional cleaner
+    /// (a no-op when the flow committed, since confirm converts the snapshot).
+    @Test func flowFinishedClearsTheProvisionalNetworkSnapshot() async {
+        resetSharedResumeFlag()
+        let stopCalls = LockIsolated(0)
+        let testClock = TestClock()
+        let clearedFor = LockIsolated<[AccountUUID?]>([])
+        let store = makeStore(
+            stopCalls: stopCalls,
+            syncStatus: SyncStatus.upToDate,
+            mode: MigrationMode.privateScheduled,
+            isManualDelivery: false,
+            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            testClock: testClock
+        )
+        store.dependencies.migrationManager.clearProvisionalNetworkSnapshot = { accountUUID in
+            clearedFor.withValue { $0.append(accountUUID) }
+        }
+
+        await store.send(.migrationCoordFlow(.flowFinished))
+        await waitUntil { !clearedFor.value.isEmpty }
+
+        #expect(clearedFor.value.count == 1, "flowFinished runs the provisional cleaner exactly once")
+
+        await teardown(store)
+    }
+
     // MARK: - Liveness: flowFinished drives the edge a mid-session commit missed
 
     /// The confirm-after-edge wedge (field-caught 2026-08-02): a run committed mid-session, on a

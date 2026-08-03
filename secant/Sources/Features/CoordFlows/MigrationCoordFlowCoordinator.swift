@@ -752,7 +752,13 @@ extension MigrationCoordFlow {
                 // "Send now" on an overdue transfer: push the Sending screen in the manual-step
                 // shape, which runs the ordinary broadcast lane. #1930 additionally releases a
                 // send-wait hold here (its BG lane's; D2 removed it).
-                state.path.append(.sending(MigrationSending.State(totalCount: 1, isManualStepLane: true)))
+                // Audit 2026-08-03 (#8): `entersViaSendNow: true` — this push is THE Send-now lane,
+                // yet the only place that flag was ever set was a #Preview, so the R8-T6
+                // silence-window wait (and the app-side `sendGate()` consult the status screen's
+                // doc promises happens "later, inside the Send-now lane") was dead code in
+                // production. `isManualStepLane` was also wrong here — that flag belongs to the
+                // manual-delivery step lane and only skewed the success subtitle.
+                state.path.append(.sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true)))
                 return .none
 
             case .path(.element(id: let id, action: .status(.delegate(.reschedule)))):

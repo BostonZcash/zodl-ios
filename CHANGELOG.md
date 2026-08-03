@@ -20,6 +20,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] Abandoned migration attempts no longer leave a stale server preference behind: closing the migration flow without confirming — or the app quitting mid-flow — now clears the provisional network settings that attempt formed, so automatic server selection and the server-switch privacy warning stop acting on a migration that doesn't exist, and a later real broadcast can no longer inherit an abandoned attempt's endpoint or Tor choice.
+- [MOB-1466] "Send now" during a scheduled migration now honors the privacy quiet-period wait it always documented — the wait step existed in code but was never armed by the production flow — and its success message no longer mislabels the send as a manual-delivery step.
 - [MOB-1466] On wallets with more than one account, one account's held migration transfer (for example an account set to manual delivery, or to immediate mode) no longer blocks the other account's scheduled deliveries from running.
 - [MOB-1466] Migration status and logs now report a broadcast only when one actually went out — a failed or empty send attempt previously looked identical to a successful one, which made a stuck run read as healthy.
 - [MOB-1466] A momentary failure while restarting sync (a network blip, Tor still bootstrapping) no longer freezes the wallet for the rest of the session — the app keeps listening for recovery signals and automatically retries once shortly after.

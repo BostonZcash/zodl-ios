@@ -306,6 +306,14 @@ extension Root {
                     .run { [migrationManager, sdkSynchronizer] _ in
                         guard case .upToDate = sdkSynchronizer.latestState().syncStatus else { return }
                         await migrationManager.advance(.afterSync)
+                    },
+                    // Audit 2026-08-03 (#6): a flow that closed WITHOUT committing leaves its
+                    // Tor-sheet snapshot provisional — and nothing ever cleared it, pinning
+                    // auto-server selection and arming ServerSetup's privacy warning for a run
+                    // that does not exist. The cleaner no-ops when the flow committed (the
+                    // confirm converted the snapshot) and when there is nothing to clear.
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        migrationManager.clearProvisionalNetworkSnapshot(accountUUID)
                     }
                 )
 

@@ -1158,6 +1158,21 @@ extension Root {
                 return .merge(
                     replayEffect,
                     .send(.initialization(.registerForSynchronizersUpdate)),
+                    // Audit 2026-08-03 (#6): the launch-time sweep the snapshot docs always named
+                    // but nothing implemented. A provisional network snapshot formed at the Tor
+                    // sheet and abandoned (flow closed, app killed before commit) otherwise
+                    // outlived every cleaner: auto-server selection stayed pinned to that run's
+                    // provider family indefinitely, and a later broadcast could REUSE the stale
+                    // endpoint/Tor choice. The abandoned-cleaner's own engine-state guard keeps a
+                    // committed run's snapshot untouched.
+                    .run { [migrationManager, selected = state.selectedWalletAccount?.id, accounts = state.walletAccounts] _ in
+                        for accountUUID in MigrationDerivations.candidateAccountUUIDs(
+                            selectedAccountUUID: selected,
+                            walletAccounts: accounts
+                        ) {
+                            await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                        }
+                    },
                     .publisher {
                         autolockHandler.batteryStatePublisher()
                             .map { _ in Root.Action.batteryStateChanged }
