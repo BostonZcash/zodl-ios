@@ -29,8 +29,11 @@
 //  changes.
 //
 //  R8-T6 (V8 fix — silence-window wait): `entersViaSendNow` marks the OTHER lane this screen
-//  serves — the Status screen's "Send now" CTA (MigrationCoordFlowCoordinator's `.status
-//  (.delegate(.sendNow))` push site). That lane no longer stops sync and broadcasts immediately:
+//  serves — since D3 (2026-08-03) the MANUAL-DELIVERY arm only: a software account's Send now
+//  runs IN PLACE on the Status screen (`MigrationStatusStore`'s own wait+submit lane, which
+//  reuses this paragraph's silence-window semantics verbatim minus the modal), and only a
+//  manual-delivery account still reaches this push site (MigrationCoordFlowCoordinator's
+//  `.status(.delegate(.sendNow))`). That lane no longer stops sync and broadcasts immediately:
 //  `onAppear` stops sync FIRST, then reads the app-side `sendGate()` privacy gate — `.allowed`
 //  broadcasts exactly like every other lane, but `.waitUntil`/`.syncRequired` enters a WAITING
 //  phase (countdown to the gate's clear date, `@Dependency(\.continuousClock)`-driven) instead of
@@ -110,11 +113,13 @@ struct MigrationSending {
         var totalCount = 1
         /// 0 before a send, 1 after — this screen never executes more than one transfer (MOB-1496 W5).
         var sentCount = 0
-        /// R8-T6: when true, this instance is the Status screen's "Send now" lane — `onAppear`
-        /// stops sync then consults `sendGate()` first, entering `.waiting` instead of broadcasting
-        /// immediately when the gate isn't clear. Coordinator-configured (`MigrationCoordFlowCoordinator`'s
-        /// `.status(.delegate(.sendNow))` push site); defaults to false so every other lane keeps
-        /// today's immediate stop+broadcast behavior unchanged.
+        /// R8-T6: when true, this instance is the Status screen's "Send now" lane — since D3
+        /// the MANUAL-DELIVERY arm only (software accounts send in place on the Status screen and
+        /// never push here). `onAppear` stops sync then consults `sendGate()` first, entering
+        /// `.waiting` instead of broadcasting immediately when the gate isn't clear.
+        /// Coordinator-configured (`MigrationCoordFlowCoordinator`'s `.status(.delegate(.sendNow))`
+        /// push site); defaults to false so every other lane keeps today's immediate
+        /// stop+broadcast behavior unchanged.
         var entersViaSendNow = false
         /// MOB-1497 (T8, Q3'26 canvas): the manual-delivery per-transfer lane — see this file's
         /// header doc. Coordinator-configured; defaults to false so every other lane keeps today's

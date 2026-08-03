@@ -28,6 +28,15 @@
 //  1..N, its own status/caption untouched) — always COMPLETED, since post-commit the split has
 //  definitely already broadcast.
 //
+//  D3 (Figma 5217:36636) + the final progress frame (5139-34627): "Send now" sends IN PLACE — the
+//  buttons below render the in-flight treatment (spinner-prefix, both CTAs down) instead of
+//  pushing the old blocking Sending screen; see `MigrationStatusStore`'s D3 header paragraph for
+//  the lane itself. The final frame also pins an info footer on `.progress` between the timeline
+//  and "Got it" (`progressFooterNote` — stand-in key, see its TODO) and reads the row ETAs as
+//  "in ~12 hours" where this screen renders the bare "~12 hours" (`MigrationETA` `.bare` vs
+//  `.inPrefixed`, both existing keys) — that swap is a copy decision left with Andrea, not taken
+//  here.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -38,6 +47,11 @@ struct MigrationStatusView: View {
     /// hardcoded `.light` and was invisible in dark mode — same defect as the pool header's bubbles,
     /// same fix: the token holds both values, the caller supplies the appearance.
     @Environment(\.colorScheme) private var colorScheme
+
+    /// The header's fiat lines — the same app-wide shared rate the timeline rows self-read
+    /// (`MigrationTransferTimeline`), so the card and the rows beneath it can never quote two
+    /// different rates in one frame.
+    @Shared(.inMemory(.exchangeRate)) private var currencyConversion: CurrencyConversion?
 
     @Perception.Bindable var store: StoreOf<MigrationStatus>
 
@@ -66,12 +80,23 @@ struct MigrationStatusView: View {
                                 .padding(.bottom, 24)
                         }
 
-                        // The ORCHARD→IRONWOOD pool header (goal #6) was DROPPED here (R9 final,
-                        // Lukas 2026-08-03): bubbles carrying pool names may only show the chain's
-                        // real per-pool values, and those cannot be delivered at render time
-                        // without the latency this screen exists to avoid — "either possible with
-                        // real pool value or impossible, so we drop the whole idea and the
-                        // component." The plan/green/real reconciliation lives in the POOLS trace.
+                        // The ORCHARD→IRONWOOD pool header, RESTORED per Andrea's final design
+                        // (Figma 5139-34627) after R9's same-day arc (dropped → record corrected →
+                        // restored). The values are the wallet's REAL per-pool balances off the
+                        // same snapshot the timeline below renders from — one derivation pass, so
+                        // the card and the checkmarks cannot disagree — and R11 (green =
+                        // wallet-confirmed) makes them move in the same sync write, so no render
+                        // gate is needed. `.progress` only: the resume and re-scheduling frames
+                        // don't draw it.
+                        if store.presentation == .progress {
+                            MigrationPoolFlowHeader(
+                                orchardRemaining: store.poolFlow.orchardRemaining,
+                                ironwoodHeld: store.poolFlow.ironwoodHeld,
+                                currencyConversion: currencyConversion
+                            )
+                            .padding(.bottom, 24)
+                        }
+
                         if store.isUpdating {
                             updatingNote
                         }
@@ -94,12 +119,14 @@ struct MigrationStatusView: View {
                                 : nil,
                             skeletonPendingCaptions: store.isRescheduling,
                             captionStyle: { row in
-                                // MOB-1511 (W4): the Split Balance row's "Done" renders green,
-                                // matching its check badge; every other caption keeps the default.
-                                // D14: gated on `.sent` for the same reason the caption is — an
-                                // unfinished split shows an ETA, and an ETA in success-green would
-                                // read as completed.
-                                row.kind == .splitBalance && row.status == .sent
+                                // MOB-1511 (W4): a "Done" caption renders green, matching its
+                                // check badge. R11/Andrea's ladder extends W4's own rationale from
+                                // the split row to EVERY wallet-confirmed row — all `.sent` rows
+                                // caption "Done" now, and a Done in tertiary under a green check
+                                // would split one state across two tones. `.confirming` rows stay
+                                // tertiary: their check is the neutral one and their word is
+                                // "Sent", not a success claim.
+                                row.status == .sent
                                     ? Design.Utility.SuccessGreen._600 as Colorable
                                     : Design.Text.tertiary
                             }
@@ -118,6 +145,12 @@ struct MigrationStatusView: View {
                     }
                     .screenHorizontalPadding()
                     .padding(.top, 16)
+                }
+
+                if store.presentation == .progress {
+                    progressFooterNote
+                        .screenHorizontalPadding()
+                        .padding(.top, 16)
                 }
 
                 buttons
@@ -184,6 +217,12 @@ struct MigrationStatusView: View {
         switch store.presentation {
         case .progress:
             guard let totalDurationHours = store.totalDurationHours else { return nil }
+            // PENDING DESIGN COPY (Figma 5139-34627): the final frame ends this paragraph with a third
+            // sentence — "Keep Zodl open while it is preparing the migration transfers." — that
+            // `migrationStatus.desc` does not carry. The key stays as-is (no minted copy, and
+            // bolting an unrelated key's sentence on would double the keep-open ask the new
+            // `progressFooterNote` already makes right below); the sentence lands with the
+            // strings pass.
             return String(
                 localizable: .migrationStatusDesc(store.rows.count, totalDurationHours, store.remainingCount)
             )
@@ -245,12 +284,14 @@ struct MigrationStatusView: View {
         }
         switch row.status {
         case .sent:
-            if let sentMinutesAgo = row.sentMinutesAgo {
-                return String(localizable: .migrationStatusSentMinutesAgo(sentMinutesAgo))
-            }
-            return row.hoursFromNow == 0
-                ? String(localizable: .migrationStatusSentRecently)
-                : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
+            // Andrea's FIVE-state caption ladder (2026-08-03, confirmed same day R11 landed):
+            // Preparing transaction… → Sending now → Sent → Sent → DONE. Green means
+            // wallet-confirmed with pool impact now (R11), and its word is "Done" — a state, not
+            // an event the user tracks by time. The recency captions ("Sent recently"/"Sent Nh
+            // ago") this arm used to render belonged to the pre-R11 world where green meant merely
+            // broadcast; they retire from this screen and stay in the catalogue for the plan
+            // screens' history rows.
+            return String(localizable: .migrationStatusDone)
         case .active where row.isPreparing, .overdue where row.isPreparing:
             // MOB-1466 (smart-banner pass, Figma C5). Below `.sent` — a mined transfer is finished
             // whatever else it says. A transfer whose window is open (or has passed) while its proof
@@ -284,22 +325,16 @@ struct MigrationStatusView: View {
                 ? String(localizable: .migrationStatusOverdueAgo(ago / 60))
                 : String(localizable: .migrationStatusOverdueMinutesAgo(max(1, ago)))
         case .confirming:
-            // GROUND_RULES R11: on the chain's side — broadcast, possibly already mined per the
-            // engine — but the WALLET's own store has not observed it yet, so no green and no
-            // "Done". The caption stays the DESIGNED "Sent recently"/recency family (the same
-            // honest words the broadcast row used before R11, field-settled 2026-08-01: "there is
-            // never ending sending of split 1"; the SDK's post-broadcast privacy buffer holds sync
-            // 180 s testnet / 600 s mainnet, so this span is minutes, routinely). R1 forbids
-            // minting copy, and the state is already visually distinct: the badge is the NEUTRAL
-            // check, not the green one. Andrea's dedicated confirming copy replaces these words
-            // when it lands — one arm, one swap. The old `.active where isBroadcasting` arm this
-            // absorbs is gone: every broadcast row is `.confirming` now.
-            if let sentMinutesAgo = row.sentMinutesAgo {
-                return String(localizable: .migrationStatusSentMinutesAgo(sentMinutesAgo))
-            }
-            return row.hoursFromNow == 0
-                ? String(localizable: .migrationStatusSentRecently)
-                : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
+            // GROUND_RULES R11 + Andrea's ladder: on the chain's side — broadcast, possibly
+            // already mined per the engine — but the WALLET's own store has not counted it, so no
+            // green and no "Done". Andrea's word for BOTH post-broadcast phases is the same plain
+            // "Sent" — the model distinguishes broadcast-unmined from mined-unsynced (the [MIG]
+            // trace prints :broadcast vs :confirming), the copy deliberately doesn't. The span is
+            // minutes, routinely: the SDK's post-broadcast privacy buffer alone holds sync 180 s
+            // testnet / 600 s mainnet. Visually distinct from Done by the NEUTRAL (non-green)
+            // check. The old `.active where isBroadcasting` arm this absorbed is gone: every
+            // broadcast row is `.confirming` now.
+            return String(localizable: .migrationStatusSent)
         default:
             // Pending/queued-active rows: the shared forward-ETA granularity per the frames
             // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders
@@ -367,6 +402,29 @@ struct MigrationStatusView: View {
         }
     }
 
+    /// The `.progress` presentation's info footer — the final frame (Figma 5139-34627) pins one
+    /// between the timeline and the "Got it" button, and until this slot existed the progress
+    /// presentation had no footer at all (only `.resume` carried one). Same row shape as
+    /// `footerNote` above: info icon + 12pt tertiary caption.
+    ///
+    /// PENDING DESIGN COPY (Figma 5139-34627): "Keep Zodl open until transfers are prepared. The process
+    /// will pause if you leave the app." — no existing key carries it, and no new user-visible
+    /// strings may be minted here (R1; keys are Andrea's/the strings pass's to add).
+    /// `migrationBannerKeepOpenInfo` ("Keep Zodl open on active phone screen") is the closest
+    /// existing key — same keep-the-app-open ask, banner-terse — standing in until the designed
+    /// sentence lands in the catalogue.
+    @ViewBuilder private var progressFooterNote: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(localizable: .migrationBannerKeepOpenInfo)
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     // MARK: - Buttons
 
     @ViewBuilder private var buttons: some View {
@@ -392,12 +450,33 @@ struct MigrationStatusView: View {
                     ZashiButton(String(localizable: .migrationStatusReschedule), type: .secondary) {
                         store.send(.rescheduleTapped)
                     }
+                    // D3: down while an in-place send runs — the reschedule/send mutual exclusion,
+                    // now needed in BOTH directions since the tap stays on this screen. See
+                    // `MigrationStatus.State.isRescheduleDisabled`.
+                    .disabled(store.isRescheduleDisabled)
                 }
 
-                ZashiButton(String(localizable: .migrationStatusSendNow)) {
-                    store.send(.sendNowTapped)
+                if store.isSendNowInFlight {
+                    // D3 (Figma 5217:36636): the in-place send's own CTA treatment — the exact
+                    // in-flight shape the reschedule button above already established on this
+                    // screen (tertiary + leading spinner + disabled), with the label unchanged: the
+                    // work the spinner stands for is the silence-window wait plus the submit, and
+                    // the row's own "Sending now" caption names the moment the submit is actually
+                    // on the wire.
+                    ZashiButton(
+                        String(localizable: .migrationStatusSendNow),
+                        type: .tertiary,
+                        prefixView: ProgressView()
+                    ) {
+                        store.send(.sendNowTapped)
+                    }
+                    .disabled(true)
+                } else {
+                    ZashiButton(String(localizable: .migrationStatusSendNow)) {
+                        store.send(.sendNowTapped)
+                    }
+                    .disabled(store.isSendNowDisabled)
                 }
-                .disabled(store.isSendNowDisabled)
             }
         }
     }

@@ -855,9 +855,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return cached.transfers
         }
         let rows = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
+        // (The cache-serve return above already carries the stamp — `cachedTransferRows` stamps
+        // its own exit, so both callers of that path agree.)
         // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
         // result is worth keeping: `[]` means "nothing derivable", and prefilling a screen with it
         // would be the blank screen again, just without the spinner to explain itself.
+        //
+        // The cache stores the UNSTAMPED rows: `isSubmitting` is a truth of THIS INSTANT, and a
+        // cached copy of it would keep a "Sending now" caption alive after the submit returned —
+        // the exact never-ending-spinner class the field keeps catching. Both accessors stamp on
+        // the way OUT instead (see `stampingActiveSubmit`).
         if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !rows.isEmpty {
             rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: rows, computedAt: Date()) }
             // The view is FRESH as of this session — see `isMigrationViewFresh`. Stamped here, at
@@ -865,14 +872,41 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // without having done the work.
             viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
         }
-        return rows
+        return stampingActiveSubmit(rows, accountUUID: accountUUID)
+    }
+
+    /// D3/D6: overlays `isSubmitting` on the one transfer row whose id the CURRENT broadcast
+    /// session recorded as its own (`activeBroadcastTxIds` — the same D6 source the banner's
+    /// "Transfer N is sending" number reads), while `broadcastsInFlight` says a submit call is
+    /// open. This is what lights the row's "Sending now" caption during the in-place Send now's
+    /// ~7 s window, from the same two facts the banner and the snapshot's `isSubmitting` read —
+    /// one clock, three renderings. Applied at the accessors' EXITS, never persisted into
+    /// `rowsCache`: the flag is true only while the call is actually open.
+    private func stampingActiveSubmit(_ rows: [MigrationTransferRow], accountUUID: AccountUUID?) -> [MigrationTransferRow] {
+        guard
+            let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
+            broadcastsInFlight.withLock({ $0.contains(resolvedAccountUUID) }),
+            let activeId = activeBroadcastTxIds.withLock({ $0[resolvedAccountUUID] })
+        else { return rows }
+        return rows.map { row in
+            guard row.id == String(activeId) else { return row }
+            var stamped = row
+            stamped.isSubmitting = true
+            return stamped
+        }
     }
 
     /// See `MigrationManagerClient.cachedTransferRows` — SYNCHRONOUS by design, because a value a
     /// reducer has to await is a value the screen has to draw a spinner for.
+    ///
+    /// D3/D6: stamped on the way out (`stampingActiveSubmit`), so the instant-paint copy a reducer
+    /// draws during an in-place submit shows the submitting row exactly as the fresh derivation
+    /// would — the stored cache itself stays unstamped (the flag is per-instant, never persisted).
     func cachedTransferRows(accountUUID: AccountUUID?) -> MigrationRowsSnapshot? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
-        return rowsCache.withLock { $0[resolvedAccountUUID] }
+        guard var snapshot = rowsCache.withLock({ $0[resolvedAccountUUID] }) else { return nil }
+        snapshot.transfers = stampingActiveSubmit(snapshot.transfers, accountUUID: resolvedAccountUUID)
+        return snapshot
     }
 
     /// In-memory only, and deliberately so: it is a paint accelerator, not state. A cold launch has

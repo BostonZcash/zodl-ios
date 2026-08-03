@@ -9,6 +9,13 @@
 //  manual-delivery step lane. This suite pins the push's arguments so the lane can never silently
 //  fall back to preview-only again.
 //
+//  D3 (Figma 5217:36636): the delegate this coordinator consumes is now the MANUAL-DELIVERY arm
+//  only — a non-manual account's Send now runs IN PLACE inside `MigrationStatusStore` and never
+//  delegates (its lane is pinned in `MigrationSendNowAuthTests`). The coordinator contract pinned
+//  here is unchanged for the arm that still reaches it: delegate -> the silence-window Sending
+//  push, correctly flagged. The in-place fork lives in the STORE (`.sendNowAuthenticated`), so
+//  injecting the delegate directly — as this test does — is exactly how a manual account arrives.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -17,7 +24,7 @@ import Testing
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct MigrationCoordFlowSendNowLaneTests {
-    @Test func theSendNowPushArmsTheSilenceWindowLane() async {
+    @Test func theSendNowDelegatePushesTheSilenceWindowLane() async {
         var initialState = MigrationCoordFlow.State()
         initialState.path.append(.status(MigrationStatus.State(presentation: .resume)))
         let statusID = initialState.path.ids[0]
