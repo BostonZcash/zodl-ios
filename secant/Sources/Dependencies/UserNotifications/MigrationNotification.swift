@@ -34,8 +34,8 @@ enum MigrationNotification: Equatable, Sendable {
     /// `.transferComplete`, nothing about the NEXT run's shape is known yet at notification time.
     case migrationBatchComplete
     /// MOB-1511 (W3, Figma 4207:8768): a background migration broadcast failed on a Tor-class
-    /// route (the same event that arms `isPendingBackgroundTorPrompt`) — generic copy per design;
-    /// the specifics live in the Tor-failure sheet its tap routes to.
+    /// route — generic copy per design. (The T5 prompt latch this once referenced was deleted,
+    /// audit 2026-08-03 #16; the tor-hold indicator carries the surviving surface.)
     case migrationTorFailure
     /// PHASE 4 (D9) proposed a two-poke cadence: this fired at `window - lead` asking for a sync,
     /// `manualTransferReady` fired AT the window asking for a send. RETIRED — nothing schedules it

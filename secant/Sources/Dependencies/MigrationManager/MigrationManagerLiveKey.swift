@@ -84,12 +84,10 @@
 //  actually stored. Every caller therefore gets back a value consistent with storage, never a
 //  value a concurrent write has already superseded.
 //
-//  MOB-1497 (T5): `MigrationFailureRoutingStorage` gains a fourth piece of per-account persisted state
-//  — the "pending background Tor prompt" latch (`pendingBackgroundTorPrompt`/
-//  `setPendingBackgroundTorPrompt`), armed only by the background broadcast lane on a Tor-class route
-//  (see `RootInitialization.executeBroadcastAction`) and cleared alongside the Tor-hold indicator by
-//  `markHadBroadcast` (landed broadcast) and `clear` (run-end trio). Exposed on the impl as
-//  `isPendingBackgroundTorPrompt`/`setPendingBackgroundTorPrompt` for T6's foreground read/clear.
+//  MOB-1497 (T5) — DELETED (audit 2026-08-03, #16): the "pending background Tor prompt" latch
+//  is gone. Its named arm site (`RootInitialization.executeBroadcastAction`) never existed and its
+//  sheet was never presented, so it could neither be set nor consumed; `markHadBroadcast`/`clear`
+//  still remove any value an older build persisted under its key.
 //
 
 import Foundation
@@ -174,10 +172,6 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
-            isPendingBackgroundTorPrompt: { accountUUID in impl.isPendingBackgroundTorPrompt(accountUUID: accountUUID) },
-            setPendingBackgroundTorPrompt: { accountUUID, isPending in
-                impl.setPendingBackgroundTorPrompt(accountUUID: accountUUID, isPending: isPending)
-            },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
@@ -565,24 +559,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
     }
 
-    /// MOB-1497 (T5): per-account read of the persisted "pending background Tor prompt" latch — see
-    /// `MigrationFailureRoutingStorage.pendingBackgroundTorPrompt`'s doc. Backs `MigrationManagerClient
-    /// .isPendingBackgroundTorPrompt`, read on app foreground by T6. `accountUUID` is always concrete
-    /// (the BG lane's broadcast winner, T6's per-account read), so — unlike `isTorHoldActive` above —
-    /// there is no selected-account fallback to resolve.
-    func isPendingBackgroundTorPrompt(accountUUID: AccountUUID) -> Bool {
-        failureRoutingStorage.pendingBackgroundTorPrompt(for: accountUUID)
-    }
-
-    /// MOB-1497 (T5): sets/clears the "pending background Tor prompt" latch for `accountUUID` — see
-    /// `MigrationFailureRoutingStorage.setPendingBackgroundTorPrompt`'s doc. Armed (`isPending: true`)
-    /// only by the background broadcast lane's Tor-class chokepoint
-    /// (`RootInitialization.executeBroadcastAction`); T6 clears it (`isPending: false`) on user
-    /// resolution. Purely a storage write — like `overrideTorForRun`/`markNetworkSnapshotCommitted`,
-    /// no `transactionGuard`/`serialExecutor`.
-    func setPendingBackgroundTorPrompt(accountUUID: AccountUUID, isPending: Bool) {
-        failureRoutingStorage.setPendingBackgroundTorPrompt(isPending, for: accountUUID)
-    }
 
 
     /// R8-T3 (#23): same one-read-each treatment as `bannerVariant` above — the pre-fix version
@@ -1093,6 +1069,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             failureRoutingStorage.markHadBroadcast(for: resolvedAccountUUID)
         }
         if await migrationState(accountUUID: resolvedAccountUUID) == MigrationState.splitPendingConfirmation {
+            // Deliberate discard, now SAID (audit 2026-08-03, #19): a preparation-phase broadcast
+            // is not a schedule transfer, so it must not enter the sent-records ledger — but the
+            // one write-discarding guard in this layer staying silent broke the file's own
+            // "never silence" discipline.
+            LoggerProxy.debug("\(Self.logTag) broadcast record skipped — split phase, not a schedule transfer")
             return
         }
         scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
@@ -2262,9 +2243,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
                     // many call sites) retries once the flow closes. Delayed, never lost.
                     if !isMigrationFlowPresented(accountUUID: accountUUID) {
                         // MOB-1511 (W2): the completed-rounds counter rides the SAME exactly-once
-                        // gate — one increment per run completion, however many reconciles observe it.
-                        gateStorage.incrementCompletedRounds(for: accountUUID)
-                        await evaluateMigrationRemainder(for: accountUUID)
+                        // gate — one increment per run completion, however many reconciles observe
+                        // it. BEHIND the evaluation's persistence (audit 2026-08-03, #14): the
+                        // increment used to run FIRST, so a thrown propose — which persists
+                        // nothing precisely so the next pass retries — left the branch re-enterable
+                        // with the increment already taken: one completed run, N+1 rounds,
+                        // permanently ("Round 4 of 2" labels). Now the retry re-runs the WHOLE
+                        // pair, and the counter moves only when the evaluation actually latched.
+                        if await evaluateMigrationRemainder(for: accountUUID) {
+                            gateStorage.incrementCompletedRounds(for: accountUUID)
+                        }
                     }
                 }
 
@@ -2353,9 +2341,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// remainder evaluation — worse than the race this guard closes — which is why every site above
     /// was verified against HEAD rather than assumed from the three the original (unguarded) version
     /// of this doc named.
-    private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
-        guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID) else { return }
+    /// Returns whether the evaluation PERSISTED its answer — `false` on a thrown propose, which
+    /// deliberately leaves `remainderPending` nil so a later pass retries. The caller's paired
+    /// rounds increment keys off this (audit 2026-08-03, #14).
+    @discardableResult
+    private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async -> Bool {
+        guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID) else { return false }
         gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)
+        return true
     }
 
     /// MOB-1511 (W2): the round context the multi-round labels render — the CURRENT round number
@@ -2551,7 +2544,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1513 (H3 guard): reads whether `accountUUID` currently has a propose-consuming migration
     /// screen on screen — see `presentedFlowAccountUUIDs`'s doc. `reconcile()`'s own gate (below)
     /// is the one production reader; exposed (not `private`) so tests can round-trip the flag
-    /// directly against the impl, mirroring `isPendingBackgroundTorPrompt`'s precedent.
+    /// directly against the impl, mirroring `isTorHoldActive`'s precedent.
     func isMigrationFlowPresented(accountUUID: AccountUUID) -> Bool {
         presentedFlowAccountUUIDs.withLock { $0.contains(accountUUID) }
     }
@@ -2594,6 +2587,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         await userNotifications.cancelMigrationNotifications(nil)
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
+        // Audit 2026-08-03 (#19): the wipe used to clear rowsCache and broadcastsInFlight and
+        // leave every sibling map behind — a same-seed restore (same AccountUUIDs) could then be
+        // served the PREVIOUS wallet's banner from the work-in-flight cache path, and the other
+        // holdovers survived into the next wallet's process lifetime for no reason.
+        bannerCache.withLock { $0.removeAll() }
+        presentedFlowAccountUUIDs.withLock { $0.removeAll() }
+        fruitlessProveSweeps.withLock { $0 = 0 }
+        stateSubjects.withLock { $0.removeAll() }
+        lastPushedHasBalance.withLock { $0.removeAll() }
+        migrationWorkInFlight.withLock { $0 = false }
+        stepBlockerAccounts.withLock { $0.removeAll() }
         LoggerProxy.event("\(Self.logTag) wallet reset — notifications cancelled, every migration key wiped")
     }
 
@@ -4646,29 +4650,10 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
         lock.withLock { _ in userDefaults.set(active, forKey: torHoldKey(for: accountUUID)) }
     }
 
-    // MARK: Pending background Tor prompt (MOB-1497 T5)
-
-    /// Per-account: true iff a BACKGROUND migration broadcast attempt most recently failed on a
-    /// Tor-class route (R14 `.torFirstRunChoice` / R15 `.torHold`) and the user has not yet been
-    /// shown the resulting "Couldn't Connect to Tor" prompt. UNLIKE `torHoldActive` above — a
-    /// non-sticky reflection of the last route that `MigrationManagerImpl.routeBroadcastFailure`
-    /// rewrites on EVERY call, every lane — this is a STICKY, BACKGROUND-ONLY latch: it is set ONLY
-    /// by the background broadcast lane (`RootInitialization.executeBroadcastAction`), never by
-    /// `routeBroadcastFailure` itself, so a FOREGROUND broadcast failure (which has its own on-screen
-    /// failure UI) never arms it. Read on app foreground by T6. Defaults `false`.
-    func pendingBackgroundTorPrompt(for accountUUID: AccountUUID) -> Bool {
-        lock.withLock { _ in userDefaults.bool(forKey: pendingTorPromptKey(for: accountUUID)) }
-    }
-
-    /// SET `true` by the background broadcast lane's Tor-class chokepoint; SET `false` by T6 on user
-    /// resolution. ALSO cleared by `markHadBroadcast` (a landed broadcast) and `clear` (the run-end
-    /// trio) — see their docs — so it shares the Tor-hold indicator's landed-broadcast /
-    /// teardown-completion clearing lifecycle exactly, while deliberately NOT sharing the per-route
-    /// rewrite that `setTorHoldActive` above takes (this latch must survive across the many routing
-    /// calls of a stalled run until the user is actually shown the prompt).
-    func setPendingBackgroundTorPrompt(_ pending: Bool, for accountUUID: AccountUUID) {
-        lock.withLock { _ in userDefaults.set(pending, forKey: pendingTorPromptKey(for: accountUUID)) }
-    }
+    // (Audit 2026-08-03, #16: the MOB-1497 T5 "pending background Tor prompt" latch's storage
+    // was DELETED alongside its client members — nothing could arm it (its named arm site never
+    // existed) and nothing could show it (its sheet is never presented). `markHadBroadcast`/
+    // `clear` below still remove any value an older build may have persisted under its key.)
 
     // MARK: Keys
 

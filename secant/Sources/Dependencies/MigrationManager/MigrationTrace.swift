@@ -95,6 +95,26 @@ enum MigrationTrace {
 
     static func beginSession(cause: Cause, tip: BlockHeight) {
         let now = Date()
+
+        // Audit 2026-08-03 (#18): a `.timer` cause is a tick-triggered broadcast INSIDE a live
+        // foreground session, not a new app-open — replacing the session here discarded the
+        // foreground's dwell/flicker/counters mid-flight, disabled flicker detection for the rest
+        // of the open, and nothing ever ended the replacement (endSession's only caller is the
+        // background boundary). A live session instead gets a marker line and keeps its
+        // continuity; a `.timer` begin with NO live session (defensive — the tick loop is
+        // foreground-only) still opens one below, exactly as before.
+        if cause == Cause.timer {
+            let marked = state.withLock { session -> Int? in
+                session?.ordinal
+            }
+            if let marked {
+                LoggerProxy.event(
+                    "[MIG s\(marked)] ▸ tick broadcast session at \(clock(now)) — tip \(tip)\(pokeRelation(now: now))"
+                )
+                return
+            }
+        }
+
         let ordinal = sessionCounter.withLock { counter -> Int in
             counter += 1
             return counter

@@ -3,9 +3,9 @@
 //  zodl
 //
 //  "Couldn't Connect to Tor" bottom sheet (MOB-1497 T6, Figma 4207:9064 light / 4207:9324 dark).
-//  Presented over Home by `Root` on the next app foreground after a BACKGROUND migration broadcast
-//  failed on a Tor-class route (the per-account `migrationManager.isPendingBackgroundTorPrompt`
-//  latch armed by `RootInitialization.executeBroadcastAction`). It offers the user two ways forward:
+//  DESIGNED to be presented over Home after a BACKGROUND migration broadcast fails on a Tor-class
+//  route — currently unwired: the T5 latch that was to arm it was deleted (audit 2026-08-03, #16;
+//  nothing could set it), so no presenter exists yet. It offers the user two ways forward:
 //  "Continue without Tor" (destructive — turns Tor off for the rest of the run, then retries over
 //  clearnet) and "Try again" (retries keeping Tor). This is the deliberate, explicit-consent escape
 //  hatch to the otherwise-strict "never offer clearnet" stance (R15): the sheet's `MigrationRisksCard`
