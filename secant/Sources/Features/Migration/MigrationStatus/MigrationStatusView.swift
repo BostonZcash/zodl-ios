@@ -66,13 +66,12 @@ struct MigrationStatusView: View {
                                 .padding(.bottom, 24)
                         }
 
-                        // Goal #6: pools first — the user watching funds move should see them
-                        // move, not read that a numbered step finished. Only for a run that has
-                        // one; a fresh screen with an empty snapshot shows nothing.
-                        if store.poolFlow.totalTransfers > 0 {
-                            MigrationPoolFlowHeader(snapshot: store.poolFlow)
-                        }
-
+                        // The ORCHARD→IRONWOOD pool header (goal #6) was DROPPED here (R9 final,
+                        // Lukas 2026-08-03): bubbles carrying pool names may only show the chain's
+                        // real per-pool values, and those cannot be delivered at render time
+                        // without the latency this screen exists to avoid — "either possible with
+                        // real pool value or impossible, so we drop the whole idea and the
+                        // component." The plan/green/real reconciliation lives in the POOLS trace.
                         if store.isUpdating {
                             updatingNote
                         }

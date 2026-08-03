@@ -9770,40 +9770,6 @@
         }
       }
     },
-    "migration.pool.ironwood": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ironwood"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ironwood"
-          }
-        }
-      }
-    },
-    "migration.pool.orchard": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Orchard"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Orchard"
-          }
-        }
-      }
-    },
     "migration.skipOpenApp": {
       "extractionState": "manual",
       "localizations": {

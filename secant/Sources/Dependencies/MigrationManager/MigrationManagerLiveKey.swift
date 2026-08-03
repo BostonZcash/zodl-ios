@@ -740,6 +740,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             + " · done \(snapshot.doneTransfers)/\(snapshot.totalTransfers)"
             + " = \(snapshot.movedByDoneTransfers.decimalString())"
             + " · settled \(snapshot.isPoolFlowSettled)"
+            + " · plan \(planTotal.map { $0.decimalString() } ?? "?")"
             + " · splits \(preparations.count)"
             + (snapshot.isSubmitting ? " · SUBMITTING" : "")
         )

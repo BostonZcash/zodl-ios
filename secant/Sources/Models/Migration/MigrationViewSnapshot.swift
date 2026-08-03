@@ -69,9 +69,14 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
     let preparations: [MigrationTransferRow]
 
-    /// R9: Σ of ALL transfer amounts in the plan — the denominator the header's Orchard bubble
-    /// derives from (X = planTotal − movedByDoneTransfers). nil when any row's amount is unknown
-    /// (W1 fallback), in which case the header must not render (R9: correct data or no header).
+    /// Σ of ALL transfer amounts in the plan — a RECONCILIATION figure for the POOLS trace (plan vs
+    /// green vs pools), nil when any row's amount is unknown (W1 fallback).
+    ///
+    /// NOT rendered anywhere (R9, amended 2026-08-03): an earlier cut derived the header's bubbles
+    /// from this (X = plan − Σ green), and Lukas rejected it before the first test — "it should not
+    /// sum up numbers floating in memory or some 'future values'.. if pool X has Y zec, must use
+    /// Y". Bubbles labelled with POOL NAMES must show the same chain-derived values the home
+    /// balance sheet shows, or the app contradicts itself between two screens.
     let planTotal: Zatoshi?
 
     /// Whether a migration transaction is ON THE WIRE as this snapshot is taken — see
@@ -104,18 +109,15 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// legitimately lead the balance — which is precisely the "T1 and T2 done but only T1 moved"
     /// report, and it was a timing gap, never a miscount.
     ///
-    /// R9 reversed which surface reads this: the header no longer renders it — its bubbles derive
-    /// from the green rows instead (see `greenOrchard`/`greenIronwood`). The POOLS trace is this
-    /// property's only consumer now.
+    /// R9 (amended 2026-08-03): this is the header's RENDER GATE. The bubbles show the wallet's
+    /// REAL per-pool balances (`orchardRemaining`/`ironwoodHeld` — the same chain-derived source
+    /// the home balance sheet reads), and the header renders ONLY while those are consistent with
+    /// the green checkmarks below it. During the settling lag (mined but not yet synced — the
+    /// field's 55.2-vs-0 screenshot) the header HIDES: no stale real number, no invented derived
+    /// one. "Correct data or no header", with "correct" meaning the chain's.
     var isPoolFlowSettled: Bool {
         ironwoodHeld >= movedByDoneTransfers
     }
-
-    /// R9: the Ironwood bubble — exactly the sum of the green/Done rows the timeline shows.
-    var greenIronwood: Zatoshi { movedByDoneTransfers }
-
-    /// R9: the Orchard bubble — the plan total minus the green sum; nil hides the header.
-    var greenOrchard: Zatoshi? { planTotal.map { Zatoshi($0.amount - movedByDoneTransfers.amount) } }
 
     /// Whether the split detail is worth offering. A one-part split has no detail to show — the
     /// timeline row already says everything the sheet would.
