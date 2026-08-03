@@ -48,9 +48,28 @@ import ComposableArchitecture
         )
     }
 
+    /// A wallet that is CAUGHT UP — which now takes saying so.
+    ///
+    /// This fixture set only the height and inherited `SynchronizerState.zero`'s sync status, so it
+    /// was named `syncedState` while describing a wallet mid-sync. Harmless until GOAL 1
+    /// (2026-08-02) added the offer gate: a migration is not offered to a wallet that is not caught
+    /// up, because a plan sized from a stale balance is worse than no plan. The gate read this
+    /// fixture correctly and held the offer — the fixture was the thing that was wrong.
+    ///
+    /// Caught in the first full-target run after the gate landed; I had been running targeted suites,
+    /// which is how a red suite survived a day.
     private static func syncedState() -> SynchronizerState {
         var state = SynchronizerState.zero
         state.latestBlockHeight = tip
+        state.syncStatus = .upToDate
+        return state
+    }
+
+    /// The same wallet, still catching up — the state GOAL 1's gate exists for.
+    private static func syncingState() -> SynchronizerState {
+        var state = SynchronizerState.zero
+        state.latestBlockHeight = tip
+        state.syncStatus = .syncing(0.5, false)
         return state
     }
 
@@ -58,11 +77,12 @@ import ComposableArchitecture
     /// `advanceStep` says otherwise, no migration run at all.
     private static func bannerVariant(
         balance: Zatoshi,
-        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep? = { _ in nil }
+        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep? = { _ in nil },
+        state: @escaping @Sendable () -> SynchronizerState = { syncedState() }
     ) async -> MigrationBannerVariant? {
         await withDependencies {
             $0.sdkSynchronizer = .mocked(
-                latestState: { syncedState() },
+                latestState: state,
                 migrationAdvanceStep: advanceStep,
                 getAccountsBalances: { [accountUUID: orchardOnly(balance)] }
             )
@@ -81,6 +101,22 @@ import ComposableArchitecture
         let variant = await Self.bannerVariant(balance: Zatoshi(10_000_000_000))
 
         #expect(variant == .required)
+    }
+
+    /// GOAL 1 (2026-08-02), and the coverage whose absence let the suite sit red for a day: the SAME
+    /// wallet, still catching up, is offered NOTHING.
+    ///
+    /// A migration is sized from the Orchard balance at the moment it is planned. A wallet that has
+    /// not finished syncing does not yet know that balance — a six-month-dormant wallet reports its
+    /// six-month-old one — and a plan built on it splits and schedules the wrong amount. Holding the
+    /// offer costs the user one sync; taking it costs them a wrong plan they have to redo.
+    @Test func aWalletStillSyncingIsNotOfferedTheMigration() async {
+        let variant = await Self.bannerVariant(
+            balance: Zatoshi(10_000_000_000),
+            state: { Self.syncingState() }
+        )
+
+        #expect(variant == nil, "the offer must be HELD until the balance is trustworthy")
     }
 
     /// The other half of the same predicate: no Orchard value, nothing to offer. Proves the test

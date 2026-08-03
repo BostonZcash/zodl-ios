@@ -153,6 +153,29 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// by construction the single first non-sent row. Mutually exclusive with `isBroadcasting` in
     /// practice — a broadcast transfer is already proved.
     var isPreparing: Bool
+    /// MOB-1466 (field, 2026-08-03): this row's transaction is ON THE WIRE right now — the app is
+    /// inside `executeNextPendingMigrationTransfer` for it, this second.
+    ///
+    /// NOT the same fact as `isBroadcasting`, and the difference is the whole point. `isBroadcasting`
+    /// comes from the engine's durable `.broadcast(txid:)`: SUBMITTED, awaiting mining, minutes of
+    /// chain work with the app free to close. `isSubmitting` is the ~7 s window BEFORE that, when the
+    /// submit call has not returned, the work is this device's, and closing the app kills it.
+    ///
+    /// It exists because that window had no representation anywhere. The field log:
+    ///
+    ///     +0.50s broadcasting migration tx 0 — headless send session
+    ///     +0.58s BANNER -> inProgress   ·   why: submitting now      <- "We'll notify you when to send"
+    ///     +7.67s broadcast result: success(txId: dd8792ff…)
+    ///
+    /// The banner's own reason string said "submitting now" while its copy said nothing was
+    /// happening, and the timeline agreed with the copy rather than the truth — no spinner, no
+    /// caption, because the durable row was still `ready`. A user who opened the app on a
+    /// notification, watched it blink, and read "we'll notify you when to send" has been told their
+    /// tap was pointless. It was the opposite: it put their note-split on the network.
+    ///
+    /// Purely in-session by nature — there is no durable form of "a call is in progress", and an app
+    /// kill mid-submit means it is no longer true.
+    var isSubmitting: Bool
     /// See `Kind`'s doc.
     var kind: Kind
 
@@ -178,8 +201,14 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// A spinner belongs to a row whose OWN next step is blocked on work in progress: window open
     /// (`.active`) or past (`.overdue`), waiting on its proof. Those are exactly the rows that
     /// caption "Preparing transaction…", so caption and spinner stay in step by construction.
+    ///
+    /// `isSubmitting` joins it (2026-08-03) and does NOT reopen the case `isBroadcasting` was dropped
+    /// for. That exclusion was about the minutes-long wait for MINING, where the spinner would run
+    /// forever over work the app is not doing. This is the seconds-long wait for the SUBMIT CALL,
+    /// which is precisely "the app is doing something", ends on its own, and is the one window where
+    /// closing the app actually costs the user something.
     var isInFlight: Bool {
-        isPreparing && (status == .active || status == .overdue)
+        isSubmitting || (isPreparing && (status == .active || status == .overdue))
     }
 
     /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
@@ -198,6 +227,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         sentMinutesAgo: Int? = nil,
         isBroadcasting: Bool = false,
         isPreparing: Bool = false,
+        isSubmitting: Bool = false,
         kind: Kind = .transfer
     ) {
         self.id = id
@@ -209,6 +239,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.sentMinutesAgo = sentMinutesAgo
         self.isBroadcasting = isBroadcasting
         self.isPreparing = isPreparing
+        self.isSubmitting = isSubmitting
         self.kind = kind
     }
 }

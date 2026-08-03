@@ -59,6 +59,16 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
     let preparations: [MigrationTransferRow]
 
+    /// Whether a migration transaction is ON THE WIRE as this snapshot is taken — see
+    /// `MigrationTransferRow.isSubmitting`.
+    ///
+    /// Lives here rather than being read separately by each surface for the reason everything else
+    /// does: the banner says "keep Zodl open" and the timeline spins its row from ONE fact, so they
+    /// cannot contradict each other for the ~7 s it is true. The last time these were separate the
+    /// banner span a spinner over a list that showed none, which is the complaint that started this
+    /// whole pass.
+    let isSubmitting: Bool
+
     /// The app-open that produced this. `nil` outside a session.
     ///
     /// Freshness is ONE stamp on ONE value now, consumed identically by every observer, rather than
@@ -96,6 +106,7 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         doneTransfers: 0,
         totalTransfers: 0,
         preparations: [],
+        isSubmitting: false,
         sessionOrdinal: nil
     )
 }

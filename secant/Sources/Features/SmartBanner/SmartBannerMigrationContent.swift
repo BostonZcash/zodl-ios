@@ -110,15 +110,24 @@ enum MigrationBannerVariant: Equatable {
     /// revert this case on the `isWorkingNow` precedent; it is the sanctioned path, not the same
     /// mistake. Do reword it the moment design answers.
     ///
-    /// Carries NO button and NO second line by design: an action offered against an unknown state
-    /// is precisely the stale-CTA class this pass exists to remove.
+    /// Carries no second line — see `info`. It DOES carry the button: Figma 5679-8225 draws this
+    /// state with the ordinary "More", and the design is the authority.
+    ///
+    /// I shipped it buttonless on the argument that an action offered against an unknown state is the
+    /// stale-CTA class this pass exists to remove, and wrote a test asserting it. The argument does
+    /// not survive contact with what the button does. "More" opens the migration screen — which is
+    /// exactly where the answer is being computed. A stale CTA promises an OUTCOME the app can no
+    /// longer deliver ("Send now" on an expired transfer); "More" promises a DESTINATION, and the
+    /// destination stays valid whatever the answer turns out to be.
+    ///
+    /// The layout argument cut the other way too: a banner that loses its button for 700 ms and grows
+    /// one back is the same jump the reserved blank second line exists to prevent.
     case checkingStatus
 
-    /// False only for `.checkingStatus` — see that case. Every other variant offers an action,
-    /// because every other variant knows what the action would be.
-    var showsButton: Bool {
-        self != .checkingStatus
-    }
+    /// True for every variant. Kept as a named property rather than deleted: it is the seam where a
+    /// state that genuinely must not offer an action would say so, and its absence is what let the
+    /// buttonless `.checkingStatus` above pass for a design decision instead of a deviation from one.
+    var showsButton: Bool { true }
 
     var title: String {
         switch self {

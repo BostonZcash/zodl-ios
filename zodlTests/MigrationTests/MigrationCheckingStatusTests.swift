@@ -8,8 +8,6 @@
 //  WHY THESE TESTS EXIST AS CONTRACT TESTS. Every property pinned here was a deliberate decision
 //  that a later reader would otherwise "tidy up" into a bug:
 //
-//  - `showsButton == false` looks like an omission. It is the whole point: an action offered
-//    against an unknown state is the stale-CTA class this pass exists to remove.
 //  - `info == ""` looks like unfinished work. One provisional string was authorised, not two, and
 //    the content view renders the blank line deliberately so the banner keeps its two-line height.
 //    A "helpful" second string here would repeat the `isWorkingNow` mistake documented on
@@ -31,15 +29,20 @@ import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationCheckingStatusTests {
-    /// The defining property. A banner that does not know what the run needs must not offer to do
-    /// anything about it — every other variant answers `true` here precisely because it knows.
-    @Test func checkingOffersNoAction() {
-        #expect(!MigrationBannerVariant.checkingStatus.showsButton)
+    /// REVERSED 2026-08-03 against Figma 5679-8225, which draws this state WITH the ordinary "More".
+    ///
+    /// The old assertion (`!showsButton`) encoded my reasoning, not the design's: I argued an unknown
+    /// state must offer no action. But "More" opens the migration screen, which is where the answer
+    /// is being computed — a destination, not a promised outcome, and valid whichever way the answer
+    /// lands. The stale-CTA class this pass removes is "Send now" on a transfer that can no longer be
+    /// sent. This was never that.
+    @Test func checkingKeepsItsButton() {
+        #expect(MigrationBannerVariant.checkingStatus.showsButton)
     }
 
-    /// …and it is the ONLY one. Written as an enumeration rather than a spot check so that adding a
-    /// variant without a button becomes a deliberate act with a failing test attached.
-    @Test func everyOtherVariantOffersItsAction() {
+    /// Every variant offers its action. Written as an enumeration rather than a spot check so that
+    /// hiding a button anywhere becomes a deliberate act with a failing test attached.
+    @Test func everyVariantOffersItsAction() {
         let actionable: [MigrationBannerVariant] = [
             .required,
             .inProgress(done: 1, total: 4, round: nil, totalRounds: nil),
@@ -50,11 +53,12 @@ import ZcashLightClientKit
             .updatePlan,
             .transfersExpired(first: 1, last: 2),
             .transferReady(number: 1),
-            .complete
+            .complete,
+            .checkingStatus
         ]
 
         for variant in actionable {
-            #expect(variant.showsButton, "\(variant) must keep its button — only checkingStatus hides one")
+            #expect(variant.showsButton, "\(variant) must keep its button")
         }
     }
 

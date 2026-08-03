@@ -162,7 +162,13 @@ struct MigrationStatus {
             // falling back to the `.sent` placeholder below (which is only correct when there is no
             // engine data at all).
             if !preparationRows.isEmpty {
-                return [Self.collapsedSplitRow(from: preparationRows, transfers: rows)]
+                return [
+                    Self.collapsedSplitRow(
+                        from: preparationRows,
+                        transfers: rows,
+                        isSubmitting: poolFlow.isSubmitting
+                    )
+                ]
             }
 
             guard !rows.isEmpty else { return [] }
@@ -194,9 +200,16 @@ struct MigrationStatus {
         ///
         /// STATUS is the least-finished part: a split is done only when every part of it is.
         /// ETA is the furthest-out part, for the same reason.
+        ///
+        /// `isSubmitting` is the collapsed row's THIRD source of truth about itself and deliberately
+        /// not derived from `preparations`: no durable row can know a submit call is open — the
+        /// engine only writes `.broadcast(txid:)` once it returns. It comes from the snapshot, the
+        /// same value the banner's split arm reads, so the row spins for exactly the window the
+        /// banner asks the user to stay. See `MigrationTransferRow.isSubmitting`.
         static func collapsedSplitRow(
             from preparations: [MigrationTransferRow],
-            transfers: IdentifiedArrayOf<MigrationTransferRow>
+            transfers: IdentifiedArrayOf<MigrationTransferRow>,
+            isSubmitting: Bool
         ) -> MigrationTransferRow {
             let total: Zatoshi? = transfers.isEmpty || transfers.contains { $0.amount == nil }
                 ? nil
@@ -211,6 +224,7 @@ struct MigrationStatus {
                 amount: total,
                 status: allSent ? MigrationTransferRow.Status.sent : (unfinished?.status ?? MigrationTransferRow.Status.sent),
                 hoursFromNow: preparations.map(\.hoursFromNow).max() ?? 0,
+                isSubmitting: isSubmitting,
                 kind: MigrationTransferRow.Kind.splitBalance
             )
         }

@@ -227,6 +227,18 @@ struct MigrationStatusView: View {
 
     /// The row's own status caption, before the split row's step-count suffix is applied.
     private func unsplitCaption(for row: MigrationTransferRow) -> String {
+        // ON THE WIRE RIGHT NOW — ahead of every status arm, because a row whose submit call is open
+        // is not described by any of them: its durable status is still whatever it was a second ago.
+        //
+        // `migrationStatus.sendingNow` is designed copy that has been in the catalogue unused, with a
+        // note saying it is "the right words for a genuinely in-session submit if a surface ever
+        // wants to show one — that window is ~2 s and nothing is watching this list during it."
+        // Something is watching now: the user opened the app from a notification precisely to make
+        // this happen, and the field window is ~7 s, not 2. This is the moment the string was
+        // written for.
+        if row.isSubmitting {
+            return String(localizable: .migrationStatusSendingNow)
+        }
         switch row.status {
         case .sent:
             if let sentMinutesAgo = row.sentMinutesAgo {

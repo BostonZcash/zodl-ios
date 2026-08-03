@@ -701,6 +701,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             doneTransfers: done.count,
             totalTransfers: rows.count,
             preparations: preparations,
+            // The in-session "a submit call is open right now" fact, taken LAST so it is as fresh as
+            // the snapshot claims to be. Same flag the banner's split arm reads, so the banner's
+            // "keep Zodl open" and the timeline's spinner turn on and off together.
+            isSubmitting: broadcastsInFlight.withLock { $0.contains(resolved) },
             sessionOrdinal: MigrationTrace.currentSessionOrdinal
         )
         // Goal #6: both header figures, every derivation, so the claim can be READ rather than
@@ -713,6 +717,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             + " = \(snapshot.movedByDoneTransfers.decimalString())"
             + " · settled \(snapshot.isPoolFlowSettled)"
             + " · splits \(preparations.count)"
+            + (snapshot.isSubmitting ? " · SUBMITTING" : "")
         )
         return snapshot
     }
@@ -2779,10 +2784,34 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// activationHeight` by coincidence (mirrors the sentinel idiom in
     /// `SDKSynchronizerClient.transactionStatesFromZcashTransactions`). Not `private`: wired
     /// directly to `MigrationManagerClient.isIronwoodActivated` in `live()`.
+    /// Whether the chain is past Ironwood activation.
+    ///
+    /// LATCHED, because activation is a chain fact and chain facts do not un-happen. The unlatched
+    /// version read `latestBlockHeight` fresh every time, and that field is not a tip — it is
+    /// whatever this wallet currently believes, which climbs during a sync. Field log, one session:
+    ///
+    ///     +23.77s no banner: ironwood NOT activated — tip 4090000, activation 4134000
+    ///     +25.92s offer gate CLOSED — wallet syncing · height 4234740
+    ///
+    /// Two seconds apart, same field, 144k blocks. For the first ~26 s the app declared a live
+    /// migration impossible on a wallet already 100k blocks past activation.
+    ///
+    /// Nothing user-visible followed on that path — the Goal-1 sync gate suppresses the offer until
+    /// `.upToDate` regardless — so this is not the cause of any reported bug. It is a false statement
+    /// the code was making about the chain, on a value that means something else, and the next reader
+    /// to depend on it would not get that warning. One observation of `true` is proof; no later
+    /// reading can disprove it.
     func isIronwoodActivated() -> Bool {
+        if ironwoodActivationSeen.withLock({ $0 }) { return true }
         let tip = sdkSynchronizer.latestState().latestBlockHeight
-        return tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
+        let activated = tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
+        if activated { ironwoodActivationSeen.withLock { $0 = true } }
+        return activated
     }
+
+    /// Set once the chain has been observed past activation — see `isIronwoodActivated`. In-process
+    /// only: a fresh launch re-observes it from the first height the synchronizer reports.
+    private let ironwoodActivationSeen = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     // MARK: - MOB-1496: throwing-SDK-read helpers (account-scoped, degrade on error)
 
@@ -3078,18 +3107,42 @@ enum MigrationDerivations {
             // The banner was not wrong that work was happening. It was wrong about WHAT KIND, and
             // it claimed the user for it.
             //
-            // A split broadcast now falls through to the idle `.inProgress` banner below. That is
-            // honest on both counts: nothing about a 5-second headless submit needs the user's
-            // attention, and the timeline agrees because it also shows nothing special.
+            // RE-REVERSED 2026-08-03, and the reason the first reversal was wrong is worth keeping.
             //
-            // NOT re-costumed as `.transferSending` deliberately: that variant reads "Sending
-            // transfer N", and a preparation is not a transfer. The split phase genuinely has no
-            // designed "submitting" state — a gap for the designers (SMART_BANNER_STATES §8), and
-            // reaching for the nearest costume a second time is how the first one got here.
+            // Sending a split broadcast to the idle `.inProgress` banner made the app SAY NOTHING IS
+            // HAPPENING while it had a transaction open on the wire. Field log, the session a user
+            // opened from a notification:
             //
-            // `isPreparingRun` stays: proving DOES need the app open, for tens of seconds, and the
+            //     +0.50s broadcasting migration tx 0 — headless send session
+            //     +0.58s BANNER -> inProgress  ·  why: submitting now   <- "We'll notify you when to send"
+            //     +7.67s broadcast result: success(txId: dd8792ff…)
+            //
+            // Their tap put the note-split on the network — the transaction the entire schedule
+            // depends on — and the app told them there was nothing to do. "Why did I need to open
+            // Zodl? This open feels wasted." It was the single most consequential 7 seconds of the
+            // run.
+            //
+            // What was ACTUALLY wrong the first time was not the spinner; it was that the spinner had
+            // no counterpart. The complaint was "a spinner on a banner didn't also have any
+            // counterpart on migration screen" — two surfaces disagreeing, the recurring bug of this
+            // whole pass. I fixed it by removing the true half instead of adding the missing half.
+            //
+            // The missing half now exists: `MigrationTransferRow.isSubmitting` (carried on
+            // `MigrationViewSnapshot`) spins the split row and captions it "Sending now" for exactly
+            // the same window. Banner and screen turn on and off together, from one fact.
+            //
+            // `.preparing`'s user-visible copy is "Migration Progress" / "Keep Zodl open on active
+            // phone screen" — nothing in it says "proving", and BOTH claims are true during a submit:
+            // work is running, and backgrounding the app kills the send session. The variant's NAME
+            // is the only thing that reads wrong, and users do not read variant names.
+            //
+            // Still NOT `.transferSending`: that one says "Transfer N is sending", and a preparation
+            // is not a transfer. A dedicated split-submit state remains a real design gap
+            // (SMART_BANNER_STATES §8) — this is the honest state available today, not the final one.
+            //
+            // `isPreparingRun` is unchanged: proving needs the app open for tens of seconds, and the
             // rows corroborate it.
-            if isPreparingRun {
+            if isPreparingRun || isBroadcastInFlight {
                 return MigrationBannerVariant.preparing
             }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
