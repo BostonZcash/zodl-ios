@@ -448,7 +448,8 @@ private extension View {
 enum MigrationStatusPrewarm {
     @MainActor static func run() {
         let content = VStack(alignment: .leading, spacing: 0) {
-            MigrationPoolFlowHeader(snapshot: MigrationViewSnapshot.empty)
+            // MigrationPoolFlowHeader was prewarmed here until R9 dropped the component entirely
+            // (2026-08-03) — the timeline is the screen's remaining heavy view.
             MigrationTransferTimeline(
                 rows: IdentifiedArrayOf<MigrationTransferRow>.previewProgressRows,
                 caption: { _ in "" }
