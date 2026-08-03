@@ -153,36 +153,36 @@ extension Root {
                 }
                 
             case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID, let isTorFailure))):
-                // PHASE 4: a poke was tapped. Open the migration flow — the coordinator's own
-                // `onAppear` re-entry routing then lands on whatever screen the run is actually on
-                // (status/resume/review), so this does NOT need to know the run's shape.
+                // A poke was tapped. LAND ON HOME — do NOT open the migration flow.
                 //
-                // The Tor-failure route has no surface yet (Phase 5) — it falls through to the same
-                // flow rather than nowhere, which is the honest degradation: the user still reaches
-                // their run, just without the dedicated explanation sheet.
-                // MOB-1466: the answer to "was this open the schedule working, or the user wandering
-                // in". Arrives moments after `willEnterForeground` opened the session, so its own
-                // elapsed stamp reads unmistakably as that session's cause.
+                // DELIBERATE REVERSAL of Phase 4, on Andrea's rule (relayed 2026-08-03): the smart
+                // banner is the story, the migration screen is only the detail. Auto-navigating into
+                // that screen put the user in front of the one surface that CANNOT be trusted to be
+                // fresh on arrival — it renders a snapshot, while the banner re-derives per session.
+                // Every banner-vs-screen contradiction reported this week arrived through a door
+                // like this one.
+                //
+                // So the tap now does exactly what tapping the app icon does, and no more. That is
+                // not a weaker guarantee, it is the SAME one: entry parity (I4) stops being an
+                // invariant we maintain and becomes true by construction, because both entrances
+                // are now literally the same code path.
+                //
+                // Home rather than "stay where you are", and the distinction matters: a tap is an
+                // explicit request to see what the notification is about, and what it is about is
+                // the banner. Backgrounding in Advanced Settings and tapping a migration poke should
+                // not leave the user in Advanced Settings. A plain foreground has no such signal and
+                // is deliberately left alone.
                 MigrationTrace.notificationTapped()
                 _ = isTorFailure
-                // `accountUUID` names the account the notification was COMPOSED for. Selecting it
-                // is Phase 5's cross-account routing; for now a tap opens the flow for whichever
-                // account is selected, which is the same account in every single-account case.
                 _ = accountUUID
-                // I4 — ENTRY PARITY. A tap that arrives before the app can act on it is LATCHED,
-                // never dropped. On a cold launch this handler runs inside `didFinishLaunching`'s
-                // half-second pause, before feature flags load, so the guard below used to swallow
-                // the deep link entirely and the user landed on Home — the same tap, on a warm app,
-                // opened their migration. See `Root.State.pendingMigrationNotificationTap`.
-                //
-                // `isInitializingSDK` covers the other half of the window: flags loaded, SDK not up
-                // yet, so the flow would open over an app that cannot populate it.
-                guard state.featureFlags.migration, !state.isInitializingSDK else {
-                    state.pendingMigrationNotificationTap = true
-                    LoggerProxy.event("\(MigrationManagerImpl.logTag) notification tap latched — app not ready yet; will replay")
-                    return .none
-                }
-                return openMigrationCoordFlow(state: &state)
+                // THE LATCH IS GONE, and its absence is the point. `pendingMigrationNotificationTap`
+                // existed only because the tap NAVIGATED: a tap arriving during cold launch, before
+                // flags or the SDK were up, would have been swallowed, so it had to be stored and
+                // replayed. Landing on Home needs none of that — a cold launch already lands there,
+                // so the tap is idempotent with the app's own startup and can never be "too early".
+                state.path = nil
+                MigrationTrace.event("notification tap → Home (no deeplink; the banner is the story)")
+                return .none
 
             case .initialization(.appDelegate(.didEnterBackground)):
                 // See the cold-launch marker above. `sdkSynchronizer.stop()` on the next line is
@@ -1165,21 +1165,13 @@ extension Root {
 
             case .initialization(.initializationSuccessfullyDone):
                 state.isInitializingSDK = false
-                // I4: replay a notification tap that landed while the app was still coming up. Done
-                // HERE, at the one point where "the app is ready" is unambiguously true, so the cold
-                // and warm entries converge on the same screen by the same route.
-                var replayEffect = Effect<Action>.none
-                if state.pendingMigrationNotificationTap && state.featureFlags.migration {
-                    state.pendingMigrationNotificationTap = false
-                    LoggerProxy.event("\(MigrationManagerImpl.logTag) replaying the latched notification tap")
-                    replayEffect = openMigrationCoordFlow(state: &state)
-                } else {
-                    // Never carry a stale latch into the next launch: a tap the user has since
-                    // resolved must not reopen the flow behind them.
-                    state.pendingMigrationNotificationTap = false
-                }
+                // I4's replay machinery lived here and is GONE with the deeplink that needed it.
+                // A latched tap had to be re-applied at this exact point — the one place where "the
+                // app is ready" is unambiguously true — so a cold entry would reach the same screen
+                // a warm one did. Now both entries reach HOME, which a cold launch was already
+                // going to do, so there is nothing to defer and nothing to replay. Entry parity
+                // stopped being maintained and became structural.
                 return .merge(
-                    replayEffect,
                     .send(.initialization(.registerForSynchronizersUpdate)),
                     // Audit 2026-08-03 (#6): the launch-time sweep the snapshot docs always named
                     // but nothing implemented. A provisional network snapshot formed at the Tor
