@@ -101,6 +101,7 @@ import ZcashLightClientKit
             totalTransfers: 9,
             transfers: [],
             summary: MigrationSummary.zero,
+            banner: nil,
             preparations: [Self.row(status: .active)],
             planTotal: Zatoshi(900_000_000),
             isTorHoldActive: false,

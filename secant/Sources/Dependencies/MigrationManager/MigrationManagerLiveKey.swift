@@ -454,44 +454,45 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// don't trust the account selected at close time" precedent.
     private let presentedFlowAccountUUIDs = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
 
-    /// R8-T3 (#23): every underlying SDK/storage read below happens exactly ONCE — the pre-fix
-    /// version read `hasOverdue` inside `migrationTransfers` and
-    /// AGAIN directly here, `progress` inside `isNextTransferDue` (and, on the W1-fallback path,
-    /// inside `migrationTransfers` too) — PLUS an unused `hasInvalidMigrationTransfers` read whose
-    /// result fed a `MigrationDerivations.bannerVariant` parameter the function's body never
-    /// actually consulted (the `.invalidTransfer` case is decided purely from `state`'s own
-    /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
-    /// uses.
+    /// R13 Brick 2b: the accessor is now a WINDOW onto the published snapshot — the ladder position
+    /// is decided inside the loader (`bannerArm`, called from `migrationViewSnapshot`'s one pass),
+    /// so a banner answer and the rows it describes can never come from different moments. Reading
+    /// the published value is free, which also retires the double-derivation Brick 2 introduced
+    /// transitionally (a snapshot emission triggered a reevaluation whose pull re-derived).
+    ///
+    /// The pre-2b machinery this replaces: `bannerCache` + its starvation serve (the PUBLISHED
+    /// value is the cache now — during a sweep the coalesced build lands late and this keeps
+    /// answering the last published truth, same behavior, one mechanism) and the
+    /// `bannerTransferRows` mirror derivation (THE rows are the bundle's).
+    ///
+    /// First ask of a launch (no build published yet): build once THROUGH the loader and PUBLISH
+    /// the result, so this answer and the channel's first value are the same object — the banner
+    /// walk and a later-subscribing screen cannot disagree about what the first verdict was.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
-        // The actor-starvation guard — see `migrationTransfers`. The banner depends on the same
-        // `SlipstreamSynchronizer` actor the prove sweep occupies, and the field log caught it
-        // waiting 32.17 seconds THREE TIMES over in one session (three callers, all queued behind
-        // one sweep). During a sweep the banner cannot have changed, so the last one is the truthful
-        // answer and it costs nothing to give it immediately.
-        if isMigrationWorkInFlight,
-           let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
-           let cached = bannerCache.withLock({ $0[resolvedAccountUUID] }) {
-            // Traced because this is the ONE exit that answers without the gate/decline lines the
-            // full derivation logs — an investigation of "the banner never re-asked" (field,
-            // 2026-08-03) could not tell this path from the call never happening at all.
-            MigrationTrace.event(
-                "bannerVariant served from cache — work in flight, cached \(cached.map { String(describing: $0) } ?? "nil")"
-            )
-            return cached
-        }
-        let variant = await MigrationTrace.timed("bannerVariant") { await bannerVariantUntimed(accountUUID: accountUUID) }
-        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id {
-            bannerCache.withLock { $0[resolvedAccountUUID] = variant }
-        }
-        return variant
-    }
-
-    /// See `bannerVariant` — the body, wrapped so a banner that takes seconds to decide says so.
-    private func bannerVariantUntimed(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
             LoggerProxy.event("\(Self.logTag) no banner: no account selected")
             return nil
         }
+        if let published = snapshotSubjects.withLock({ $0[resolvedAccountUUID]?.value }) ?? nil {
+            return published.banner
+        }
+        let snapshot = await migrationViewSnapshot(accountUUID: resolvedAccountUUID)
+        publishSnapshot(snapshot, for: resolvedAccountUUID)
+        return snapshot.banner
+    }
+
+    /// R13 Brick 2b: THE banner arm of the loader — called only from `migrationViewSnapshot`'s one
+    /// pass, with the pass's own rows, preparations and balances. The gates and reads are the old
+    /// `bannerVariantUntimed`'s, verbatim; what died is the mirror row derivation (`transfers`/
+    /// `preparations` arrive as parameters — the SAME lists every other snapshot field describes,
+    /// R2's "one position, one value" finally executable) and the separate full-wallet balance
+    /// read (the pass's one `getAccountsBalances` serves it).
+    private func bannerArm(
+        resolvedAccountUUID: AccountUUID,
+        transfers: [MigrationTransferRow],
+        preparations: [MigrationTransferRow],
+        balances: [AccountUUID: AccountBalance]?
+    ) async -> MigrationBannerVariant? {
         // MOB-1513 (B2 fix wave): pre-activation there is no migration banner to derive — the pure
         // `MigrationDerivations.bannerVariant` already returns nil for `isIronwoodActivated == false`
         // (checked ahead of every row). Short-circuit BEFORE the five async reads below (rust
@@ -538,22 +539,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
         async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
-        async let balanceTask = orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
         async let clockTask = chainClock(accountUUID: resolvedAccountUUID)
 
         let progress = await progressTask
         let hasOverdue = await hasOverdueTask
-        let balance = await balanceTask
         let clock = await clockTask
+        // R13 Brick 2b: the pass's one balances read serves the offer amount — the same
+        // expression `orchardBalanceToMigrate` computes, without a second full-wallet read.
+        let balance = balances?[resolvedAccountUUID]?.orchardBalance.unlockedForMigration ?? Zatoshi.zero
 
         let state = rawState
-        let rows = await bannerTransferRows(
-            resolvedAccountUUID: resolvedAccountUUID,
-            state: state,
-            hasOverdue: hasOverdue,
-            progress: progress,
-            clock: clock
-        )
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
         let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
 
@@ -568,8 +563,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
             isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
-            transferRows: rows.transfers,
-            preparationRows: rows.preparations,
+            transferRows: transfers,
+            preparationRows: preparations,
             // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
             // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
             // .torHoldActive`'s doc.
@@ -601,14 +596,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
             variant,
             why: bannerReason(
                 state: state,
-                rows: rows.transfers,
-                preparations: rows.preparations,
+                rows: transfers,
+                preparations: preparations,
                 hasOverdue: hasOverdue,
                 isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) }
             ),
             detail: "state \(state), orchard \(balance.decimalString())"
         )
-        MigrationTrace.rows(transfers: rows.transfers, preparations: rows.preparations)
+        MigrationTrace.rows(transfers: transfers, preparations: preparations)
 
         return variant
     }
@@ -737,6 +732,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // simply lands late, and the UI keeps the last PUBLISHED value with its age label rather
         // than a mixed-clock blend.
         let summary = await migrationSummaryComputing(accountUUID: resolved)
+        // R13 Brick 2b: the banner's ladder position, decided from THIS pass's rows, preparations
+        // and balances — the banner's own mirror derivation (the last second-pass truth reader) is
+        // gone. `bannerArm` keeps the old gates, reads and traces verbatim.
+        let banner = await bannerArm(
+            resolvedAccountUUID: resolved,
+            transfers: rows,
+            preparations: preparations,
+            balances: balances
+        )
 
         // R9 (final): TRACE-ONLY reconciliation figure — Σ of all plan amounts, for the POOLS line
         // (plan vs green vs pools). Never rendered: bubbles labelled with pool names show the
@@ -780,6 +784,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // off with the submit itself.
             transfers: stampingActiveSubmit(rows, accountUUID: resolved),
             summary: summary,
+            banner: banner,
             preparations: preparations,
             planTotal: planTotal,
             isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolved),
@@ -1052,11 +1057,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    /// The last banner each account derived, kept for the same reason as `rowsCache` and consulted
-    /// by the same actor-starvation guard: a banner that takes 32 seconds to decide is a banner the
-    /// user never sees.
-    private let bannerCache = OSAllocatedUnfairLock<[AccountUUID: MigrationBannerVariant?]>(initialState: [:])
-
     /// True while LONG migration work occupies the `SlipstreamSynchronizer` actor — see the guard in
     /// `migrationTransfers`.
     ///
@@ -1320,55 +1320,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return "idle — \(done)/\(rows.count) mined, waiting on the next window"
     }
 
-    private func bannerTransferRows(
-        resolvedAccountUUID: AccountUUID,
-        state: MigrationState,
-        hasOverdue: Bool,
-        progress: MigrationProgress?,
-        clock: MigrationChainClock
-    ) async -> (transfers: [MigrationTransferRow], preparations: [MigrationTransferRow]) {
-        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
-        // R11: one confirmed-set read and one txid harvest for BOTH row lists of this pass — the
-        // banner's transfers and preparations judge green against the same wallet truth, in the
-        // same pass, or the split flips a session before its transfers do.
-        let rememberedTxIds = rememberBroadcastTxIds(from: statuses, accountUUID: resolvedAccountUUID)
-        let confirmedTxIds = await walletMinedTxIds(accountUUID: resolvedAccountUUID)
-        let preparations = MigrationDerivations.preparationRows(
-            statuses: statuses,
-            clock: clock,
-            isProvingStalled: isProvingStalled,
-            confirmedTxIds: confirmedTxIds,
-            rememberedTxIds: rememberedTxIds
-        ) ?? []
-
-        guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
-            // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
-            if let statusRows = MigrationDerivations.statusOnlyTransferRows(
-                statuses: statuses,
-                clock: clock,
-                isProvingStalled: isProvingStalled,
-                confirmedTxIds: confirmedTxIds
-            ) {
-                return (statusRows, preparations)
-            }
-            guard let progress else { return ([], preparations) }
-            return (Self.synthesizedTransferRows(progress: progress), preparations)
-        }
-
-        return (
-            MigrationDerivations.transferRows(
-                committedSchedule: committedSchedule,
-                state: state,
-                hasOverdueMigrationTransfers: hasOverdue,
-                now: Date(),
-                clock: clock,
-                statuses: statuses,
-                isProvingStalled: isProvingStalled,
-                confirmedTxIds: confirmedTxIds
-            ),
-            preparations
-        )
-    }
+    // (R13 Brick 2b: `bannerTransferRows` — the banner's mirror row derivation — is deleted. THE
+    // rows come from `transferDerivation`'s bundle, and `bannerArm` receives them from the loader's
+    // one pass.)
 
     /// MOB-1496 (W2): persists the just-committed schedule for `accountUUID` (`nil` resolves the
     /// selected account, same convention as `migrationSummary`/`migrationTransfers` above) — the
@@ -2987,7 +2941,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // leave every sibling map behind — a same-seed restore (same AccountUUIDs) could then be
         // served the PREVIOUS wallet's banner from the work-in-flight cache path, and the other
         // holdovers survived into the next wallet's process lifetime for no reason.
-        bannerCache.withLock { $0.removeAll() }
+        //
+        // R13 Brick 2b: `bannerCache` is gone (the published snapshot IS the banner's cache), so
+        // the published values are the holdover to clear now — exactly the same same-seed-restore
+        // class: push `nil` through live subscriptions (screens fall to their empty states) and
+        // drop the subjects; the next subscriber starts from a fresh build of the new wallet.
+        snapshotSubjects.withLock { subjects in
+            subjects.values.forEach { $0.send(nil) }
+            subjects.removeAll()
+        }
+        snapshotRepublishState.withLock { $0 = ([], []) }
         presentedFlowAccountUUIDs.withLock { $0.removeAll() }
         fruitlessProveSweeps.withLock { $0 = 0 }
         stateSubjects.withLock { $0.removeAll() }
@@ -3252,6 +3215,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private func scheduleSnapshotRepublish(for accountUUID: AccountUUID) {
         guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
 
+        // R13 Brick 2b: while a sweep/broadcast occupies the actor, a build would only queue
+        // behind it and publish a value the completion is about to supersede — so mid-work
+        // requests are dropped, and the COMPLETION poke (every sweep and broadcast edge fires
+        // one; see `transferDerivation`'s "the poke fired when the sweep completes" contract)
+        // re-schedules the moment the work ends. The UI keeps the last published value with its
+        // honest age meanwhile, which is exactly the starvation posture Brick 2 chose. Also what
+        // keeps `MigrationCacheWarmupTests`' pin true: mid-sweep, nothing re-reads the engine.
+        guard !isMigrationWorkInFlight else { return }
+
         let shouldStart = snapshotRepublishState.withLock { state -> Bool in
             if state.inFlight.contains(accountUUID) {
                 state.dirty.insert(accountUUID)
@@ -3270,9 +3242,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID) async {
         while true {
             let snapshot = await migrationViewSnapshot(accountUUID: accountUUID)
-            if let subject = snapshotSubjects.withLock({ $0[accountUUID] }), subject.value != snapshot {
-                subject.send(snapshot)
-            }
+            publishSnapshot(snapshot, for: accountUUID)
 
             let buildAgain = snapshotRepublishState.withLock { state -> Bool in
                 if state.dirty.remove(accountUUID) != nil {
@@ -3283,6 +3253,34 @@ final class MigrationManagerImpl: @unchecked Sendable {
             }
             guard buildAgain else { return }
         }
+    }
+
+    /// R13 Brick 2b: the ONE publish point — create-if-needed, value-dedupe, and the `SNAPSHOT`
+    /// trace line that makes the pipeline auditable end-to-end in the [MIG] log: a build that
+    /// changed nothing says so, and a published value prints the exact figures every surface's own
+    /// "SNAPSHOT applied" line must echo. DB → loader → channel → pixels, confirmable by grep.
+    private func publishSnapshot(_ snapshot: MigrationViewSnapshot, for accountUUID: AccountUUID) {
+        let subject = snapshotSubjects.withLock { subjects -> CurrentValueSubject<MigrationViewSnapshot?, Never> in
+            if let existing = subjects[accountUUID] {
+                return existing
+            }
+            let fresh = CurrentValueSubject<MigrationViewSnapshot?, Never>(nil)
+            subjects[accountUUID] = fresh
+            return fresh
+        }
+        guard subject.value != snapshot else {
+            MigrationTrace.event("SNAPSHOT: unchanged — build produced the already-published value (deduped)")
+            return
+        }
+        subject.send(snapshot)
+        MigrationTrace.event(
+            "SNAPSHOT: published — done \(snapshot.doneTransfers)/\(snapshot.totalTransfers)"
+            + " · rows \(snapshot.transfers.count)"
+            + " · orch \(snapshot.orchardRemaining.decimalString())"
+            + " · iw \(snapshot.ironwoodHeld.decimalString())"
+            + " · banner \(snapshot.banner.map { String(describing: $0) } ?? "none")"
+            + (snapshot.isSubmitting ? " · SUBMITTING" : "")
+        )
     }
 }
 

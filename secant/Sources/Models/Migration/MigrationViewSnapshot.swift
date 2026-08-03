@@ -76,6 +76,13 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// of a second `migrationSummary()` call at a second moment.
     let summary: MigrationSummary
 
+    /// R13 Brick 2b: the banner's ladder position, decided IN THE SAME PASS as the rows it
+    /// describes. The banner's derivation was the last second-pass truth reader — its own mirror
+    /// row derivation at its own moment, the original two-clocks shape (R2's "one position, one
+    /// value, two renderings" is finally executable: this IS the one value). `nil` means "no
+    /// migration banner" (pre-activation, no account, offer held while not caught up, no run).
+    let banner: MigrationBannerVariant?
+
     /// The split's parts, as the engine reports them. Carried here — rather than fetched again by
     /// the sheet — because the "Show details" sheet is the FOURTH observer of this state (banner,
     /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
@@ -151,6 +158,7 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         totalTransfers: 0,
         transfers: [],
         summary: MigrationSummary.zero,
+        banner: nil,
         preparations: [],
         planTotal: nil,
         isTorHoldActive: false,

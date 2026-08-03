@@ -438,6 +438,15 @@ struct MigrationStatus {
                     state.totalDurationHours = published.summary.estimatedDurationHours
                     state.isTorHoldActive = published.isTorHoldActive
                     state.isUpdating = !migrationManager.isMigrationViewFresh()
+                    // The render half of the pipeline audit: this line's figures must echo the
+                    // manager's own "SNAPSHOT: published" line — DB → loader → channel → pixels,
+                    // confirmable by grep.
+                    MigrationTrace.event(
+                        "SNAPSHOT applied @ status (primed, updating \(state.isUpdating))"
+                        + " — done \(published.doneTransfers)/\(published.totalTransfers)"
+                        + " · rows \(published.transfers.count)"
+                        + " · iw \(published.ironwoodHeld.decimalString())"
+                    )
                 }
                 state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
                     from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
@@ -583,6 +592,13 @@ struct MigrationStatus {
                 state.rows = IdentifiedArrayOf(uniqueElements: snapshot.transfers)
                 state.totalDurationHours = snapshot.summary.estimatedDurationHours
                 state.isTorHoldActive = snapshot.isTorHoldActive
+                // The render half of the pipeline audit — echoes the manager's "SNAPSHOT:
+                // published" figures, so "DB holds it, UI renders it" is one grep away.
+                MigrationTrace.event(
+                    "SNAPSHOT applied @ status — done \(snapshot.doneTransfers)/\(snapshot.totalTransfers)"
+                    + " · rows \(snapshot.transfers.count)"
+                    + " · iw \(snapshot.ironwoodHeld.decimalString())"
+                )
                 return .none
             }
         }

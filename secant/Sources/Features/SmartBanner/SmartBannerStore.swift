@@ -937,6 +937,10 @@ struct SmartBanner {
     private func postRestoreMigrationRecheckEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
         let isIronwoodActivated = migrationManager.isIronwoodActivated()
         return .run { send in
+            // R13 Brick 2b: the recheck wants a POST-restore verdict, not the pre-restore
+            // published value — kick one rebuild ahead of the read; the poll below kicks per
+            // attempt for the bounded window the restored balance stays invisible.
+            migrationManager.refreshMigrationSnapshot(accountUUID)
             await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
             if let variant = await migrationManager.bannerVariant(accountUUID) {
                 await send(.migrationVariantUpdated(variant))
@@ -958,6 +962,11 @@ struct SmartBanner {
     /// leaving whatever occupies the slot exactly as it stands.
     private func pollBannerVariantUntilAnswered(accountUUID: AccountUUID?, send: Send<Action>) async {
         for _ in 0..<Constants.migrationRepollMaxAttempts {
+            // R13 Brick 2b: `bannerVariant` reads the PUBLISHED snapshot now, so each attempt must
+            // first ask the pipeline to re-derive — otherwise every poll re-reads the same value
+            // and the loop could never observe the restored balance becoming visible. The kick is
+            // coalesced and value-deduplicated manager-side; the sleep gives the build time to land.
+            migrationManager.refreshMigrationSnapshot(accountUUID)
             do {
                 try await clock.sleep(for: .seconds(Constants.migrationRepollInterval))
             } catch {
