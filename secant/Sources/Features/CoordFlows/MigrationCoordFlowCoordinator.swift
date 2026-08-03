@@ -1252,6 +1252,10 @@ extension MigrationCoordFlow {
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
+        // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
+        // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
+        // set it already — this widens the claim, it never retracts one.
+        state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
         // D14: the run's REAL split rows; `nil` leaves the store on its synthesized single row.
         state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state
@@ -1270,6 +1274,10 @@ extension MigrationCoordFlow {
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
+        // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
+        // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
+        // set it already — this widens the claim, it never retracts one.
+        state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
         // D14: as in `statusResumeState` — real preparation rows when the engine has them.
         state.preparationRows = await migrationManager.migrationPreparationRows(accountUUID)
         return state

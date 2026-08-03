@@ -79,6 +79,15 @@ struct MigrationStatus {
         /// MOB-1466: true while the screen is showing CACHED rows and a fresh read is still in
         /// flight — the "Updating…" label. Set only when the cache actually supplied something; a
         /// first-ever visit has nothing to be stale about and keeps the ordinary empty state.
+        /// Shown as `updatingNote` — spinner plus "Updating…" — whenever the rows on screen are
+        /// not this app-open's answer.
+        ///
+        /// TWO SOURCES, ONE CLAIM (MOB-1466): the pre-first-frame cached-rows path below, and — new
+        /// — a stale SESSION, from the same `isMigrationViewFresh` signal the banner's
+        /// `.checkingStatus` reads. Backgrounding on this screen and returning used to show a
+        /// confident, stale list: on 08-03 the banner said idle while the list still span a spinner
+        /// for work that had finished 5 s earlier. The screen now admits it, in the treatment that
+        /// already existed rather than a second one invented alongside it.
         var isUpdating = false
         var cancelStateStreamId = UUID()
         /// MOB-1466: the 30s refresh pulse's cancel id — see `onAppear`'s pulse effect.

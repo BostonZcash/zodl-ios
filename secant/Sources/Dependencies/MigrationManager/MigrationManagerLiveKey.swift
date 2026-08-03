@@ -172,6 +172,7 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
+            isMigrationViewFresh: { impl.isMigrationViewFresh },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
@@ -780,6 +781,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // would be the blank screen again, just without the spinner to explain itself.
         if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !rows.isEmpty {
             rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: rows, computedAt: Date()) }
+            // The view is FRESH as of this session — see `isMigrationViewFresh`. Stamped here, at
+            // the one place the rows are actually derived, so no surface can mark itself fresh
+            // without having done the work.
+            viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
         }
         return rows
     }
@@ -853,6 +858,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
+
+    /// ONE DERIVATION, TWO RENDERINGS — whether the cached migration view was produced by the LIVE
+    /// session, and so whether any surface rendering it is showing this app-open's answer or the
+    /// last one's.
+    ///
+    /// Both the banner and the migration screen read this. That is the entire point: they can no
+    /// longer disagree about freshness, because there is one answer and they share it.
+    ///
+    /// `false` before the first derivation of a session — which is correct, and is what lets a
+    /// surface show "checking" instead of last session's conclusion.
+    var isMigrationViewFresh: Bool {
+        guard let current = MigrationTrace.currentSessionOrdinal else { return false }
+        return viewSnapshotSession.withLock { $0 } == current
+    }
+
+    /// The session ordinal the row cache was last populated in — see `isMigrationViewFresh`.
+    private let viewSnapshotSession = OSAllocatedUnfairLock<Int?>(initialState: nil)
 
     /// GOAL 1: whether the wallet is caught up enough to be ASKED about migrating — see the gate in
     /// `bannerVariantUntimed`.

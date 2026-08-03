@@ -247,6 +247,13 @@ struct MigrationManagerClient: Sendable {
     // selected account, same convention as `migrationNetworkOptions` above. `= { _ in false }` is a
     // required macro default, not a test fallback (see the `recordCommittedSchedule` note above).
     var isMigrationTorHoldActive: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+
+    /// ONE DERIVATION, TWO RENDERINGS: whether the cached migration view was produced by the LIVE
+    /// session. Read by the smart banner AND by the migration screen, so the two can no longer
+    /// disagree about whether what they are showing is this app-open's answer.
+    ///
+    /// Defaults `true` so no test or preview accidentally renders a permanent "checking" state.
+    var isMigrationViewFresh: @Sendable () -> Bool = { true }
     // (Audit 2026-08-03, #16: the MOB-1497 T5/T6 "pending background Tor prompt" latch that lived
     // here was DELETED — its arm site (`RootInitialization.executeBroadcastAction`) never existed
     // in this codebase, its reader (`MigrationTorFailureSheet`) is never presented, and so the

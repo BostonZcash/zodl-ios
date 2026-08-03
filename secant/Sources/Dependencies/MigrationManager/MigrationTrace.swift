@@ -86,6 +86,20 @@ enum MigrationTrace {
     private static let state = OSAllocatedUnfairLock<Session?>(initialState: nil)
     private static let sessionCounter = OSAllocatedUnfairLock<Int>(initialState: 0)
 
+    /// The live session's ordinal, or `nil` when no session is open.
+    ///
+    /// ONE DERIVATION, TWO RENDERINGS. The banner and the migration screen each used to derive
+    /// migration state independently, at different moments, and every banner-vs-screen contradiction
+    /// reported this week was that gap showing. This is the shared key that closes it: a surface
+    /// rendering data stamped with an older ordinal KNOWS it is stale, without having to guess from
+    /// timers or compare its own heights.
+    ///
+    /// Deliberately the session ordinal rather than a timestamp — "which app-open produced this" is
+    /// exactly the question, and it needs no tolerance to answer.
+    static var currentSessionOrdinal: Int? {
+        state.withLock { $0?.ordinal }
+    }
+
     /// The armed poke, remembered across sessions so an open can be related to it: opening well
     /// before it is a manual visit, opening at it is the schedule working, opening long after it is
     /// a poke that was missed or ignored. Survives backgrounding, which is exactly when it matters.
