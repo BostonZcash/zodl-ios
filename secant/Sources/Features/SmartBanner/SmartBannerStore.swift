@@ -519,6 +519,7 @@ struct SmartBanner {
                     // rank guard anyway (equal rank), so skip the round trip.
                     return .none
                 }
+                MigrationTrace.event("migration RELEASED the banner slot — variant became nil")
                 if state.priorityContent == .priorityMigration {
                     // Send `.closeBanner(true)` directly rather than `.closeAndCleanupBanner` —
                     // the latter wraps its send in its own `.run`, which only schedules that
@@ -561,6 +562,15 @@ struct SmartBanner {
 
             case let .migrationVariantLoaded(variant):
                 guard let variant else {
+                    // MOB-1466: `nil` conflates "no migration to offer" with "cannot answer YET",
+                    // and the walk-down treats both as a firm no — handing the slot to a
+                    // lower-priority banner (restoring, then currency conversion) that migration
+                    // then evicts seconds later. The manager logs WHY it answered nil on the line
+                    // immediately above this one; read them as a pair.
+                    //
+                    // Goal 1's sync gate WIDENED this window, because "not caught up" outlives every
+                    // pre-existing reason for nil. Measuring that is the point of this line.
+                    MigrationTrace.event("migration DECLINED the banner slot — walking down to priority3")
                     return .send(.evaluatePriority3)
                 }
                 state.migrationBannerVariant = variant
@@ -677,6 +687,15 @@ struct SmartBanner {
                 return .none
                 
             case .triggerPriority(let priority):
+                // MOB-1466 data-gathering: which candidate claims the single banner slot, and when.
+                // Traced through `MigrationTrace` rather than `LoggerProxy` so it carries the
+                // session stamp `[MIG sN +X.XXs]` — that stamp IS the measurement: how long a
+                // lower-priority banner held the slot before migration displaced it is the
+                // difference between two of these lines, with no new state to keep.
+                MigrationTrace.event(
+                    "banner slot REQUESTED by \(String(describing: priority))"
+                    + " (currently \(state.priorityContent.map { String(describing: $0) } ?? "none"))"
+                )
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
 
