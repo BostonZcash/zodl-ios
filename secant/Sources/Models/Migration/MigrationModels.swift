@@ -176,6 +176,10 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// Purely in-session by nature — there is no durable form of "a call is in progress", and an app
     /// kill mid-submit means it is no longer true.
     var isSubmitting: Bool
+    /// GROUND_RULES D4: minutes since this row's window passed — set only for `.overdue` rows
+    /// (Figma B8: "Overdue · 5h ago"); nil elsewhere. The derivation populates it; a plain 0 hid
+    /// real elapsed time behind "just overdue".
+    var overdueMinutesAgo: Int?
     /// See `Kind`'s doc.
     var kind: Kind
 
@@ -228,6 +232,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         isBroadcasting: Bool = false,
         isPreparing: Bool = false,
         isSubmitting: Bool = false,
+        overdueMinutesAgo: Int? = nil,
         kind: Kind = .transfer
     ) {
         self.id = id
@@ -240,6 +245,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.isBroadcasting = isBroadcasting
         self.isPreparing = isPreparing
         self.isSubmitting = isSubmitting
+        self.overdueMinutesAgo = overdueMinutesAgo
         self.kind = kind
     }
 }

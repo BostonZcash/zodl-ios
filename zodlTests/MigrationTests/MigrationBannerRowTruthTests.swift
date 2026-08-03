@@ -373,10 +373,13 @@ import ZcashLightClientKit
 
     // MARK: - Idle
 
-    /// Nothing in flight, nothing due: the designed copy is a promise the app keeps (window
-    /// notifications are armed at every reconcile), not a progress readout that lags by a
-    /// confirmation.
-    @Test func anIdleRunReadsAsProgressWithTheNotifyLine() {
+    /// Nothing in flight, nothing due: GROUND_RULES D2 — the idle subtitle is the COUNTS family the
+    /// design draws (Figma 33226 "0 of 6 transfers done · 0% complete", 34962 "1 of 6 ~ 16%"). The
+    /// earlier assertion pinned "We'll notify you when to send" — copy from ONE frame (35439) — as
+    /// the universal idle line; the full-canvas walk showed counts is the default and the notify
+    /// line is a distinct designed state whose trigger rule is open with Andrea
+    /// (`migrationBanner.idleInfo` stays in the catalog for it).
+    @Test func anIdleRunReadsAsProgressWithTheCountsLine() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 1, total: 6)),
             transferRows: [
@@ -385,7 +388,7 @@ import ZcashLightClientKit
             ]
         )
         #expect(variant == .inProgress(done: 1, total: 6, round: nil, totalRounds: nil))
-        #expect(variant?.info == "We'll notify you when to send")
+        #expect(variant?.info == String(localizable: .migrationBannerProgressCountsInfo(1, 6, 16)))
     }
 
     /// Both work-in-flight states carry the same second line, because both are asking for the same

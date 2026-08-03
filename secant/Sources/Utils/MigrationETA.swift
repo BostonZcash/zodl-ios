@@ -45,6 +45,12 @@ enum MigrationETA: Equatable, Sendable {
         max(0, Int((clock.secondsUntil(height: scheduledHeight) / 60).rounded(.down)))
     }
 
+    /// Minutes SINCE a scheduled height passed — the overdue mirror of `minutesFromNow`, which
+    /// clamps at 0. 0 when the height is still in the future.
+    static func overdueMinutes(scheduledHeight: BlockHeight, clock: MigrationChainClock) -> Int {
+        max(0, Int((-clock.secondsUntil(height: scheduledHeight) / 60).rounded(.down)))
+    }
+
     /// Buckets a minutes-from-now value into the display granularity: `<= 0` -> Ready now, `1..<60`
     /// -> minutes, `>= 60` -> hours (floored).
     static func bucketed(minutesFromNow minutes: Int) -> MigrationETA {

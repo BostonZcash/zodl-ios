@@ -110,8 +110,10 @@ enum MigrationBannerVariant: Equatable {
     /// revert this case on the `isWorkingNow` precedent; it is the sanctioned path, not the same
     /// mistake. Do reword it the moment design answers.
     ///
-    /// Carries no second line — see `info`. It DOES carry the button: Figma 5679-8225 draws this
-    /// state with the ordinary "More", and the design is the authority.
+    /// GROUND_RULES D1: the checking copy is the SECOND LINE under the standing "Migration
+    /// Progress" title — Figma 5679-8225 draws it that way, and the blank-line hack that existed
+    /// only because the copy sat in the title slot is gone with it. It DOES carry the button: the
+    /// same frame draws the ordinary "More", and the design is the authority.
     ///
     /// I shipped it buttonless on the argument that an action offered against an unknown state is the
     /// stale-CTA class this pass exists to remove, and wrote a test asserting it. The argument does
@@ -133,7 +135,7 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
-        case .inProgress, .preparing:
+        case .inProgress, .preparing, .checkingStatus:
             return String(localizable: .migrationBannerProgressTitle)
         case .transferWaiting(let number, _):
             return String(localizable: .migrationBannerWaitingTitle(number))
@@ -147,8 +149,6 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerReadyTitle(number))
         case .complete:
             return String(localizable: .migrationBannerCompleteTitle)
-        case .checkingStatus:
-            return String(localizable: .migrationBannerCheckingTitle)
         }
     }
 
@@ -156,14 +156,20 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required:
             return String(localizable: .migrationBannerRequiredInfo)
-        case .inProgress(_, _, let round, let totalRounds):
+        // GROUND_RULES D2 (provisional): Figma's idle inProgress subtitle is the counts family
+        // (33226/34962/24004). The designed "We'll notify you when to send" state (35439, alarm
+        // icon) needs a product rule for WHEN it replaces counts — open with Andrea;
+        // migrationBanner.idleInfo stays in the catalog for that. Do not resurrect idleInfo here
+        // without that rule.
+        case let .inProgress(done, total, round, totalRounds):
+            let percent = total > 0 ? (done * 100) / total : 0
             if let round {
                 if let totalRounds {
-                    return String(localizable: .migrationBannerIdleInfoRoundTotal(round, totalRounds))
+                    return String(localizable: .migrationBannerProgressRoundCountsInfo(round, totalRounds, done, total))
                 }
-                return String(localizable: .migrationBannerIdleInfoRound(round))
+                return String(localizable: .migrationBannerProgressRoundCountsInfoNoTotal(round, done, total))
             }
-            return String(localizable: .migrationBannerIdleInfo)
+            return String(localizable: .migrationBannerProgressCountsInfo(done, total, percent))
         case .preparing:
             return String(localizable: .migrationBannerKeepOpenInfo)
         case .nextRoundRequired(let round, let totalRounds):
@@ -186,11 +192,9 @@ enum MigrationBannerVariant: Equatable {
         case .complete:
             return String(localizable: .migrationBannerCompleteInfo)
         case .checkingStatus:
-            // Empty ON PURPOSE, and rendered as a reserved blank line by the content view so the
-            // banner keeps its two-line height. One provisional string was authorised, not two, and
-            // a second line invented here would be exactly the `isWorkingNow` mistake. A shrinking
-            // banner would also reintroduce the layout jump that ruled out dismiss-and-reopen.
-            return ""
+            // Figma 5679-8225: checking is the SUBTITLE under the standing "Migration Progress"
+            // title — GROUND_RULES D1.
+            return String(localizable: .migrationBannerCheckingInfo)
         }
     }
 
@@ -250,11 +254,7 @@ struct MigrationBannerContentView: View {
                 Text(variant.title)
                     .zFont(.medium, size: 14, color: titleStyle)
 
-                // `.checkingStatus` has no second line, but the blank one is still rendered so the
-                // banner holds its two-line height. Collapsing to one line on every foreground is
-                // the layout jump that ruled out dismiss-and-reopen in the first place — arriving
-                // by a different route does not make it acceptable.
-                Text(variant.info.isEmpty ? " " : variant.info)
+                Text(variant.info)
                     .zFont(.medium, size: 12, color: infoStyle)
             }
 

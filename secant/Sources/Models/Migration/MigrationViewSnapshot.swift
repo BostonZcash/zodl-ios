@@ -25,6 +25,16 @@
 //  zatoshi and the Ironwood pool held 949,000,000 — exact. The accounting was never the problem;
 //  the *timing* was, and that is what one snapshot removes.
 //
+//  R9 (2026-08-03), a reversal: the header's bubbles no longer read `ironwoodHeld`/`orchardRemaining`
+//  at all. A field screenshot showed three green checks summing 55.2 ZEC over a bubble reading 0
+//  ZEC — `ironwoodHeld` is the wallet's own live per-pool balance, correct on its own terms, but a
+//  SEPARATE read from the rows the checkmarks are drawn from, which is the same two-clocks shape
+//  this file exists to remove, just moved one level up. So the bubbles now derive from the plan and
+//  the green/Done rows instead (`greenOrchard`/`greenIronwood`), the same rows the timeline already
+//  shows — header and checkmarks agree BY CONSTRUCTION, the same way this file already made the
+//  banner and the screen agree. The wallet's live balance still matters; it lives in the POOLS trace
+//  now (`isPoolFlowSettled`), not the header.
+//
 
 import Foundation
 import ZcashLightClientKit
@@ -59,6 +69,11 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
     let preparations: [MigrationTransferRow]
 
+    /// R9: Σ of ALL transfer amounts in the plan — the denominator the header's Orchard bubble
+    /// derives from (X = planTotal − movedByDoneTransfers). nil when any row's amount is unknown
+    /// (W1 fallback), in which case the header must not render (R9: correct data or no header).
+    let planTotal: Zatoshi?
+
     /// Whether a migration transaction is ON THE WIRE as this snapshot is taken — see
     /// `MigrationTransferRow.isSubmitting`.
     ///
@@ -89,11 +104,18 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// legitimately lead the balance — which is precisely the "T1 and T2 done but only T1 moved"
     /// report, and it was a timing gap, never a miscount.
     ///
-    /// The header uses this to say "still settling" rather than to hide the difference. Hiding it
-    /// would be the fifth version of the mistake this whole pass exists to stop.
+    /// R9 reversed which surface reads this: the header no longer renders it — its bubbles derive
+    /// from the green rows instead (see `greenOrchard`/`greenIronwood`). The POOLS trace is this
+    /// property's only consumer now.
     var isPoolFlowSettled: Bool {
         ironwoodHeld >= movedByDoneTransfers
     }
+
+    /// R9: the Ironwood bubble — exactly the sum of the green/Done rows the timeline shows.
+    var greenIronwood: Zatoshi { movedByDoneTransfers }
+
+    /// R9: the Orchard bubble — the plan total minus the green sum; nil hides the header.
+    var greenOrchard: Zatoshi? { planTotal.map { Zatoshi($0.amount - movedByDoneTransfers.amount) } }
 
     /// Whether the split detail is worth offering. A one-part split has no detail to show — the
     /// timeline row already says everything the sheet would.
@@ -106,6 +128,7 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         doneTransfers: 0,
         totalTransfers: 0,
         preparations: [],
+        planTotal: nil,
         isSubmitting: false,
         sessionOrdinal: nil
     )

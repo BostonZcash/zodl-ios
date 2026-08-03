@@ -8,10 +8,10 @@
 //  WHY THESE TESTS EXIST AS CONTRACT TESTS. Every property pinned here was a deliberate decision
 //  that a later reader would otherwise "tidy up" into a bug:
 //
-//  - `info == ""` looks like unfinished work. One provisional string was authorised, not two, and
-//    the content view renders the blank line deliberately so the banner keeps its two-line height.
-//    A "helpful" second string here would repeat the `isWorkingNow` mistake documented on
-//    `.preparing`.
+//  - `info` is the real checking copy, not a blank placeholder (GROUND_RULES D1, Figma 5679-8225):
+//    checking is the SUBTITLE under the standing "Migration Progress" title, so it belongs in
+//    `info`, not folded into `title` with an empty `info` and a reserved-blank-line hack. Resist
+//    reverting this to `""` — that layout was the pre-D1 workaround, not the design.
 //  - grouping with `.preparing`/`.transferSending` for the spinner is a RULE ("the spinner is
 //    reserved for states where something is actually spinning"), not a coincidence — here the work
 //    is the re-derivation itself.
@@ -62,14 +62,21 @@ import ZcashLightClientKit
         }
     }
 
-    /// The second line is EMPTY on purpose. `MigrationBannerContentView` substitutes a blank line so
-    /// the banner holds its two-line height — collapsing to one line on every foreground is the
-    /// layout jump that ruled out dismiss-and-reopen in the first place.
-    @Test func checkingCarriesNoSecondLine() {
-        #expect(MigrationBannerVariant.checkingStatus.info.isEmpty)
+    /// The second line is the checking copy itself (GROUND_RULES D1, Figma 5679-8225): checking is
+    /// the SUBTITLE under the standing "Migration Progress" title, not an empty line reserved to
+    /// hold the banner's height.
+    @Test func checkingSubtitleIsTheCheckingCopy() {
+        let info = MigrationBannerVariant.checkingStatus.info
+
+        #expect(info == String(localizable: .migrationBannerCheckingInfo))
+        #expect(!info.isEmpty)
     }
 
-    /// It does say something, though — silence would be its own kind of lie.
+    /// It does say something, though — silence would be its own kind of lie. Since GROUND_RULES D1
+    /// (Figma 5679-8225), that something is the standing "Migration Progress" title shared with
+    /// `.inProgress`/`.preparing` — the checking-specific copy now lives in `info` instead (see
+    /// `checkingSubtitleIsTheCheckingCopy`). "Migration Progress" still isn't a fresh offer or a
+    /// finished run, so these assertions hold unchanged.
     @Test func checkingStillNamesItself() {
         let title = MigrationBannerVariant.checkingStatus.title
 

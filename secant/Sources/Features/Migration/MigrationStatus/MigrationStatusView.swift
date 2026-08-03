@@ -274,8 +274,11 @@ struct MigrationStatusView: View {
             // Proving only earns the caption when it is the reason a row cannot do what it claims.
             return String(localizable: .migrationStatusPreparing)
         case .overdue:
-            // hoursFromNow is A3's forward ETA; overdue copy needs elapsed, which rows don't carry — 0 keeps it truthful-enough as "just overdue".
-            return String(localizable: .migrationStatusOverdueAgo(0))
+            // GROUND_RULES D4: real elapsed, from the row (Figma "Overdue · 5h ago"). The 0 placeholder is dead.
+            let ago = row.overdueMinutesAgo ?? 0
+            return ago >= 60
+                ? String(localizable: .migrationStatusOverdueAgo(ago / 60))
+                : String(localizable: .migrationStatusOverdueMinutesAgo(max(1, ago)))
         case .active where row.isBroadcasting:
             // "SENT RECENTLY", not "Sending now" — field-caught 2026-08-01: "there is never ending
             // sending of split 1".

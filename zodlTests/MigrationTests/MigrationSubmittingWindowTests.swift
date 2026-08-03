@@ -100,6 +100,7 @@ import ZcashLightClientKit
             doneTransfers: 0,
             totalTransfers: 9,
             preparations: [Self.row(status: .active)],
+            planTotal: Zatoshi(900_000_000),
             isSubmitting: true,
             sessionOrdinal: 1
         )

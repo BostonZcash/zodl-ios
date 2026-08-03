@@ -9974,19 +9974,19 @@
         }
       }
     },
-    "migrationBanner.checkingTitle": {
+    "migrationBanner.checkingInfo": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Checking migration status"
+            "value": "Checking migration status..."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Comprobando el estado de la migración"
+            "value": "Comprobando el estado de la migración..."
           }
         }
       }
@@ -10157,6 +10157,57 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Ronda %1$lld de %2$lld · Más fondos para migrar"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressCountsInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld of %2$lld transfers done · %3$lld%% complete"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld de %2$lld transferencias realizadas · %3$lld%% completado"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressRoundCountsInfo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Round %1$lld of %2$lld · %3$lld of %4$lld transfers done"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ronda %1$lld de %2$lld · %3$lld de %4$lld transferencias realizadas"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressRoundCountsInfoNoTotal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Round %1$lld · %2$lld of %3$lld transfers done"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ronda %1$lld · %2$lld de %3$lld transferencias realizadas"
           }
         }
       }
@@ -13183,6 +13234,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Atrasada · hace %1$lldh"
+          }
+        }
+      }
+    },
+    "migrationStatus.overdueMinutesAgo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overdue · %1$lld min ago"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atrasada · hace %1$lld min"
           }
         }
       }

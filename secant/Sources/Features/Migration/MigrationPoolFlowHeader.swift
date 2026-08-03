@@ -15,12 +15,14 @@
 //  precisely the failure mode the rest of this work has been unpicking. It reads
 //  `MigrationViewSnapshot`, so its number and the checkmarks come from one pass and cannot drift.
 //
-//  Validated before it was built: on the 08-02 field wallet the DONE crossings summed to
-//  949,000,000 zatoshi and the Ironwood pool held 949,000,000 — exact. What the user saw as a
-//  miscount was a SETTLING LAG: the engine flips a row done from its own tables the moment a
-//  transfer mines, while the wallet's pool balance moves only when a sync writes it. So this header
-//  SAYS SO (`isPoolFlowSettled`) rather than hiding the gap or waiting for it — the honest option,
-//  and the one consistent with everything else in this pass.
+//  R9 (2026-08-03) retired the header's earlier account of itself: a field screenshot showed three
+//  green checks summing 55.2 ZEC over a bubble reading 0 ZEC. `ironwoodHeld` was the wallet's own
+//  live per-pool balance — correct on its own terms, but a SEPARATE read from the rows the
+//  checkmarks are drawn from, the same two-clocks shape `MigrationViewSnapshot` exists to remove,
+//  just moved one level up. The bubbles now derive from the plan and the green/Done rows instead
+//  (`snapshot.greenOrchard`/`.greenIronwood`) — header and checkmarks equal BY CONSTRUCTION, not by
+//  both happening to be right. The wallet's live balance still matters; it lives in the POOLS trace
+//  now, not here.
 //
 //  [needs-design] Figma 5139-33095 carries no pool header; this composition is proposed, not
 //  specified. Shapes and spacing follow the surrounding migration screens. Show Andrea.
@@ -50,32 +52,31 @@ struct MigrationPoolFlowHeader: View {
     let snapshot: MigrationViewSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                poolBubble(
-                    name: String(localizable: .migrationPoolOrchard),
-                    amount: snapshot.orchardRemaining,
-                    isSource: true
-                )
+        // R9: correct data or no header — an unknown plan total hides the whole thing rather than
+        // rendering a bubble the checkmarks can't back up. See the file note.
+        if let orchard = snapshot.greenOrchard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    poolBubble(
+                        name: String(localizable: .migrationPoolOrchard),
+                        amount: orchard,
+                        isSource: true
+                    )
 
-                Asset.Assets.Icons.arrowRight.image
-                    .zImage(size: 16, style: Design.Text.tertiary)
+                    Asset.Assets.Icons.arrowRight.image
+                        .zImage(size: 16, style: Design.Text.tertiary)
 
-                poolBubble(
-                    name: String(localizable: .migrationPoolIronwood),
-                    amount: snapshot.ironwoodHeld,
-                    isSource: false
-                )
+                    poolBubble(
+                        name: String(localizable: .migrationPoolIronwood),
+                        amount: snapshot.greenIronwood,
+                        isSource: false
+                    )
+                }
             }
-
-            // The lag, named rather than hidden — see the file note. Only while the destination
-            // trails the checkmarks; a settled run says nothing extra.
-            if !snapshot.isPoolFlowSettled {
-                Text(localizable: .migrationStatusUpdating)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-            }
+            .padding(.bottom, 20)
+        } else {
+            EmptyView()
         }
-        .padding(.bottom, 20)
     }
 
     @ViewBuilder private func poolBubble(name: String, amount: Zatoshi, isSource: Bool) -> some View {
