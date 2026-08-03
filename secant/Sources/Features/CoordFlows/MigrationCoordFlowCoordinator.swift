@@ -1239,57 +1239,50 @@ extension MigrationCoordFlow {
         )
     }
 
+    /// R13 Brick 2: hydration is ONE read of ONE value. The pre-Brick-2 version fetched rows,
+    /// summary and the snapshot as three separate calls at three moments — three clocks inside a
+    /// single hydration, on the screen whose whole design brief is "no two facts from different
+    /// moments". Everything now comes off the same `MigrationViewSnapshot` the screen's own
+    /// subscription will keep live.
     private func statusResumeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
-        let rows = await migrationManager.migrationTransfers(accountUUID)
-        let summary = await migrationManager.migrationSummary(accountUUID)
-        let stalledRow = rows.first { $0.status == MigrationTransferRow.Status.overdue }
+        let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
+        let stalledRow = snapshot.transfers.first { $0.status == MigrationTransferRow.Status.overdue }
         var state = MigrationStatus.State(
             presentation: .resume,
-            rows: IdentifiedArrayOf(uniqueElements: rows),
-            totalDurationHours: summary.estimatedDurationHours,
+            rows: IdentifiedArrayOf(uniqueElements: snapshot.transfers),
+            totalDurationHours: snapshot.summary.estimatedDurationHours,
             stalledNumber: (stalledRow?.index ?? 0) + 1,
             stalledHoursAgo: stalledRow?.hoursFromNow ?? 0,
             isFlowRoot: isFlowRoot
         )
-        // Hydrated here rather than left to `onAppear`'s own `.statusLoaded`, so the footer does not
-        // read "about 0 mins" for a frame at re-entry.
+        // Hydrated here rather than left to `onAppear`, so the footer does not read "about 0 mins"
+        // for a frame at re-entry.
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
-        state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
+        state.isTorHoldActive = snapshot.isTorHoldActive
         // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
-        // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
-        // set it already — this widens the claim, it never retracts one.
-        state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
-        // D14 + GOAL #4: the snapshot CARRIES the run's preparation rows, so this one read hydrates
-        // the collapsed Split Balance row, its "· N steps" count, the "Show details" gate and the
-        // sheet. The separate `migrationPreparationRows` read that used to sit here was a second
-        // call to the same manager function at a different moment — one clock too many, and the
-        // reason a row could disagree with its own step count.
-        state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
+        // signal the banner's `.checkingStatus` reads.
+        state.isUpdating = !migrationManager.isMigrationViewFresh()
+        state.poolFlow = snapshot
         return state
     }
 
+    /// R13 Brick 2: see `statusResumeState` — same one-read rule.
     private func statusProgressState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
-        let rows = await migrationManager.migrationTransfers(accountUUID)
-        let summary = await migrationManager.migrationSummary(accountUUID)
+        let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
         var state = MigrationStatus.State(
             presentation: .progress,
-            rows: IdentifiedArrayOf(uniqueElements: rows),
-            totalDurationHours: summary.estimatedDurationHours,
+            rows: IdentifiedArrayOf(uniqueElements: snapshot.transfers),
+            totalDurationHours: snapshot.summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot
         )
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
-        state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
-        // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
-        // signal the banner's `.checkingStatus` reads. `||` because the cached-rows path may have
-        // set it already — this widens the claim, it never retracts one.
-        state.isUpdating = state.isUpdating || !migrationManager.isMigrationViewFresh()
-        // D14 + GOAL #4: as in `statusResumeState` — the snapshot carries the preparation rows, so
-        // there is no second read to drift from.
-        state.poolFlow = await migrationManager.migrationViewSnapshot(accountUUID)
+        state.isTorHoldActive = snapshot.isTorHoldActive
+        state.isUpdating = !migrationManager.isMigrationViewFresh()
+        state.poolFlow = snapshot
         return state
     }
 

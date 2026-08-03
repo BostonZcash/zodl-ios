@@ -156,6 +156,8 @@ extension MigrationManagerClient: DependencyKey {
             },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationSnapshotEvents: { accountUUID in impl.migrationSnapshotEvents(accountUUID: accountUUID) },
+            currentMigrationSnapshot: { accountUUID in impl.currentMigrationSnapshot(accountUUID: accountUUID) },
+            refreshMigrationSnapshot: { accountUUID in impl.refreshMigrationSnapshot(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
             isManualDelivery: { impl.isManualDelivery(accountUUID: $0) },
@@ -729,6 +731,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let balances = try? await sdkSynchronizer.getAccountsBalances()
         let done = rows.filter { $0.status == MigrationTransferRow.Status.sent }
         let preparations = await migrationPreparationRows(accountUUID: resolved) ?? []
+        // R13 Brick 2: the summary joins the pass (the status screen and the coordinator's
+        // hydrations used to fetch it separately, at separate moments). Computed fresh — the
+        // builder's own starvation stance is the coalesced republisher: during a sweep the build
+        // simply lands late, and the UI keeps the last PUBLISHED value with its age label rather
+        // than a mixed-clock blend.
+        let summary = await migrationSummaryComputing(accountUUID: resolved)
 
         // R9 (final): TRACE-ONLY reconciliation figure — Σ of all plan amounts, for the POOLS line
         // (plan vs green vs pools). Never rendered: bubbles labelled with pool names show the
@@ -767,8 +775,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,
+            // R13 Brick 2: stamped at BUILD time (not at an accessor's exit) — the broadcast
+            // session republishes at both edges, so the published rows' "Sending now" turns on and
+            // off with the submit itself.
+            transfers: stampingActiveSubmit(rows, accountUUID: resolved),
+            summary: summary,
             preparations: preparations,
             planTotal: planTotal,
+            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolved),
             // The in-session "a submit call is open right now" fact, taken LAST so it is as fresh as
             // the snapshot claims to be. Same flag the banner's split arm reads, so the banner's
             // "keep Zodl open" and the timeline's spinner turn on and off together.
@@ -3182,24 +3196,53 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     // MARK: - R13 Brick 1: the published snapshot channel
 
-    /// THE observer entry (GROUND_RULES R13): one loader, one value, every surface. Subscribing
-    /// creates the account's subject (seeded `nil`) and kicks one refresh so the first real value
-    /// arrives without waiting for the next writer edge. Emissions are deduplicated on value
-    /// equality by the republisher, so a subscriber may render every emission verbatim.
+    /// THE observer entry (GROUND_RULES R13): one loader, one value, every surface. The FIRST
+    /// subscription for an account creates its subject (seeded `nil`) and kicks one refresh so the
+    /// first real value arrives without waiting for a writer edge. A RE-subscription kicks nothing:
+    /// the banner re-arms its stream on every sync-status transition (~15–30 s foregrounded), and a
+    /// per-re-arm rebuild would be a continuous background derivation loop — re-subscribing is not
+    /// news; writer edges are. Consumers that genuinely want a fresh build on their own schedule
+    /// (the status screen's per-open R3 re-verify) call `refreshMigrationSnapshot` explicitly.
+    /// Emissions are deduplicated on value equality by the republisher, so a subscriber may render
+    /// every emission verbatim.
     func migrationSnapshotEvents(accountUUID: AccountUUID?) -> AnyPublisher<MigrationViewSnapshot?, Never> {
         guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
             return Just(MigrationViewSnapshot?.none).eraseToAnyPublisher()
         }
-        let subject = snapshotSubjects.withLock { subjects -> CurrentValueSubject<MigrationViewSnapshot?, Never> in
+        let (subject, created) = snapshotSubjects.withLock { subjects -> (CurrentValueSubject<MigrationViewSnapshot?, Never>, Bool) in
             if let existing = subjects[resolved] {
-                return existing
+                return (existing, false)
             }
             let fresh = CurrentValueSubject<MigrationViewSnapshot?, Never>(nil)
             subjects[resolved] = fresh
-            return fresh
+            return (fresh, true)
+        }
+        if created {
+            scheduleSnapshotRepublish(for: resolved)
+        }
+        return subject.eraseToAnyPublisher()
+    }
+
+    /// R13 Brick 2: the PUBLISHED value, synchronously — the status screen's first-frame prime.
+    /// A pure read of what the channel last emitted (no derivation, no create), so painting from
+    /// it is painting THE source, just before the subscription's first live emission lands. `nil`
+    /// when no build has published yet this launch — the screen keeps its ordinary empty state.
+    func currentMigrationSnapshot(accountUUID: AccountUUID?) -> MigrationViewSnapshot? {
+        guard let resolved = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        return snapshotSubjects.withLock { $0[resolved]?.value } ?? nil
+    }
+
+    /// R13 Brick 2: a consumer-side refresh request (screen opened, a lane finished) — unlike the
+    /// writer-edge hook it CREATES the subject if needed, so an open that beats the subscription's
+    /// async setup still gets its build. R3 in channel form: every open re-verifies.
+    func refreshMigrationSnapshot(accountUUID: AccountUUID?) {
+        guard let resolved = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotSubjects.withLock { subjects in
+            if subjects[resolved] == nil {
+                subjects[resolved] = CurrentValueSubject<MigrationViewSnapshot?, Never>(nil)
+            }
         }
         scheduleSnapshotRepublish(for: resolved)
-        return subject.eraseToAnyPublisher()
     }
 
     /// The coalesced republisher. No subject → no work (mirrors `pokeStateEvent`'s no-create rule:

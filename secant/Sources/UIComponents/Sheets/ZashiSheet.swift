@@ -5,6 +5,7 @@
 //  Created by Lukáš Korba on 31.03.2025.
 //
 
+import Perception
 import SwiftUI
 
 private struct SheetHeightKey: PreferenceKey {
@@ -56,36 +57,44 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     let dragIndicatorVisibility: Visibility
     let onDismiss: (() -> Void)?
     @State var sheetHeight: CGFloat = .zero
-    var sheetContent: SheetContent
+    let sheetContent: () -> SheetContent
 
     func body(content: Content) -> some View {
         content
             .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
-                if #available(iOS 26.0, *) {
-                    mainBody26()
-                        .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(dragIndicatorVisibility)
-                        .padding(.horizontal, horizontalPadding)
-                        .applySheetBackground()
-                } else if #available(iOS 16.4, *) {
-                    mainBody()
-                        .id(sheetHeight)
-                        .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(dragIndicatorVisibility)
-                        .presentationCornerRadius(Design.Radius._4xl)
-                        .padding(.horizontal, horizontalPadding)
-                        .applySheetBackground()
-                } else if #available(iOS 16.0, *) {
-                    mainBody()
-                        .id(sheetHeight)
-                        .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(dragIndicatorVisibility)
-                        .padding(.horizontal, horizontalPadding)
-                        .applySheetBackground()
-                } else {
-                    mainBody(stickToBottom: true)
-                        .padding(.horizontal, horizontalPadding)
-                        .applySheetBackground()
+                // A `.sheet` closure renders in a NEW view tree: without its own tracking scope,
+                // `@ObservableState` reads inside never register and the sheet body does not
+                // re-render on store changes (the runtime Perception warning field-caught
+                // 2026-08-03 on the migration status screen). The content closure is also stored
+                // UNEVALUATED (`() -> SheetContent`) so its store reads happen here, inside the
+                // scope — never eagerly at the call site.
+                WithPerceptionTracking {
+                    if #available(iOS 26.0, *) {
+                        mainBody26()
+                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDragIndicator(dragIndicatorVisibility)
+                            .padding(.horizontal, horizontalPadding)
+                            .applySheetBackground()
+                    } else if #available(iOS 16.4, *) {
+                        mainBody()
+                            .id(sheetHeight)
+                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDragIndicator(dragIndicatorVisibility)
+                            .presentationCornerRadius(Design.Radius._4xl)
+                            .padding(.horizontal, horizontalPadding)
+                            .applySheetBackground()
+                    } else if #available(iOS 16.0, *) {
+                        mainBody()
+                            .id(sheetHeight)
+                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDragIndicator(dragIndicatorVisibility)
+                            .padding(.horizontal, horizontalPadding)
+                            .applySheetBackground()
+                    } else {
+                        mainBody(stickToBottom: true)
+                            .padding(.horizontal, horizontalPadding)
+                            .applySheetBackground()
+                    }
                 }
             }
     }
@@ -96,7 +105,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                Spacer()
             }
 
-            sheetContent
+            sheetContent()
         }
         .background {
             GeometryReader { proxy in
@@ -114,7 +123,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                 Spacer()
             }
 
-            sheetContent
+            sheetContent()
         }
         .readHeight { height in
             if abs(height - sheetHeight) > 1 {
@@ -138,7 +147,7 @@ extension View {
                 horizontalPadding: horizontalPadding,
                 dragIndicatorVisibility: dragIndicatorVisibility,
                 onDismiss: onDismiss,
-                sheetContent: content()
+                sheetContent: content
             )
         )
     }

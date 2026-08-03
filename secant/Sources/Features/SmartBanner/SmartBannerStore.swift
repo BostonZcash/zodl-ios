@@ -5,6 +5,7 @@
 //  Created by Lukáš Korba on 03.04.2025.
 //
 
+import Combine
 import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -907,11 +908,28 @@ struct SmartBanner {
     /// fresh arm supersedes the stale one, or a transition that doesn't re-arm still tears it down.
     /// The per-account migration-state subscription. Keyed to the ACCOUNT, so an account switch
     /// must re-subscribe (a still-subscribed old account's subject never emits again post-switch).
+    ///
+    /// R13 Brick 2: the SNAPSHOT channel rides in the same subscription — `stateEvents` alone
+    /// misses exactly one edge class, and it is the one the field found: a sync that mines a
+    /// transfer changes rows and pool values without changing `MigrationState`, so the deduped
+    /// coarse stream stays silent and the banner keeps yesterday's sentence. Every published
+    /// snapshot (value-deduplicated channel-side) now funnels into the SAME
+    /// `.migrationReevaluationRequested` variant-fetch the other triggers use — one funnel,
+    /// R3's machinery untouched. Subscribing here also PRIMES the channel at app open (the
+    /// subject is created and a first build kicked), which is what makes the status screen's
+    /// first-frame paint non-empty. Full consolidation (the variant computed inside the loader,
+    /// this store rendering `snapshot.banner`) is Brick 2b.
     private func migrationStateStreamEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
         .publisher {
-            migrationManager.stateEvents(accountUUID)
-                .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
-                .map(Action.migrationStateChanged)
+            Publishers.Merge(
+                migrationManager.stateEvents(accountUUID)
+                    .map(Action.migrationStateChanged),
+                migrationManager.migrationSnapshotEvents(accountUUID)
+                    // The replay is not news — only genuinely fresh builds re-ask.
+                    .dropFirst()
+                    .map { _ in Action.migrationReevaluationRequested }
+            )
+            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
         }
         .cancellable(id: cancelID, cancelInFlight: true)
     }

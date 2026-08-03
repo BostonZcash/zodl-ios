@@ -99,8 +99,11 @@ import ZcashLightClientKit
             movedByDoneTransfers: .zero,
             doneTransfers: 0,
             totalTransfers: 9,
+            transfers: [],
+            summary: MigrationSummary.zero,
             preparations: [Self.row(status: .active)],
             planTotal: Zatoshi(900_000_000),
+            isTorHoldActive: false,
             isSubmitting: true,
             sessionOrdinal: 1,
             asOfSyncedAt: nil

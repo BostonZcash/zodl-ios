@@ -70,12 +70,14 @@ import ComposableArchitecture
     /// unasserted received action, so the delegate's absence is asserted by the whole test).
     @Test func anAuthenticatedTapOnANonManualAccountSendsInPlace() async {
         let sessionCalls = LockIsolated(0)
+        let refreshCalls = LockIsolated(0)
         var client = MigrationManagerClient.testValue
         client.isManualDelivery = { _ in false }
         client.runBroadcastSession = {
             sessionCalls.withValue { $0 += 1 }
             return true
         }
+        client.refreshMigrationSnapshot = { _ in refreshCalls.withValue { $0 += 1 } }
         let store = Self.store(authenticates: true, client: client, exhaustive: true)
 
         await store.send(.sendNowTapped)
@@ -86,13 +88,12 @@ import ComposableArchitecture
         await store.receive(.sendNowFinished(didBroadcast: true)) {
             $0.isSendNowInFlight = false
         }
-        // `.sendNowFinished`'s reload — rows come back per the stubbed reads (empty), which is the
-        // channel a landed broadcast's `.confirming` row arrives on in production.
-        await store.receive(.statusLoaded(rows: [], totalDurationHours: nil, syncPrivacyBufferMinutes: 0, isTorHoldActive: false)) {
-            $0.rows = []
-        }
 
         #expect(sessionCalls.value == 1, "one tap, one session — the manager's own re-entrancy guard is the second line, not the first")
+        // R13 Brick 2: the finish no longer reloads privately — it asks THE pipeline to re-derive,
+        // and the fresh snapshot arrives on the screen's one subscription (the channel a landed
+        // broadcast's `.confirming` row rides in production).
+        #expect(refreshCalls.value == 1, "the finish kicks exactly one pipeline refresh")
     }
 
     /// The MANUAL-delivery arm: the one account kind that still delegates — `runBroadcastSession`

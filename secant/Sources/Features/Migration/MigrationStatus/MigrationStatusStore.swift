@@ -3,9 +3,16 @@
 //  zodl
 //
 //  "Migration Progress" / "Resume Migration" / "Re-scheduling…" screen (MOB-1464, Figma S10 ·
-//  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). `onAppear` loads rows/summary
-//  via `migrationTransfers()`/`migrationSummary()` and subscribes `migrationManager.stateEvents(_:)`
-//  to refresh rows live (MOB-1466).
+//  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656).
+//
+//  R13 Brick 2: this screen renders THE published snapshot and nothing else. `onAppear` primes
+//  synchronously from `currentMigrationSnapshot` (the channel's last value — painting the source,
+//  not a cache), kicks one rebuild (`refreshMigrationSnapshot` — R3: every open re-verifies), and
+//  subscribes `migrationSnapshotEvents` for live emissions. The private pulls this replaces —
+//  `migrationTransfers()`/`migrationSummary()` per `stateEvents` tick, the cached-rows first
+//  paint — were the "so behind" class of 2026-08-03: a doorbell with no payload, answered by each
+//  surface at its own moment. The 30s pulse survives ONLY as a wall-clock writer (see
+//  `.refreshPulse`): it asks the one pipeline to re-derive, never queries on its own.
 //  When this screen is a flow re-entry root (`isFlowRoot`), its back control closes the flow
 //  (`.done`) instead of popping — every other delegate is consumed by
 //  `MigrationCoordFlowCoordinator` (MOB-1466).
@@ -103,26 +110,23 @@ struct MigrationStatus {
         /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
         /// off the SDK's real value instead of a hardcoded "10". `0` until `statusLoaded` arrives.
         var syncPrivacyBufferMinutes = 0
-        /// MOB-1466: true while the screen is showing CACHED rows and a fresh read is still in
-        /// flight — the "Updating…" label. Set only when the cache actually supplied something; a
-        /// first-ever visit has nothing to be stale about and keeps the ordinary empty state.
-        /// Shown as `updatingNote` — spinner plus "Updating…" — whenever the rows on screen are
-        /// not this app-open's answer.
+        /// MOB-1466: true while the rows on screen are not this app-open's answer and a fresh
+        /// derivation is still in flight — the "Updating…" label (spinner plus "Updating…").
         ///
-        /// TWO SOURCES, ONE CLAIM (MOB-1466): the pre-first-frame cached-rows path below, and — new
-        /// — a stale SESSION, from the same `isMigrationViewFresh` signal the banner's
-        /// `.checkingStatus` reads. Backgrounding on this screen and returning used to show a
-        /// confident, stale list: on 08-03 the banner said idle while the list still span a spinner
-        /// for work that had finished 5 s earlier. The screen now admits it, in the treatment that
-        /// already existed rather than a second one invented alongside it.
+        /// R13 Brick 2: the pre-first-frame source is now the PUBLISHED snapshot
+        /// (`currentMigrationSnapshot` — the channel's own last value), primed synchronously in
+        /// `onAppear`; staleness is judged by the same `isMigrationViewFresh` signal the banner's
+        /// `.checkingStatus` reads (a value published in an earlier session is real, merely from a
+        /// moment ago — the screen says so rather than passing it off as current). Every live
+        /// emission clears it: an emission IS this session's fresh derivation landing.
         var isUpdating = false
         /// D3: a Send-now is running IN PLACE — armed at `.sendNowAuthenticated` (synchronously,
         /// before any effect, so a double-tap has nothing to double), cleared by
         /// `.sendNowFinished`. Spans BOTH halves of the lane: the silence-window wait (minutes,
         /// when the privacy buffer is live) and the manager's submit itself (~7 s). Deliberately a
-        /// stored flag rather than a mirror of `poolFlow.isSubmitting`: the snapshot is hydrated at
-        /// re-entry and never refreshed mid-screen, and the snapshot's flag only covers the submit
-        /// window anyway — the CTA must stay down for the wait too.
+        /// stored flag rather than a mirror of `poolFlow.isSubmitting` — the snapshot's flag only
+        /// covers the submit window; the CTA must stay down for the wait too (R13 Brick 2: the
+        /// snapshot now DOES refresh live mid-screen, which changes nothing about that reason).
         var isSendNowInFlight = false
         var cancelStateStreamId = UUID()
         /// MOB-1466: the 30s refresh pulse's cancel id — see `onAppear`'s pulse effect.
@@ -320,21 +324,25 @@ struct MigrationStatus {
         /// sends it; both land on the same flag.
         case splitDetailPresentedChanged(Bool)
         case delegate(Delegate)
-        /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
-        case migrationStateChanged
         case onAppear
-        /// The screen left the hierarchy — tears down the two `onAppear` subscriptions (the
-        /// `stateEvents` stream and the 30s refresh pulse). The pulse's own comment always said
-        /// "cancelled with the screen"; until this action existed, nothing did it, and both
-        /// effects kept firing into a path whose element was gone (hundreds of TCA
-        /// missing-element warnings per session, field-caught 2026-08-03).
+        /// The screen left the hierarchy — tears down the two `onAppear` effects (the snapshot
+        /// subscription and the wall-clock pulse). The pulse's own comment always said "cancelled
+        /// with the screen"; until this action existed, nothing did it, and both effects kept
+        /// firing into a path whose element was gone (hundreds of TCA missing-element warnings per
+        /// session, field-caught 2026-08-03).
         case onDisappear
-        /// MOB-1466: the screen's own 30s wake-up while it is open — re-runs `loadStatus`. Exists
-        /// because the `stateEvents` stream is narrower than this screen's truth: ETA captions age
-        /// with the wall clock and proof-level row changes alter no `MigrationState`, so neither
-        /// ever emits (field-caught 2026-08-02: an open screen sat frozen between transfer windows
-        /// until reopened).
+        /// R13 Brick 2: the screen's 30s wake-up survives ONLY as a wall-clock WRITER — ETA
+        /// captions age with the clock, which no DB write announces, so the screen asks THE
+        /// pipeline to re-derive (`refreshMigrationSnapshot`), never queries on its own. The
+        /// channel's value-equality dedupe keeps quiet ticks silent. Retires when rows carry
+        /// absolute dates the view formats live.
         case refreshPulse
+        /// R13 Brick 2: THE screen's one data action — a fresh `MigrationViewSnapshot` published
+        /// by the channel (every writer edge republishes; emissions are value-deduplicated).
+        /// Replaces `statusLoaded`/`migrationStateChanged`: rows, duration, Tor-hold and the pool
+        /// header all land from ONE value, so no two facts on this screen can be from different
+        /// moments.
+        case snapshotUpdated(MigrationViewSnapshot)
         /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)
         /// finished — lands on `.rescheduleConfirmed` with the refreshed rows/duration instead of
         /// flipping `isRescheduling` back to `.resume`. The coordinator doesn't send this yet (it
@@ -343,6 +351,7 @@ struct MigrationStatus {
         case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int?)
         case rescheduleTapped
         case sendNowTapped
+        // (R13 Brick 2: `statusLoaded` retired — see `snapshotUpdated`.)
         /// Face ID / Touch ID passed for "Send now" — see `sendNowTapped`. Reschedule has no
         /// equivalent on purpose: it re-reads a window and re-renders, signing and moving nothing.
         case sendNowAuthenticated
@@ -359,17 +368,6 @@ struct MigrationStatus {
         /// have different lifetimes: the wait is cancellable (leaving the screen mid-wait cancels
         /// the send, the old lane's Cancel semantics), the submit this action starts is not.
         case sendNowWindowCleared
-        /// `migrationTransfers()` + `migrationSummary()` + `sdkSynchronizer
-        /// .migrationPrivacySyncBufferDuration()` + `manager.isMigrationTorHoldActive()` result.
-        /// R8-T6: no longer carries a gate reading — `isSendNowDisabled` is derived from `rows`
-        /// itself (see `State.isSendNowDisabled`'s doc).
-        case statusLoaded(
-            rows: [MigrationTransferRow],
-            totalDurationHours: Int?,
-            syncPrivacyBufferMinutes: Int,
-            isTorHoldActive: Bool
-        )
-
         enum Delegate: Equatable {
             case done
             case reschedule
@@ -422,43 +420,43 @@ struct MigrationStatus {
             case .delegate:
                 return .none
 
-            case .migrationStateChanged:
-                return loadStatus(accountUUID: state.selectedWalletAccount?.id)
-
             case .onAppear:
                 let accountUUID = state.selectedWalletAccount?.id
-                // PAINT FIRST, THEN LOAD. Field-caught 2026-08-01: tapping the banner gave a blank
-                // screen with a spinner for ten seconds and more, because this screen drew nothing
-                // until `loadStatus`' async read returned — and the instrument measured that read at
-                // 4.75 s on a quiet open and 18.3 s while the prove sweep held the wallet database.
-                //
-                // Making the read faster does not fix it; the screen would still be blank, just
-                // briefly. So it stops waiting: the last rows we derived go in synchronously, right
-                // here in the reducer, before the first frame — and `isUpdating` makes the claim
-                // honest rather than passing a-moment-ago data off as current.
+                // PAINT FIRST, THEN SUBSCRIBE (R13 Brick 2). Field-caught 2026-08-01: tapping the
+                // banner gave a blank screen with a spinner for ten seconds and more, because this
+                // screen drew nothing until an async read returned — measured at 4.75 s on a quiet
+                // open and 18.3 s while the prove sweep held the wallet database. So it paints the
+                // channel's LAST PUBLISHED value synchronously, before the first frame — that is
+                // painting THE source, not a side cache — and `isUpdating` says when that value is
+                // an earlier session's answer rather than passing it off as current.
                 //
                 // Guarded on `rows.isEmpty` so it never clobbers fresher rows the coordinator's own
                 // re-entry hydration already put in state.
-                if state.rows.isEmpty, let cached = migrationManager.cachedTransferRows(accountUUID) {
-                    state.rows = IdentifiedArrayOf(uniqueElements: cached.transfers)
-                    state.isUpdating = true
+                if state.rows.isEmpty, let published = migrationManager.currentMigrationSnapshot(accountUUID) {
+                    state.poolFlow = published
+                    state.rows = IdentifiedArrayOf(uniqueElements: published.transfers)
+                    state.totalDurationHours = published.summary.estimatedDurationHours
+                    state.isTorHoldActive = published.isTorHoldActive
+                    state.isUpdating = !migrationManager.isMigrationViewFresh()
                 }
+                state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
+                    from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
+                )
+                // R3 in channel form: every open re-verifies — one coalesced rebuild lands as the
+                // subscription's first live emission and clears `isUpdating`.
+                migrationManager.refreshMigrationSnapshot(accountUUID)
                 return .merge(
-                    loadStatus(accountUUID: accountUUID),
                     .publisher {
-                        migrationManager.stateEvents(accountUUID)
-                            .map { _ in Action.migrationStateChanged }
+                        // `dropFirst()` skips the subject's replay — the synchronous prime above
+                        // already consumed it; every forwarded emission is a genuinely fresh build.
+                        migrationManager.migrationSnapshotEvents(accountUUID)
+                            .dropFirst()
+                            .compactMap { $0 }
+                            .map(Action.snapshotUpdated)
                     }
                     .cancellable(id: state.cancelStateStreamId, cancelInFlight: true),
-                    // MOB-1466 (field-caught 2026-08-02): THE REFRESH PULSE. The event stream
-                    // above is real but narrower than this screen's truth — broadcasts poke it
-                    // (A13) and coarse-state/balance changes push it, while ETA captions age with
-                    // the wall clock and proof-level row changes alter no `MigrationState`, so an
-                    // OPEN screen sat frozen between transfer windows until reopened. Every 30s
-                    // (the foreground tick loop's own cadence) the screen re-derives instead:
-                    // cheap local reads, last-writer-wins by construction (`statusLoaded` replaces
-                    // whole rows), and cancelled with the screen. First pulse a full 30s in — the
-                    // `loadStatus` above just ran.
+                    // The wall-clock pulse — see `.refreshPulse`. First tick a full 30s in; the
+                    // rebuild above just ran.
                     .run { send in
                         for await _ in continuousClock.timer(interval: MigrationStatus.refreshPulseInterval) {
                             await send(.refreshPulse)
@@ -491,7 +489,11 @@ struct MigrationStatus {
                 return .merge(effects)
 
             case .refreshPulse:
-                return loadStatus(accountUUID: state.selectedWalletAccount?.id)
+                // The wall-clock writer: ask THE pipeline to re-derive (ETA captions age with the
+                // clock, which no DB write announces). Never a private query; the channel's
+                // value-equality dedupe keeps quiet ticks off the screen.
+                migrationManager.refreshMigrationSnapshot(state.selectedWalletAccount?.id)
+                return .none
 
             case .rescheduleCompleted(let rows, let totalDurationHours):
                 state.presentation = .rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)
@@ -564,41 +566,25 @@ struct MigrationStatus {
             case .sendNowFinished(let didBroadcast):
                 state.isSendNowInFlight = false
                 if !didBroadcast {
-                    // WHY nothing went out, for the tester — the on-screen answer is the reload
+                    // WHY nothing went out, for the tester — the on-screen answer is the refresh
                     // below: a still-`.overdue` row with the CTA back up (a genuine failure — the
                     // Send now / Reschedule pair is the retry surface), a `.confirming` row
                     // (another lane got there first), or the Tor-hold footer (a routed R15 hold).
                     LoggerProxy.event("[MOB-1466] in-place Send now: session ended with nothing broadcast")
                 }
-                return loadStatus(accountUUID: state.selectedWalletAccount?.id)
+                // The session's own edge pokes already republished; this is the belt for its
+                // no-op exits (a raced gate, a step that stopped being `.broadcast`).
+                migrationManager.refreshMigrationSnapshot(state.selectedWalletAccount?.id)
+                return .none
 
-            case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes, let isTorHoldActive):
+            case .snapshotUpdated(let snapshot):
                 state.isUpdating = false
-                state.rows = IdentifiedArrayOf(uniqueElements: rows)
-                state.totalDurationHours = totalDurationHours
-                state.syncPrivacyBufferMinutes = syncPrivacyBufferMinutes
-                state.isTorHoldActive = isTorHoldActive
+                state.poolFlow = snapshot
+                state.rows = IdentifiedArrayOf(uniqueElements: snapshot.transfers)
+                state.totalDurationHours = snapshot.summary.estimatedDurationHours
+                state.isTorHoldActive = snapshot.isTorHoldActive
                 return .none
             }
-        }
-    }
-
-    private func loadStatus(accountUUID: AccountUUID?) -> Effect<Action> {
-        .run { send in
-            let rows = await migrationManager.migrationTransfers(accountUUID)
-            let summary = await migrationManager.migrationSummary(accountUUID)
-            let syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
-                from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
-            )
-            let isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
-            await send(
-                .statusLoaded(
-                    rows: rows,
-                    totalDurationHours: summary.estimatedDurationHours,
-                    syncPrivacyBufferMinutes: syncPrivacyBufferMinutes,
-                    isTorHoldActive: isTorHoldActive
-                )
-            )
         }
     }
 

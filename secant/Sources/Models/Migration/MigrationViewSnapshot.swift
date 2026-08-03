@@ -64,6 +64,18 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     let doneTransfers: Int
     let totalTransfers: Int
 
+    /// R13 Brick 2: the transfer rows themselves — THE list every timeline renders, carried here so
+    /// the status screen stops pulling `migrationTransfers()` on its own clock (the 30-second pulse
+    /// existed precisely because that pull had no push). Stamped with the live submit overlay at
+    /// build time; the broadcast session republishes at both edges, so a stale "Sending now" can
+    /// never outlive the submit that raised it.
+    let transfers: [MigrationTransferRow]
+
+    /// R13 Brick 2: the run's summary (duration estimate, counts, dust) from the SAME pass — the
+    /// status screen's `totalDurationHours` and the coordinator's hydrations read it here instead
+    /// of a second `migrationSummary()` call at a second moment.
+    let summary: MigrationSummary
+
     /// The split's parts, as the engine reports them. Carried here — rather than fetched again by
     /// the sheet — because the "Show details" sheet is the FOURTH observer of this state (banner,
     /// timeline, pool header, sheet) and a fourth independent read is a fourth clock.
@@ -78,6 +90,10 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// Y". Bubbles labelled with POOL NAMES must show the same chain-derived values the home
     /// balance sheet shows, or the app contradicts itself between two screens.
     let planTotal: Zatoshi?
+
+    /// R13 Brick 2 (R7 §G): whether the account's most recent broadcast failure was a mid-run Tor
+    /// hold — the `.resume` presentation's Tor footer, read in the same pass as everything else.
+    let isTorHoldActive: Bool
 
     /// Whether a migration transaction is ON THE WIRE as this snapshot is taken — see
     /// `MigrationTransferRow.isSubmitting`.
@@ -133,8 +149,11 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         movedByDoneTransfers: .zero,
         doneTransfers: 0,
         totalTransfers: 0,
+        transfers: [],
+        summary: MigrationSummary.zero,
         preparations: [],
         planTotal: nil,
+        isTorHoldActive: false,
         isSubmitting: false,
         sessionOrdinal: nil,
         asOfSyncedAt: nil

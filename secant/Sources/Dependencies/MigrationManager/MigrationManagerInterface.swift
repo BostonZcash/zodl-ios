@@ -157,6 +157,14 @@ struct MigrationManagerClient: Sendable {
     /// equality, `nil` until the first derivation. Brick 2 moves every surface onto this and
     /// retires their private pulls; until then it runs beside them (same derivation, same values).
     var migrationSnapshotEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationViewSnapshot?, Never> = { _ in Empty().eraseToAnyPublisher() }
+    /// R13 Brick 2: the channel's last published value, synchronously — the status screen's
+    /// first-frame prime (paint THE source before the subscription's first async emission lands).
+    /// `nil` until the first build of this launch publishes.
+    var currentMigrationSnapshot: @Sendable (_ accountUUID: AccountUUID?) -> MigrationViewSnapshot? = { _ in nil }
+    /// R13 Brick 2: consumer-side refresh request — creates the account's channel if needed and
+    /// kicks one coalesced rebuild. R3 in channel form: every open re-verifies; also the belt after
+    /// a lane finishes (the lane's own pokes already republish — this guards the no-op exits).
+    var refreshMigrationSnapshot: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
     // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
     // accounts choose independently.
