@@ -184,13 +184,29 @@ extension MigrationManagerImpl {
         // decision and the per-account discharge below. The old code read `migrationAdvanceStep`
         // once in `visitKind` for the session decision and again inside `runBroadcastSession` for
         // the delivery, and a tip that moved between the two reads made them disagree.
+        //
+        // NOT `try?` (audit 2026-08-03, P1): flattening a THROWN read into `nil` made a transient
+        // engine error indistinguishable from "no run stored" — and `.noRun` is the verdict the
+        // tick loop SELF-CANCELS on, so one contended read (a prove sweep holding the wallet DB,
+        // a synchronizer mid-teardown) killed the tick lane for the rest of the session. This is
+        // the exact flattening `MigrationManagerLiveKey`'s own state-read doc forbids. A throw is
+        // recorded per-account; accounts that read cleanly still discharge, and an all-throw pass
+        // surfaces as `.failed` below — substantive, event-logged, loop-surviving.
         var steps: [(accountUUID: AccountUUID, step: MigrationAdvanceStep?)] = []
         // MOB-1466: buffered, not logged immediately — a `.tick`'s log LEVEL depends on the verdict
         // these reads feed into, which isn't known until `discharge` below returns. See the emission
         // loop after it.
         var stepLogLines: [String] = []
+        var stepReadFailure: String?
         for accountUUID in accountUUIDs {
-            let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            let step: MigrationAdvanceStep?
+            do {
+                step = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            } catch {
+                stepReadFailure = "\(error.toZcashError())"
+                stepLogLines.append("\(Self.logTag) advance step (\(phase)): READ FAILED — \(error.toZcashError())")
+                continue
+            }
             // THE key driver line, logged verbatim at both phases. A run sitting at 0-of-12 looks
             // identical whether the engine is saying `prove`, `waiting` or `broadcast` — this is the
             // line that tells those apart, and until 07-31 it was the one thing never written down.
@@ -200,7 +216,13 @@ extension MigrationManagerImpl {
             steps.append((accountUUID, step))
         }
 
-        let verdict = await discharge(steps: steps, phase: phase)
+        var verdict = await discharge(steps: steps, phase: phase)
+        if steps.isEmpty, let stepReadFailure {
+            // EVERY candidate's read threw: the honest session answer is the failure, never
+            // `.noRun` — "the engine could not be asked" and "there is nothing to do" must not
+            // share a verdict (the latter self-cancels the tick loop).
+            verdict = MigrationStepVerdict.failed("engine step read failed: \(stepReadFailure)")
+        }
 
         // MOB-1466: LOG HYGIENE. A quiet `.tick` verdict — nothing changed, nothing needed the user
         // — logs at `.debug`: every 30s, forever, while the app sits open with a scheduled run, is

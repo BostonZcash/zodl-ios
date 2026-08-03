@@ -108,7 +108,7 @@ import ComposableArchitecture
             authorizationStatus: { .authorized },
             requestAuthorization: { true },
             scheduleMigrationNotification: { _, _, _ in },
-            cancelMigrationNotifications: { },
+            cancelMigrationNotifications: { _ in },
             clearDeliveredMigrationNotifications: { }
         )
     }
@@ -238,6 +238,73 @@ import ComposableArchitecture
 
         #expect(verdict == .deferredToPhase, "an off-tip tick must keep deferring the prove, got \(verdict)")
         #expect(sweepCalls.value == 0, "the sweep must never run off the tip")
+    }
+
+    // MARK: - Step-read failure honesty (audit 2026-08-03, P1)
+
+    /// A THROWN engine read must never flatten into `.noRun` — that verdict self-cancels the tick
+    /// loop, so one contended read (a prove sweep holding the wallet DB) used to kill the tick
+    /// lane for the rest of the session. The honest answer is `.failed`, which the loop survives.
+    @Test func aThrowingStepReadAnswersFailedNotNoRun() async {
+        Self.installCandidateAccount()
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    struct ReadFailure: Error { }
+                    throw ReadFailure()
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .tick)
+        }
+
+        guard case .failed = verdict else {
+            Issue.record("a thrown step read must answer .failed, got \(verdict)")
+            return
+        }
+    }
+
+    // MARK: - Arming scope (audit 2026-08-03, P1)
+
+    /// Every notification cancel the arming pass makes is SCOPED to the account being armed —
+    /// the wallet-wide sweep this used to be erased the OTHER account's just-armed poke on every
+    /// per-account pass, leaving a two-account wallet with no armed wake-up at all.
+    @Test func armingCancelsOnlyTheArmedAccountsScope() async {
+        Self.installCandidateAccount()
+        let cancelScopes = LockIsolated<[String?]>([])
+
+        _ = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .waiting },
+                migrationTransactionStatuses: { _ in [] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { _, _, _ in },
+                cancelMigrationNotifications: { scope in cancelScopes.withValue { $0.append(scope) } },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .beforeSync)
+        }
+
+        let expectedScope = Data(Self.accountUUID.id).hexEncodedString()
+        #expect(!cancelScopes.value.isEmpty, "the arming pass cancels before it arms")
+        #expect(
+            cancelScopes.value.allSatisfy { $0 == expectedScope },
+            "every cancel must carry the armed account's scope, never the wallet-wide nil — got \(cancelScopes.value)"
+        )
     }
 
     // MARK: - The privacy-buffer fast path

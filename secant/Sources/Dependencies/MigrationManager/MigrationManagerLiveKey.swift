@@ -1718,17 +1718,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
             sendDate = date
         }
 
+        let accountHex = Data(resolvedAccountUUID.id).hexEncodedString()
         guard let nextStepDate = [proveDate, sendDate].compactMap({ $0 }).min() else {
-            // Nothing left to do — retire the poke rather than leaving a stale one armed.
+            // Nothing left to do — retire THIS ACCOUNT's poke rather than leaving a stale one
+            // armed. Scoped (audit 2026-08-03, P1): the wallet-wide sweep this used to be erased
+            // the OTHER account's just-armed poke on every per-account arming pass — the
+            // account with nothing pending wiped everything and armed nothing.
             MigrationTrace.notificationCancelled("no prove wake-up and no unsent row")
-            await userNotifications.cancelMigrationNotifications()
+            await userNotifications.cancelMigrationNotifications(accountHex)
             return
         }
 
-        // Cancel first, then arm: this is what makes "exactly one, never more" true rather than
-        // merely intended. Re-posting the same identifier would replace its own kind, but not the
-        // retired `timeToSync` an older build may have left pending.
-        await userNotifications.cancelMigrationNotifications()
+        // Cancel first, then arm — scoped to this account: "exactly one PER ACCOUNT, never more".
+        // Re-posting the same identifier would replace its own kind; the scoped sweep also retires
+        // the un-suffixed `timeToSync` an older build may have left pending, without touching a
+        // sibling account's armed poke.
+        await userNotifications.cancelMigrationNotifications(accountHex)
         await userNotifications.scheduleMigrationNotification(
             MigrationNotification.stepReady,
             nextStepDate,
@@ -2528,7 +2533,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
         rowsCache.withLock { $0.removeAll() }
         summaryCache.withLock { $0.removeAll() }
         preparationRowsCache.withLock { $0.removeAll() }
-        await userNotifications.cancelMigrationNotifications()
+        // `nil` scope — the wallet reset is the one caller that genuinely means EVERY account.
+        await userNotifications.cancelMigrationNotifications(nil)
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
         LoggerProxy.event("\(Self.logTag) wallet reset — notifications cancelled, every migration key wiped")

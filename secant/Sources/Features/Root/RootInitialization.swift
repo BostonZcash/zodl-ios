@@ -433,7 +433,15 @@ extension Root {
                 switch verdict {
                 // Terminal/empty: nothing is left for the loop to help with. Self-stop — the next
                 // foreground respawns it if a fresh run starts a new candidate.
-                case MigrationStepVerdict.complete, MigrationStepVerdict.noRun, MigrationStepVerdict.notApplicable:
+                //
+                // `.notApplicable` is deliberately NOT in this set (audit 2026-08-03, P1): the
+                // driver answers it for TRANSIENT shapes too — a tip that momentarily reads 0
+                // during an engine restart, an account list momentarily empty during a switch —
+                // and cancelling on those killed the loop for the rest of the session over a
+                // wobble. A live loop's 30 s guard re-check costs nothing; genuine
+                // never-applicable wallets never spawn the loop in the first place (the spawn
+                // condition gates on activation and a scheduled candidate).
+                case MigrationStepVerdict.complete, MigrationStepVerdict.noRun:
                     return .cancel(id: state.migrationTickCancelId)
                 // SUBSTANTIVE — the same set `MigrationStepVerdict.isQuietForTick` calls NOT quiet,
                 // esp. `.broadcast`: a tick just changed something about the run, so re-derive the
@@ -445,9 +453,11 @@ extension Root {
                      MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved:
                     return .send(.home(.smartBanner(.migrationReevaluationRequested)))
                 // Quiet: nothing changed, and arming/logging already handled the rest inside the
-                // driver — see `advance(phase:)`'s tick-specific hygiene.
+                // driver — see `advance(phase:)`'s tick-specific hygiene. `.notApplicable` sits
+                // here (not in the cancel arm above) because the driver also answers it for
+                // transient wobbles — see the cancel arm's comment.
                 case MigrationStepVerdict.held, MigrationStepVerdict.idle, MigrationStepVerdict.deferredToPhase,
-                     MigrationStepVerdict.skipped:
+                     MigrationStepVerdict.skipped, MigrationStepVerdict.notApplicable:
                     return .none
                 }
 

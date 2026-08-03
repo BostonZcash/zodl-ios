@@ -25,8 +25,14 @@ struct UserNotificationsClient: Sendable {
     // compose site provides one — hex-encoded, `Data.hexEncodedString()` — so a tap can open the
     // account the notification was actually for instead of always resolving `selectedWalletAccount`)
     var scheduleMigrationNotification: @Sendable (MigrationNotification, Date?, String?) async -> Void
-    // pending + delivered, "migration." prefix
-    var cancelMigrationNotifications: @Sendable () async -> Void
+    // pending + delivered, "migration." prefix. The hex-encoded account scope (same encoding
+    // `scheduleMigrationNotification` takes) limits the sweep to THAT account's suffixed
+    // identifiers plus legacy UN-suffixed ones (stale by definition under the per-account
+    // scheme); `nil` sweeps every "migration." identifier — the wallet-wide wipe paths only.
+    // Audit 2026-08-03 (P1): the arming loop's wallet-wide cancel erased the OTHER account's
+    // just-armed poke on every per-account pass — a two-account wallet backgrounded with no
+    // armed wake-up at all.
+    var cancelMigrationNotifications: @Sendable (_ scopedToAccountHex: String?) async -> Void
     // delivered ONLY — pending (manual ready reminder) must survive
     var clearDeliveredMigrationNotifications: @Sendable () async -> Void
 }

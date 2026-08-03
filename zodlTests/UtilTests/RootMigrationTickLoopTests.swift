@@ -299,6 +299,28 @@ import Testing
 
     // MARK: - Self-stop
 
+    /// Audit 2026-08-03 (P1): `.notApplicable` must NOT self-stop the loop — the driver answers
+    /// it for transient wobbles too (a tip momentarily reading 0 during an engine restart, an
+    /// account list momentarily empty during a switch), and cancelling on those killed the tick
+    /// lane for the rest of the session. A live loop's 30 s guard re-check costs nothing.
+    @Test func notApplicableVerdictKeepsTheLoopAlive() async {
+        let spy = TickSpy(verdict: .notApplicable)
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock)
+
+        await store.send(.initialization(.initializationSuccessfullyDone))
+
+        await testClock.advance(by: .seconds(30))
+        await waitUntil { spy.tickCalls == 1 }
+        #expect(spy.tickCalls == 1)
+
+        await testClock.advance(by: .seconds(30))
+        await waitUntil { spy.tickCalls == 2 }
+        #expect(spy.tickCalls == 2, "a transient .notApplicable must not kill the loop — the next tick still fires")
+
+        await drain(store)
+    }
+
     @Test func terminalVerdictSelfStopsTheLoopUntilTheNextForeground() async {
         let spy = TickSpy(verdict: .complete)
         let testClock = TestClock()

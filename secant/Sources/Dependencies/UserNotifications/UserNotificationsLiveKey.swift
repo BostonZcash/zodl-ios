@@ -69,16 +69,26 @@ extension UserNotificationsClient: DependencyKey {
                     LoggerProxy.event("\(MigrationManagerImpl.logTag) notification FAILED to schedule — \(error)")
                 }
             },
-            cancelMigrationNotifications: {
+            cancelMigrationNotifications: { scopedToAccountHex in
+                // Scoped (audit 2026-08-03, P1): a per-account sweep removes only THAT account's
+                // suffixed identifiers — plus legacy un-suffixed ones, which the per-account
+                // identifier scheme obsoleted and which would otherwise never be retired. A `nil`
+                // scope keeps the wallet-wide sweep for the wipe paths.
+                let matchesScope: (String) -> Bool = { identifier in
+                    guard identifier.hasPrefix(MigrationNotification.identifierPrefix) else { return false }
+                    guard let scopedToAccountHex else { return true }
+                    return identifier.hasSuffix("_\(scopedToAccountHex)") || !identifier.contains("_")
+                }
+
                 let center = UNUserNotificationCenter.current()
                 let pendingIds = await center.pendingNotificationRequests()
                     .map { $0.identifier }
-                    .filter { $0.hasPrefix(MigrationNotification.identifierPrefix) }
+                    .filter(matchesScope)
                 center.removePendingNotificationRequests(withIdentifiers: pendingIds)
 
                 let deliveredIds = await center.deliveredNotifications()
                     .map { $0.request.identifier }
-                    .filter { $0.hasPrefix(MigrationNotification.identifierPrefix) }
+                    .filter(matchesScope)
                 center.removeDeliveredNotifications(withIdentifiers: deliveredIds)
             },
             clearDeliveredMigrationNotifications: {
