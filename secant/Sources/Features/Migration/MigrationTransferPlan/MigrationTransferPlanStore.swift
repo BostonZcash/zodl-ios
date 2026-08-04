@@ -532,7 +532,13 @@ struct MigrationTransferPlan {
                 // flight must not spawn a concurrent commit (every propose/prepare overwrites the
                 // SDK's one-slot plan cache, so a concurrent commit surfaces as the
                 // `MIGRATION_PLAN_STALE` error sheet QA hit).
-                guard !state.isConfirming else { return .none }
+                // E2E harness F#3b (2026-08-04): every refusal on this money path traces — a
+                // Confirm tap that produces no [MIG] line means the tap never reached this reducer
+                // (disabled button, missed hit target), which is itself the diagnosis.
+                guard !state.isConfirming else {
+                    MigrationTrace.event("CONFIRM tap ignored — a confirm leg is already in flight")
+                    return .none
+                }
                 state.isFailurePresented = false
 
                 // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of
@@ -552,6 +558,7 @@ struct MigrationTransferPlan {
                         // `failureReason == State.FailureReason.propose`, already known non-nil,
                         // so there is no `nil` case to guard against. Don't "fix" this to match
                         // the other sites.
+                        MigrationTrace.event("CONFIRM retry BLOCKED — no selected account; propose-failure sheet restored")
                         state.isFailurePresented = true
                         return .none
                     }
@@ -559,6 +566,7 @@ struct MigrationTransferPlan {
                     // Set only when a real re-propose launches (a nil account is a no-op inside
                     // `proposeEffect`, which must not strand the flag).
                     state.isConfirming = true
+                    MigrationTrace.event("CONFIRM retry → fresh propose (recovering from a propose failure)")
                     return proposeEffect(accountUUID: accountUUID)
                 }
 
@@ -572,6 +580,12 @@ struct MigrationTransferPlan {
                 // the refused half: nothing ran here either, so dropping the sheet would strand
                 // `failureReason` set with no surface left to render it.
                 guard let intent = state.confirmIntent else {
+                    MigrationTrace.event(
+                        "CONFIRM tap NO-OP — nothing to confirm: requiresSigning \(state.requiresSigning)"
+                        + ", schedule \(state.schedule.map { "\($0.transfers.count) transfers" } ?? "nil")"
+                        + ", account \(state.selectedWalletAccount == nil ? "nil" : "set")"
+                        + ", zip32 \(state.selectedWalletAccount?.zip32AccountIndex == nil ? "nil" : "set")"
+                    )
                     state.isFailurePresented = state.failureReason != nil
                     return .none
                 }
@@ -579,15 +593,20 @@ struct MigrationTransferPlan {
                 // MOB-1458: the device-authentication gate — see `State.confirmRequiresAuthentication`'s
                 // doc for which of this screen's states need it. The rescheduled acknowledgment
                 // (`false`) skips straight through with no prompt.
-                guard state.confirmRequiresAuthentication else { return .send(.confirmAuthenticated(intent)) }
+                guard state.confirmRequiresAuthentication else {
+                    MigrationTrace.event("CONFIRM — no auth required (\(Self.describe(intent))), proceeding")
+                    return .send(.confirmAuthenticated(intent))
+                }
 
                 // Set BEFORE authentication so the Confirm button's existing spinner covers the
                 // Face ID/Touch ID sheet too — a double-tap while the prompt is up hits the
                 // single-flight guard above instead of opening a second prompt.
                 state.isConfirming = true
+                MigrationTrace.event("CONFIRM → device auth prompt (\(Self.describe(intent)))")
                 return localAuthentication.gated(success: .confirmAuthenticated(intent), cancelled: .authenticationCancelled)
 
             case .authenticationCancelled:
+                MigrationTrace.event("CONFIRM auth refused — nothing signed, Confirm re-enabled")
                 // MOB-1458: refused — nothing was signed, proposed, or delegated. Re-enables
                 // Confirm. MOB-1458 (F5): `failureReason` is never cleared by the tap that led
                 // here (only by a subsequent `.confirmAuthenticated` success, below) — so if a
@@ -615,6 +634,7 @@ struct MigrationTransferPlan {
                 // refused (`.authenticationCancelled` restores the sheet instead of clearing it).
                 state.isConfirming = false
                 state.failureReason = nil
+                MigrationTrace.event("CONFIRM proceeding — \(Self.describe(intent))")
                 switch intent {
                 case .acknowledge:
                     // The rescheduled variant, or the expired-recovery review
@@ -649,12 +669,24 @@ struct MigrationTransferPlan {
                 return .none
 
             case .noteSplitFailed:
+                MigrationTrace.event("CONFIRM commit FAILED → failure sheet (reason: commit)")
                 state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.commit
                 return .none
 
             case .onAppear:
+                // E2E harness F#3b (2026-08-04): which of the three entry modes this appearance
+                // takes — the first fact needed to interpret every CONFIRM line that follows.
+                let entryMode: String
+                if state.injectedSchedule != nil {
+                    entryMode = "injected schedule"
+                } else if state.rows.isEmpty {
+                    entryMode = "fresh propose"
+                } else {
+                    entryMode = "hydrated rows"
+                }
+                MigrationTrace.event("PLAN screen open — variant \(state.variant), \(entryMode)")
                 // MOB-1511 (W2): the multi-round label loads on EVERY appearance path (fresh
                 // proposal, injected schedule, hydrated rows alike) — it derives from persisted
                 // app state + the stub estimate, independent of where the rows came from.
@@ -731,6 +763,7 @@ struct MigrationTransferPlan {
                 return .none
 
             case .scheduleSigned:
+                MigrationTrace.event("CONFIRM commit COMPLETE — schedule signed + stored, delegating .confirmed")
                 state.isConfirming = false
                 // MOB-1466: the software lane's genuine "Confirm has done its job" moment — signed
                 // AND stored. See `State.hasConfirmed`'s doc.
@@ -738,6 +771,7 @@ struct MigrationTransferPlan {
                 return .send(.delegate(.confirmed))
 
             case .planStaleRefreshed(let schedule):
+                MigrationTrace.event("CONFIRM plan STALE — engine refused the commit; fresh plan displayed (\(schedule.transfers.count) transfers)")
                 // MOB-1458 (Task 3): mirrors `.transfersProposed` — the fresh schedule replaces
                 // the stale one on screen — plus the toast telling the user to review it before
                 // tapping Confirm again.
@@ -747,16 +781,31 @@ struct MigrationTransferPlan {
                 return .none
 
             case .transferProposalFailed:
+                MigrationTrace.event("PLAN propose FAILED → failure sheet (reason: propose)")
                 state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.propose
                 return .none
 
             case .transfersProposed(let schedule):
+                MigrationTrace.event("PLAN proposed — \(schedule.transfers.count) transfers, ~\(schedule.estimatedDurationHours)h")
                 state.isConfirming = false
                 apply(schedule, to: &state)
                 return .none
             }
+        }
+    }
+
+    /// E2E harness F#3b (2026-08-04): one-line render of a `ConfirmIntent` for the [MIG] confirm
+    /// trace — the lane and its size only, never key material or addresses.
+    static func describe(_ intent: State.ConfirmIntent) -> String {
+        switch intent {
+        case .acknowledge:
+            return "acknowledge"
+        case .software(let schedule, _, _):
+            return "software commit, \(schedule.transfers.count) transfers"
+        case .keystone(let schedule, _):
+            return "keystone batch, \(schedule.transfers.count) transfers"
         }
     }
 

@@ -344,10 +344,19 @@ extension MigrationCoordFlow {
             case .recoveryRestartRequested:
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.recoveryFailed) }
                 return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
-                    guard (try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)) != nil else {
+                    // E2E harness F#2/F#3b (2026-08-04): this is the run-discharging call of the
+                    // notes-spent replan lane, and the field pinned the engine's "complete" mis-report
+                    // to the moment right after it — so both its outcome AND its error must trace
+                    // (the old `try?` swallowed the error a silent recovery failure died on).
+                    MigrationTrace.event("RECOVERY restart — discharging the attention-blocked run for a fresh plan")
+                    do {
+                        _ = try await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
+                    } catch {
+                        MigrationTrace.event("RECOVERY restart FAILED — \(error); Continue re-enabled")
                         await send(.recoveryFailed)
                         return
                     }
+                    MigrationTrace.event("RECOVERY restart done — reconciling, then fresh plan screen")
                     // Reconcile so the restart's state transition (off `.requiresAttention`) is
                     // observed promptly. The fresh plan's own commit reconciles again later.
                     await migrationManager.reconcile()

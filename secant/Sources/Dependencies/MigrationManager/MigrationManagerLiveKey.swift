@@ -2031,8 +2031,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // R11: `.confirming` excluded alongside `.sent` — a confirming row is on the chain's side
         // (broadcast or already mined, wallet not yet synced), so it needs no send window either;
         // counting it would schedule an imminent poke for work that is already done.
+        // E2E harness F#1 (2026-08-04): `.invalid`/`.expired` excluded too — a dead row cannot be
+        // sent, so arming its "window" (whose ETA has by definition passed → an imminent poke,
+        // re-armed forever) promises an action that cannot exist. The needsUser blocker candidate
+        // below (#13) is the honest poke for that state: generic "come back" copy, no window claim.
         let pendingBroadcast = (preparationRows + transferRows)
-            .filter { $0.status != MigrationTransferRow.Status.sent && $0.status != MigrationTransferRow.Status.confirming && !$0.isBroadcasting }
+            .filter {
+                $0.status != MigrationTransferRow.Status.sent
+                && $0.status != MigrationTransferRow.Status.confirming
+                && $0.status != MigrationTransferRow.Status.invalid
+                && $0.status != MigrationTransferRow.Status.expired
+                && !$0.isBroadcasting
+            }
             .min { $0.forwardETAMinutes < $1.forwardETAMinutes }
 
         var sendDate: Date?
@@ -2095,7 +2105,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
 
         let inSeconds = Int(nextStepDate.timeIntervalSince(now).rounded())
-        let source = nextStepDate == proveDate ? "prove wake-up" : "send window"
+        // E2E harness F#1 (2026-08-04): the blocker candidate used to read "send window" here —
+        // the trace itself lied about which poke was armed.
+        let source: String
+        if nextStepDate == proveDate {
+            source = "prove wake-up"
+        } else if nextStepDate == sendDate {
+            source = "send window"
+        } else {
+            source = "attention blocker"
+        }
         // MOB-1466: remembered ACROSS sessions, so the next app-open can say whether it was manual,
         // on schedule, or late relative to this poke — see `MigrationTrace.pokeRelation`.
         MigrationTrace.notificationArmed(at: nextStepDate, source: source)
@@ -4600,6 +4619,24 @@ enum MigrationDerivations {
             }
 
             let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+
+            // E2E harness F#1b (2026-08-04): this derivation never checked `.invalid`, so an
+            // unsatisfiable preparation fell through to `.active` — the timeline read "ready" and
+            // the poke armer treated it as the next send, for a row the engine knows can never
+            // broadcast (field DB: all 4 preps `signed` + `inputs_spent`/`inherited`, rendered
+            // P1–P4:ready). Same precedence as every other rows derivation (A25, SDK addendum §3):
+            // below `.mined`, above everything else.
+            if case MigrationTransactionStatus.State.invalid = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: position,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.invalid,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow,
+                    kind: MigrationTransferRow.Kind.splitBalance
+                )
+            }
 
             if case let MigrationTransactionStatus.State.broadcast(txid) = status.state {
                 // R11: on the chain's side — `.confirming` until the wallet's store has it mined.

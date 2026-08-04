@@ -139,20 +139,33 @@ enum MigrationCommitPipeline {
         derivationTool: DerivationToolClient,
         networkType: NetworkType
     ) async throws {
-        let usk = try MigrationSpendingKeyDerivation.deriveUSK(
-            zip32AccountIndex: zip32AccountIndex,
-            walletStorage: walletStorage,
-            mnemonic: mnemonic,
-            derivationTool: derivationTool,
-            networkType: networkType
-        )
-        try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
+        // E2E harness F#3b (2026-08-04): the commit is THE money moment of the whole flow, and it
+        // used to run silent end to end — a refusal anywhere in this chain was indistinguishable
+        // from a tap that never landed. Stage-tagged so a throw names where it died.
+        MigrationTrace.event("COMMIT begin — software sign+store, \(schedule.transfers.count) transfers")
+        var stage = "deriveUSK"
+        do {
+            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                zip32AccountIndex: zip32AccountIndex,
+                walletStorage: walletStorage,
+                mnemonic: mnemonic,
+                derivationTool: derivationTool,
+                networkType: networkType
+            )
+            stage = "signAndStoreMigrationSchedule"
+            try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
+            MigrationTrace.event("COMMIT signed + stored — recording schedule, then reconcile")
 
-        // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no proposal list
-        // post-commit) and reconcile so `stateEvents` picks up the fresh state promptly (a store
-        // completing a migration op is one of `reconcile()`'s two triggers).
-        await migrationManager.recordCommittedSchedule(account.id, schedule)
-        await migrationManager.reconcile()
+            // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no proposal list
+            // post-commit) and reconcile so `stateEvents` picks up the fresh state promptly (a store
+            // completing a migration op is one of `reconcile()`'s two triggers).
+            await migrationManager.recordCommittedSchedule(account.id, schedule)
+            await migrationManager.reconcile()
+            MigrationTrace.event("COMMIT done — recorded + reconciled")
+        } catch {
+            MigrationTrace.event("COMMIT THREW at \(stage): \(error)")
+            throw error
+        }
     }
 
     // MARK: - MOB-1513: immediate lane (send-max `ImmediateMigrationProposal`)
@@ -177,12 +190,23 @@ enum MigrationCommitPipeline {
         accountUUID: AccountUUID,
         sdkSynchronizer: SDKSynchronizerClient
     ) async throws -> String {
-        let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal.proposal, usk)
-        guard case let .success(txIds) = result, let displayTxId = txIds.first else {
-            throw MigrationCommitError.immediateSubmitNotSuccessful
+        // E2E harness (2026-08-04): the field sweep of the wedged wallet ran this whole lane with
+        // ZERO [MIG] lines — same silent-money-moment class the schedule lane's commit had. Traced
+        // to the same standard: begin, outcome, throw.
+        MigrationTrace.event("COMMIT begin — immediate software sweep")
+        do {
+            let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal.proposal, usk)
+            guard case let .success(txIds) = result, let displayTxId = txIds.first else {
+                MigrationTrace.event("COMMIT immediate submit NOT successful — \(String(describing: result))")
+                throw MigrationCommitError.immediateSubmitNotSuccessful
+            }
+            MigrationTrace.event("COMMIT immediate broadcast landed — txid \(displayTxId)")
+            await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
+            return displayTxId
+        } catch {
+            MigrationTrace.event("COMMIT immediate THREW: \(error)")
+            throw error
         }
-        await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
-        return displayTxId
     }
 
     /// The immediate lane's Keystone post-signing submit — called once the QR round-trip returns a
@@ -203,13 +227,22 @@ enum MigrationCommitPipeline {
         accountUUID: AccountUUID,
         sdkSynchronizer: SDKSynchronizerClient
     ) async throws -> String {
-        let provenPczt = try await sdkSynchronizer.addProofsToPCZT(unsignedPczt)
-        let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(provenPczt, signedPczt)
-        guard case let .success(txIds) = result, let displayTxId = txIds.first else {
-            throw MigrationCommitError.immediateSubmitNotSuccessful
+        // E2E harness (2026-08-04): same trace standard as `commitImmediateSoftware` — see there.
+        MigrationTrace.event("COMMIT begin — immediate Keystone finalize+submit")
+        do {
+            let provenPczt = try await sdkSynchronizer.addProofsToPCZT(unsignedPczt)
+            let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(provenPczt, signedPczt)
+            guard case let .success(txIds) = result, let displayTxId = txIds.first else {
+                MigrationTrace.event("COMMIT immediate submit NOT successful — \(String(describing: result))")
+                throw MigrationCommitError.immediateSubmitNotSuccessful
+            }
+            MigrationTrace.event("COMMIT immediate broadcast landed — txid \(displayTxId)")
+            await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
+            return displayTxId
+        } catch {
+            MigrationTrace.event("COMMIT immediate THREW: \(error)")
+            throw error
         }
-        await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
-        return displayTxId
     }
 
     /// Proposes the Keystone-signing PCZT batch for `schedule`, external-signer path: proposes the
