@@ -94,26 +94,25 @@ extension Root {
                     return .none
                 }
 
-                // M3 Part A (MOB-1466): Activity shows settled history; the Migration Status
-                // screen owns the in-flight story. A stored-but-unmined migration transaction
-                // (store-at-prove) would otherwise render as a phantom "Sending…" row hours or
-                // days before its scheduled broadcast — eleven of them, minutes after a plan
-                // commits, in the E2E campaign that flagged this. This is the single canonical
-                // list build, so every consumer of the shared `$transactions` sees the same
-                // filtered truth.
+                // ZIP 318 labels: Activity now PRESENTS migration transactions instead of hiding
+                // them — a stored-but-unmined row renders as "Migrating…"/"Splitting Balance…"
+                // with the coins-swap glyph (Figma "Transaction Statuses/Labels — Final Designs"),
+                // so the store-at-prove rows that once looked like phantom "Sending…" sends now
+                // tell the true in-flight story right on the list. This supersedes the M3 Part A
+                // filter that removed them. This is still the single canonical list build, so
+                // every consumer of the shared `$transactions` sees the same truth.
                 //
-                // M3 B2: the SAME dropped rows are what the SDK's pending-balance lanes count for
-                // the whole prove→mine window, so their received value is published beside the
-                // filtered list — one pass, one clock — for the balance-breakdown sheet to remove
-                // from its displayed "Pending" row. `totalReceived` is exactly a migration
-                // transaction's contribution to the pending lanes (all its real outputs are
-                // internal, and its spent side never enters them); a nil reads as zero, which
+                // M3 B2 (unchanged): the SAME rows are what the SDK's pending-balance lanes count
+                // for the whole prove→mine window, so their received value is still published
+                // beside the canonical list — one pass, one clock — for the balance-breakdown
+                // sheet to remove from its displayed "Pending" row. `totalReceived` is exactly a
+                // migration transaction's contribution to the pending lanes (all its real outputs
+                // are internal, and its spent side never enters them); a nil reads as zero, which
                 // under-corrects — conservative, never future-tense.
                 let unminedMigrationPending = transactions
                     .filter { $0.isUnminedMigrationTransaction }
                     .reduce(Zatoshi.zero) { $0 + ($1.totalReceived ?? Zatoshi.zero) }
                 state.$unminedMigrationPendingValue.withLock { $0 = unminedMigrationPending }
-                transactions.removeAll { $0.isUnminedMigrationTransaction }
 
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
