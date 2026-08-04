@@ -27,7 +27,9 @@ import Foundation
         receivedNoteCount: Int,
         value: Zatoshi,
         totalSpent: Zatoshi? = nil,
-        totalReceived: Zatoshi? = nil
+        totalReceived: Zatoshi? = nil,
+        minedHeight: BlockHeight? = BlockHeight(1),
+        zip318Kind: ZcashTransaction.Overview.ZIP318Kind = .notClassified
     ) -> ZcashTransaction.Overview {
         ZcashTransaction.Overview(
             accountUUID: testAccountUUID,
@@ -38,7 +40,7 @@ import Foundation
             isShielding: isShielding,
             hasChange: false,
             memoCount: 0,
-            minedHeight: BlockHeight(1),
+            minedHeight: minedHeight,
             raw: nil,
             rawID: Data([0x01, 0x02, 0x03, 0x04]),
             receivedNoteCount: receivedNoteCount,
@@ -50,8 +52,43 @@ import Foundation
             spentNoteCount: sentNoteCount,
             poolCrossingValue: nil,
             isTrusted: true,
-            zip318Kind: ZcashTransaction.Overview.ZIP318Kind.notClassified
+            zip318Kind: zip318Kind
         )
+    }
+
+    // MARK: - ZIP 318 kind (M3 Part A, MOB-1466)
+
+    /// The SDK's classification must ride into the app model unchanged — the Activity filter
+    /// keys on it.
+    @Test func zip318KindFlowsThroughFromOverview() {
+        let state = TransactionState(
+            transaction: overview(sentNoteCount: 1, receivedNoteCount: 0, value: Zatoshi(-1), zip318Kind: .transfer)
+        )
+        #expect(state.zip318Kind == ZcashTransaction.Overview.ZIP318Kind.transfer)
+    }
+
+    /// The hide rule, exhaustively: only UNMINED preparation/transfer rows hide. Mined migration
+    /// rows are settled history; `.notClassified` is the absence of a decision and must never be
+    /// treated as one; `.nonconforming` is a regular transaction.
+    @Test func unminedMigrationRowsHideMinedAndUnclassifiedDoNot() {
+        typealias Kind = ZcashTransaction.Overview.ZIP318Kind
+        let expectations: [(Kind, BlockHeight?, Bool)] = [
+            (Kind.preparation, nil, true),
+            (Kind.transfer, nil, true),
+            (Kind.preparation, BlockHeight(100), false),
+            (Kind.transfer, BlockHeight(100), false),
+            (Kind.notClassified, nil, false),
+            (Kind.nonconforming, nil, false)
+        ]
+        for (kind, minedHeight, hidden) in expectations {
+            let state = TransactionState(
+                transaction: overview(sentNoteCount: 1, receivedNoteCount: 0, value: Zatoshi(-1), minedHeight: minedHeight, zip318Kind: kind)
+            )
+            #expect(
+                state.isUnminedMigrationTransaction == hidden,
+                "kind \(kind), minedHeight \(String(describing: minedHeight)) expected hidden == \(hidden)"
+            )
+        }
     }
 
     /// A self-transfer just after it's created: the SDK already counts a sent note (the payment

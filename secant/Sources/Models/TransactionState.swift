@@ -49,6 +49,23 @@ struct TransactionState: Equatable, Identifiable {
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
+    /// How the transaction classifies against ZIP 318 (Orchard→Ironwood migration), straight from
+    /// the SDK. A conformance class, not provenance — but a preparation/transfer paying this
+    /// account is this account's own migration traffic. `.notClassified` means the wallet has not
+    /// decided (pre-classification rows, restores mid-rescan) and must never be treated as a
+    /// decision.
+    var zip318Kind = ZcashTransaction.Overview.ZIP318Kind.notClassified
+
+    /// M3 Part A (MOB-1466): a migration transaction the wallet has NOT mined — stored at prove
+    /// time, up to days before its scheduled broadcast. Activity hides these: it shows settled
+    /// history, while the Migration Status screen owns the in-flight story (R11's standard —
+    /// render as if the not-yet-mined migration transaction never happened). Mined rows always
+    /// show, and `.notClassified`/`.nonconforming` rows are never hidden.
+    var isUnminedMigrationTransaction: Bool {
+        minedHeight == nil
+            && (zip318Kind == ZcashTransaction.Overview.ZIP318Kind.preparation
+                || zip318Kind == ZcashTransaction.Overview.ZIP318Kind.transfer)
+    }
 
     var rawID: Data? = nil
     
@@ -399,6 +416,7 @@ extension TransactionState {
         memoCount = transaction.memoCount
         totalSpent = transaction.totalSpent
         totalReceived = transaction.totalReceived
+        zip318Kind = transaction.zip318Kind
 
         let isPending = isSentTransaction ? minedHeight == nil : transaction.state == .pending
         // Fallback for when the SDK's `expired_unmined` column lags (e.g. an unmined sent tx

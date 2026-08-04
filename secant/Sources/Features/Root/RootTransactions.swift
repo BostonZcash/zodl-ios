@@ -85,6 +85,16 @@ extension Root {
                 guard accountUUID == state.selectedWalletAccount?.id else {
                     return .none
                 }
+
+                // M3 Part A (MOB-1466): Activity shows settled history; the Migration Status
+                // screen owns the in-flight story. A stored-but-unmined migration transaction
+                // (store-at-prove) would otherwise render as a phantom "Sending…" row hours or
+                // days before its scheduled broadcast — eleven of them, minutes after a plan
+                // commits, in the E2E campaign that flagged this. This is the single canonical
+                // list build, so every consumer of the shared `$transactions` sees the same
+                // filtered truth.
+                transactions.removeAll { $0.isUnminedMigrationTransaction }
+
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
                 // Resolve Swaps
