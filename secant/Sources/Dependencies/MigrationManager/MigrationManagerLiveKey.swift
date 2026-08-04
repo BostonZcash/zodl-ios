@@ -4066,7 +4066,15 @@ enum MigrationDerivations {
             )
         }
 
-        let seeds = leadingRows + scheduleRows
+        // MOB-1466 (M2): schedule rows display in broadcast-SLOT order, not the committed array's
+        // crossing order — the engine's ZIP-318 permutation deliberately shuffles crossing↔slot
+        // (denomination rank must not leak into broadcast time), so the array order renders a
+        // shuffled timeline. Slot sort is chain-invisible; numeric-id tiebreak keeps same-slot
+        // rows deterministic. Leading rows (pre-schedule history) stay first, as before.
+        let seeds = leadingRows + scheduleRows.sorted {
+            ($0.nextExecutableAfterHeight, Int($0.transferId) ?? Int.max)
+                < ($1.nextExecutableAfterHeight, Int($1.transferId) ?? Int.max)
+        }
 
         func isLiveBroadcast(_ seed: RowSeed) -> Bool {
             guard let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.broadcast = liveStatus.state else {
@@ -4334,7 +4342,10 @@ enum MigrationDerivations {
     /// "nothing to show yet" signal a caller falls further back from (to
     /// `MigrationManagerImpl.synthesizedTransferRows`, the pure progress-count approximation).
     /// Never an empty array, which would read as "the run has zero transfers" — a different and
-    /// wrong claim. Sorted by `crossing` index; a row's `index`/display position follows that sort,
+    /// wrong claim. Sorted by scheduled SLOT (`scheduledHeight`, `crossing` tiebreak — MOB-1466 M2:
+    /// `crossing` ranks denominations and is deliberately shuffled against time by the engine's
+    /// ZIP-318 permutation, so slot order is the only order a timeline can honestly render);
+    /// a row's `index`/display position follows that sort,
     /// and `id` is `String(status.id)` — the SAME opaque ordinal a schedule row would carry for the
     /// same transaction (`MigrationTransactionStatus.id`'s own doc), so a later read that DOES gain
     /// a persisted schedule joins to the identical id.
@@ -4349,7 +4360,7 @@ enum MigrationDerivations {
     ///    pending styling, regardless of position — same convention as `transferRows`'s own item
     ///    2).
     /// 3. `blockedOn == .expired` -> `.expired`, regardless of position.
-    /// 4. The FIRST row in crossing order among everything else (mirrors `transferRows`'s own
+    /// 4. The FIRST row in slot order among everything else (mirrors `transferRows`'s own
     ///    "only the earliest non-terminal row is ever the acted-on one" convention — ZIP-0318
     ///    MUST: at most one broadcast at a time): `.overdue` when its own `scheduledHeight` is
     ///    at/behind `currentTip` (the same "already due" reading `MigrationETA.minutesFromNow`
@@ -4381,7 +4392,13 @@ enum MigrationDerivations {
                 guard case let MigrationTransactionStatus.Kind.transfer(crossing) = status.kind else { return nil }
                 return (crossing, status)
             }
-            .sorted { $0.crossing < $1.crossing }
+            // MOB-1466 (M2): display order = broadcast SLOT, not `crossing`. `crossing` ranks
+            // denominations, and the engine deliberately shuffles crossing↔slot (ZIP 318 MUST,
+            // zcash_pool_migration engine.rs: broadcast order must not reveal the balance), so a
+            // crossing-sorted list renders a shuffled timeline — rows visibly complete "out of
+            // order". Sorting the DISPLAY by slot is chain-invisible and matches what actually
+            // happens; `crossing` stays as the deterministic tiebreak for same-slot rows.
+            .sorted { ($0.status.scheduledHeight, $0.crossing) < ($1.status.scheduledHeight, $1.crossing) }
             .map { $0.status }
 
         guard !transferStatuses.isEmpty else { return nil }
