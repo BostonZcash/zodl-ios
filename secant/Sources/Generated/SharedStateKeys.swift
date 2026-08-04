@@ -38,6 +38,11 @@ public extension String {
     // that the real `lockMigrationResidual` replaced, and the lock now lives in the account's own
     // `PoolBalance.lockedValue` (matrix B16).
     static let migrationMode = "sharedStateKey_migrationMode"
+    /// M3 B2 (MOB-1466): Σ of the received value of the selected account's stored-but-unmined
+    /// migration transactions — the figure the canonical transaction build removes from Activity
+    /// and the balance-breakdown sheet removes from its displayed "Pending" row. Written by
+    /// `RootTransactions` in the same pass that filters the rows, so the two can never disagree.
+    static let unminedMigrationPendingValue = "sharedStateKey_unminedMigrationPendingValue"
     static let migrationManualDelivery = "sharedStateKey_migrationManualDelivery"
     static let migrationNetworkPrivacyOptions = "sharedStateKey_migrationNetworkPrivacyOptions"
     static let migrationNetworkSnapshot = "sharedStateKey_migrationNetworkSnapshot"

@@ -151,6 +151,7 @@ struct Root {
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         @Shared(.inMemory(.transactions)) var transactions: IdentifiedArrayOf<TransactionState> = []
         @Shared(.inMemory(.transactionMemos)) var transactionMemos: [String: [String]] = [:]
+        @Shared(.inMemory(.unminedMigrationPendingValue)) var unminedMigrationPendingValue: Zatoshi = .zero
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         var walletConfig: WalletConfig
         @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none

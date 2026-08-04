@@ -38,11 +38,17 @@ import ComposableArchitecture
         )
     }
 
-    private func row(id: String, kind: ZcashTransaction.Overview.ZIP318Kind, minedHeight: BlockHeight?) -> TransactionState {
+    private func row(
+        id: String,
+        kind: ZcashTransaction.Overview.ZIP318Kind,
+        minedHeight: BlockHeight?,
+        totalReceived: Zatoshi? = nil
+    ) -> TransactionState {
         var row = TransactionState(fee: Zatoshi(10), id: id, status: .sending, zecAmount: Zatoshi(100))
         row.minedHeight = minedHeight
         row.zip318Kind = kind
         row.timestamp = 1_000
+        row.totalReceived = totalReceived
         return row
     }
 
@@ -62,16 +68,29 @@ import ComposableArchitecture
         }
 
         let payload = IdentifiedArrayOf<TransactionState>(uniqueElements: [
-            row(id: "prep-unmined", kind: .preparation, minedHeight: nil),
-            row(id: "transfer-unmined", kind: .transfer, minedHeight: nil),
-            row(id: "transfer-mined", kind: .transfer, minedHeight: BlockHeight(100)),
-            row(id: "regular-unmined", kind: .notClassified, minedHeight: nil)
+            row(id: "prep-unmined", kind: .preparation, minedHeight: nil, totalReceived: Zatoshi(600)),
+            row(id: "transfer-unmined", kind: .transfer, minedHeight: nil, totalReceived: Zatoshi(400)),
+            row(id: "transfer-mined", kind: .transfer, minedHeight: BlockHeight(100), totalReceived: Zatoshi(9_999)),
+            row(id: "regular-unmined", kind: .notClassified, minedHeight: nil, totalReceived: Zatoshi(7_777))
         ])
 
         await store.send(.fetchedTransactions(account.id, payload)).finish()
 
         let ids = Set(sharedTransactions.wrappedValue.map(\.id))
         #expect(ids == Set(["transfer-mined", "regular-unmined"]))
+
+        // M3 B2: the SAME pass publishes the dropped rows' received value for the breakdown
+        // sheet's Pending row — only the two hidden rows contribute (600 + 400), never the mined
+        // migration row or the regular unmined send.
+        #expect(initialState.unminedMigrationPendingValue == Zatoshi(1_000))
+
+        // A later fetch with no in-flight migration rows resets the figure — it must never
+        // linger from a previous pass.
+        let cleanPayload = IdentifiedArrayOf<TransactionState>(uniqueElements: [
+            row(id: "regular-unmined", kind: .notClassified, minedHeight: nil, totalReceived: Zatoshi(7_777))
+        ])
+        await store.send(.fetchedTransactions(account.id, cleanPayload)).finish()
+        #expect(initialState.unminedMigrationPendingValue == .zero)
     }
 }
 

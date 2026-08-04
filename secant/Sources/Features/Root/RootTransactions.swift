@@ -93,6 +93,18 @@ extension Root {
                 // commits, in the E2E campaign that flagged this. This is the single canonical
                 // list build, so every consumer of the shared `$transactions` sees the same
                 // filtered truth.
+                //
+                // M3 B2: the SAME dropped rows are what the SDK's pending-balance lanes count for
+                // the whole prove→mine window, so their received value is published beside the
+                // filtered list — one pass, one clock — for the balance-breakdown sheet to remove
+                // from its displayed "Pending" row. `totalReceived` is exactly a migration
+                // transaction's contribution to the pending lanes (all its real outputs are
+                // internal, and its spent side never enters them); a nil reads as zero, which
+                // under-corrects — conservative, never future-tense.
+                let unminedMigrationPending = transactions
+                    .filter { $0.isUnminedMigrationTransaction }
+                    .reduce(Zatoshi.zero) { $0 + ($1.totalReceived ?? Zatoshi.zero) }
+                state.$unminedMigrationPendingValue.withLock { $0 = unminedMigrationPending }
                 transactions.removeAll { $0.isUnminedMigrationTransaction }
 
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1

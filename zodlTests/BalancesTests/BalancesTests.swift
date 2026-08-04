@@ -24,6 +24,47 @@ import ComposableArchitecture
         #expect(!idle.isPendingInProcess)
     }
 
+    // MARK: - M3 B2 (MOB-1466): the displayed "Pending" figure excludes in-flight migration value
+
+    /// The sheet's Pending row shows the SDK lanes minus the value sitting in stored-but-unmined
+    /// migration transactions — clamped at zero, and hidden entirely when migration is all there is.
+    @Test func displayedPendingExcludesUnminedMigrationValue() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+            state.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(50) }
+
+            #expect(state.displayedPendingBalance == Zatoshi(20))
+            #expect(state.isDisplayedPendingInProcess)
+            // The raw predicate keeps its meaning — only the DISPLAYED figure is corrected.
+            #expect(state.isPendingInProcess)
+        }
+    }
+
+    @Test func displayedPendingClampsAtZeroAndHidesTheRow() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+            state.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(100) }
+
+            #expect(state.displayedPendingBalance == .zero)
+            #expect(!state.isDisplayedPendingInProcess)
+        }
+    }
+
+    @Test func displayedPendingEqualsRawLanesWithoutMigrationValue() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+
+            #expect(state.displayedPendingBalance == Zatoshi(70))
+            #expect(state.isDisplayedPendingInProcess)
+        }
+    }
+
     @Test func shieldabilityFlags() {
         let shieldable = state(transparentBalance: Zatoshi(2_000_000))
         #expect(shieldable.isShieldableBalanceAvailable)
