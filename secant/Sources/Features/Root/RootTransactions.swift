@@ -69,8 +69,16 @@ extension Root {
                 // provenance guard below still drops any payload for an account other than the one
                 // currently selected.
                 return .run { send in
-                    if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
+                    do {
+                        let transactions = try await sdkSynchronizer.getAllTransactions(accountUUID)
                         await send(.fetchedTransactions(accountUUID, transactions))
+                    } catch {
+                        // A failed fetch must never be silent: a wallet whose every row failed to
+                        // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
+                        // rendered as an EMPTY transaction list with no trace anywhere, reading as
+                        // data loss. The list keeps its previous contents; the error goes to the
+                        // log where the next investigation can find it.
+                        LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
                     }
                 }
                 .cancellable(id: state.CancelTransactionsFetchId)

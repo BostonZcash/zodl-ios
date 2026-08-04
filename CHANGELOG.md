@@ -20,6 +20,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
 
 ### Fixed
+- [MOB-1466] The transaction history no longer shows up empty on a populated wallet: a database read failure could silently discard the whole list (seen in the field when every stored transaction hit a strict decode of an always-empty trust column — fixed in the SDK), and such a failure is now logged instead of vanishing without a trace.
 - [MOB-1466] The Home pool-balances sheet no longer counts scheduled migration transfers that have not mined yet: the Ironwood and Orchard cards now tell the same story as the Migration Status screen, instead of showing value as already moved hours or days early.
 - [MOB-1466] Confirming a migration plan no longer floods Activity with "Sending…" rows for transfers scheduled hours or days out: scheduled migration transactions stay out of the transaction history until they actually mine. The Migration Status screen remains the one place that shows in-flight transfers.
 - [MOB-1466] The balances sheet's "Pending" row no longer claims the whole migration plan as pending minutes after you confirm it: value sitting in scheduled, not-yet-mined migration transfers is excluded from that row (your genuine pending sends and change still show), matching the transaction history's treatment.
