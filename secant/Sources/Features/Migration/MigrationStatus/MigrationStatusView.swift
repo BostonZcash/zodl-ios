@@ -88,6 +88,14 @@ struct MigrationStatusView: View {
                         // wallet-confirmed) makes them move in the same sync write, so no render
                         // gate is needed. `.progress` only: the resume and re-scheduling frames
                         // don't draw it.
+                        // Handover O2: no session has published a snapshot yet (first open of the
+                        // process while migration work holds the DB actor). The screen is HERE —
+                        // title above, back arrow live — only the data zone waits. Anything is
+                        // better than an empty screen with a spinner; this is the smallest
+                        // anything: the spinner plus the sentence saying what the wait is.
+                        if store.isEvaluating {
+                            evaluatingNote
+                        } else {
                         if store.presentation == .progress {
                             MigrationPoolFlowHeader(
                                 orchardRemaining: store.poolFlow.orchardRemaining,
@@ -131,12 +139,15 @@ struct MigrationStatusView: View {
                                     : Design.Text.tertiary
                             }
                         )
+                        }
                     }
                     .screenHorizontalPadding()
                     .padding(.vertical, 1)
                 }
 
-                if store.presentation == .resume {
+                // O2: footers and CTAs make claims about data ("Send now", ETAs, Tor holds) — while
+                // evaluating there is no data to make claims about, and the back arrow is the exit.
+                if store.presentation == .resume && !store.isEvaluating {
                     VStack(alignment: .leading, spacing: 8) {
                         if store.isTorHoldActive {
                             torHoldNote
@@ -147,16 +158,18 @@ struct MigrationStatusView: View {
                     .padding(.top, 16)
                 }
 
-                if store.presentation == .progress {
+                if store.presentation == .progress && !store.isEvaluating {
                     progressFooterNote
                         .screenHorizontalPadding()
                         .padding(.top, 16)
                 }
 
-                buttons
-                    .screenHorizontalPadding()
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
+                if !store.isEvaluating {
+                    buttons
+                        .screenHorizontalPadding()
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
+                }
             }
             .applyPresentationModifier(store: store)
         }
@@ -384,6 +397,23 @@ struct MigrationStatusView: View {
                 .zFont(size: 12, style: Design.Text.tertiary)
         }
         .padding(.bottom, 12)
+    }
+
+    // MARK: - Evaluating note
+
+    /// Handover O2: the data zone's stand-in when the screen was presented before any session
+    /// published a snapshot (see `MigrationStatus.State.isEvaluating`). The screen's chrome — back
+    /// arrow, title — is real and live above this; only the list is being evaluated, and the
+    /// sentence says so. Replaced wholesale by the first snapshot that arrives.
+    @ViewBuilder private var evaluatingNote: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+
+            Text(localizable: .migrationStatusEvaluating)
+                .zFont(size: 14, style: Design.Text.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 96)
     }
 
     // MARK: - Tor-hold note

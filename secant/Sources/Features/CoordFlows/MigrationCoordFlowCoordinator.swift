@@ -1253,13 +1253,28 @@ extension MigrationCoordFlow {
     /// single hydration, on the screen whose whole design brief is "no two facts from different
     /// moments". Everything now comes off the same `MigrationViewSnapshot` the screen's own
     /// subscription will keep live.
-    private func statusResumeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
-        let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
-        let stalledRow = snapshot.transfers.first { $0.status == MigrationTransferRow.Status.overdue }
+    ///
+    /// THE FOURTH OCCUPANT (handover O2, the QA force-quit). `reentryRoute`'s doc chronicles three
+    /// lives of the actor-starvation class and its own fix — the work-in-flight route
+    /// SHORT-CIRCUIT — resolves the ROUTE in milliseconds. This hydration then undid it: it awaited
+    /// the BUILDER (`migrationViewSnapshot`), whose actor-bound reads (`transferDerivation`,
+    /// `getAccountsBalances`) queue behind the same in-flight prove sweep, so the PUSH waited out
+    /// the sweep behind the flow container's bare spinner — measured 15–45 s, read as a hang. The
+    /// builder belongs to the publish lane, where "the build simply lands late" is a coalesced
+    /// republish; on the navigation path it is a blocked screen.
+    ///
+    /// So: hydrate from the PUBLISHED WINDOW — the same `currentMigrationSnapshot` value the
+    /// screen's own `.onAppear` prime paints, read synchronously, never actor-bound. `nil` means no
+    /// session has published yet; the screen presents anyway in its explicit evaluating state
+    /// (chrome + "Evaluating state…"), and its own subscription + `refreshMigrationSnapshot` kick
+    /// fill it the moment the actor frees. The push is unconditional and immediate.
+    private func statusResumeState(accountUUID: AccountUUID?, isFlowRoot: Bool) -> MigrationStatus.State {
+        let snapshot = migrationManager.currentMigrationSnapshot(accountUUID)
+        let stalledRow = snapshot?.transfers.first { $0.status == MigrationTransferRow.Status.overdue }
         var state = MigrationStatus.State(
             presentation: .resume,
-            rows: IdentifiedArrayOf(uniqueElements: snapshot.transfers),
-            totalDurationHours: snapshot.summary.estimatedDurationHours,
+            rows: IdentifiedArrayOf(uniqueElements: snapshot?.transfers ?? []),
+            totalDurationHours: snapshot?.summary.estimatedDurationHours,
             stalledNumber: (stalledRow?.index ?? 0) + 1,
             stalledHoursAgo: stalledRow?.hoursFromNow ?? 0,
             isFlowRoot: isFlowRoot
@@ -1269,29 +1284,35 @@ extension MigrationCoordFlow {
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
-        state.isTorHoldActive = snapshot.isTorHoldActive
+        state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
         // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
         // signal the banner's `.checkingStatus` reads.
-        state.isUpdating = !migrationManager.isMigrationViewFresh()
-        state.poolFlow = snapshot
+        state.isUpdating = snapshot != nil && !migrationManager.isMigrationViewFresh()
+        state.isEvaluating = snapshot == nil
+        if let snapshot {
+            state.poolFlow = snapshot
+        }
         return state
     }
 
-    /// R13 Brick 2: see `statusResumeState` — same one-read rule.
-    private func statusProgressState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
-        let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
+    /// R13 Brick 2: see `statusResumeState` — same one-read rule, same published-window source.
+    private func statusProgressState(accountUUID: AccountUUID?, isFlowRoot: Bool) -> MigrationStatus.State {
+        let snapshot = migrationManager.currentMigrationSnapshot(accountUUID)
         var state = MigrationStatus.State(
             presentation: .progress,
-            rows: IdentifiedArrayOf(uniqueElements: snapshot.transfers),
-            totalDurationHours: snapshot.summary.estimatedDurationHours,
+            rows: IdentifiedArrayOf(uniqueElements: snapshot?.transfers ?? []),
+            totalDurationHours: snapshot?.summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot
         )
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
-        state.isTorHoldActive = snapshot.isTorHoldActive
-        state.isUpdating = !migrationManager.isMigrationViewFresh()
-        state.poolFlow = snapshot
+        state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
+        state.isUpdating = snapshot != nil && !migrationManager.isMigrationViewFresh()
+        state.isEvaluating = snapshot == nil
+        if let snapshot {
+            state.poolFlow = snapshot
+        }
         return state
     }
 
@@ -1303,10 +1324,10 @@ extension MigrationCoordFlow {
     private func reentryPathState(accountUUID: AccountUUID?) async -> Path.State? {
         switch await migrationManager.reentryRoute() {
         case .statusResume:
-            return .status(await statusResumeState(accountUUID: accountUUID, isFlowRoot: true))
+            return .status(statusResumeState(accountUUID: accountUUID, isFlowRoot: true))
 
         case .statusProgress:
-            return .status(await statusProgressState(accountUUID: accountUUID, isFlowRoot: true))
+            return .status(statusProgressState(accountUUID: accountUUID, isFlowRoot: true))
 
         case .reviewManual(let step, let total):
             return .reviewTransfer(MigrationReviewTransfer.State(mode: .manualStep(number: step, total: total), isFlowRoot: true))

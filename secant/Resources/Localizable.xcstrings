@@ -13459,6 +13459,23 @@
         }
       }
     },
+    "migrationStatus.evaluating": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Evaluating state…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Evaluando el estado…"
+          }
+        }
+      }
+    },
     "migrationStatus.updating": {
       "extractionState": "manual",
       "localizations": {

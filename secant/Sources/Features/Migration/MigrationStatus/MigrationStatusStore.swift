@@ -129,6 +129,14 @@ struct MigrationStatus {
         /// moment ago — the screen says so rather than passing it off as current). Every live
         /// emission clears it: an emission IS this session's fresh derivation landing.
         var isUpdating = false
+        /// Handover O2 (the QA force-quit): true when the screen was presented before ANY session
+        /// ever published a snapshot — the coordinator's hydration read a `nil` published window
+        /// (typically: first open of the process while a prove sweep holds the DB actor). The
+        /// screen presents its chrome (back + title) with a centered "Evaluating state…" spinner
+        /// in place of the timeline, instead of navigation waiting out the sweep behind a bare
+        /// spinner. Cleared by the first value that arrives — the `onAppear` prime or any
+        /// `snapshotUpdated` emission — never by a timer: the data's arrival IS the state change.
+        var isEvaluating = false
         /// D3: a Send-now is running IN PLACE — armed at `.sendNowAuthenticated` (synchronously,
         /// before any effect, so a double-tap has nothing to double), cleared by
         /// `.sendNowFinished`. Spans BOTH halves of the lane: the silence-window wait (minutes,
@@ -451,6 +459,7 @@ struct MigrationStatus {
                 // Guarded on `rows.isEmpty` so it never clobbers fresher rows the coordinator's own
                 // re-entry hydration already put in state.
                 if state.rows.isEmpty, let published = migrationManager.currentMigrationSnapshot(accountUUID) {
+                    state.isEvaluating = false
                     state.poolFlow = published
                     state.rows = IdentifiedArrayOf(uniqueElements: published.transfers)
                     state.totalDurationHours = published.summary.estimatedDurationHours
@@ -641,6 +650,7 @@ struct MigrationStatus {
 
             case .snapshotUpdated(let snapshot):
                 state.isUpdating = false
+                state.isEvaluating = false
                 state.poolFlow = snapshot
                 state.rows = IdentifiedArrayOf(uniqueElements: snapshot.transfers)
                 state.totalDurationHours = snapshot.summary.estimatedDurationHours
