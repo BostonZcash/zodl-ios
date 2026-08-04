@@ -51,7 +51,8 @@ enum MigrationState: Equatable, Sendable {
     case inProgress(MigrationProgress)
     /// Something needs the user before the run can continue.
     case requiresAttention(MigrationAttentionReason)
-    /// Every transaction of the stored run is mined, or the run was cancelled.
+    /// Every transaction of the stored run is mined (M1: a terminal run that stopped short —
+    /// the engine reports those as complete too — derives `.requiresAttention`, never this).
     case complete
 }
 
@@ -65,7 +66,10 @@ extension MigrationState {
     /// | `.inProgress` | `.prove` / `.broadcast` / `.waiting`, with `progress` for the N-of-M |
     /// | `.requiresAttention(.invalidTransfer)` | the engine's own `.requiresAttention(id:)`, or `hasInvalid` |
     /// | `.requiresAttention(.transferExpired)` | `.rebuild(id:)` |
-    /// | `.complete` | `.complete` |
+    /// | `.complete` | `.complete` — but ONLY when every `.transfer` status is mined (or none
+    ///   exist); a terminal run with an unmined transfer TERMINATED UNFINISHED and derives
+    ///   `.requiresAttention(.invalidTransfer)` instead (M1: the engine folds failed runs into
+    ///   the `.complete` step) |
     ///
     /// TWO INVALIDATION SIGNALS, and they answer different questions.
     ///
@@ -117,7 +121,21 @@ extension MigrationState {
         case .requiresAttention:
             return .requiresAttention(.invalidTransfer)
         case .complete:
-            return .complete
+            // M1 (E2E harness F#2, A/B-sealed 2026-08-04): the advance step's `.complete` is the
+            // step machine's "nothing left to drive", and the engine folds FAILED runs into it
+            // (upstream `next_step` reports Complete for every terminal run). A genuinely complete
+            // run has every transfer mined; a failed one stopped short — reporting it `.complete`
+            // painted the green "Migration complete" banner over a run that moved nothing. The
+            // statuses already in hand distinguish the two: any `.transfer` row not `.mined` means
+            // the run TERMINATED UNFINISHED, which routes to the attention lane (the same blocker
+            // UI where replan / "Migrate anyway" live). Empty statuses stay `.complete` — a
+            // finished-and-cleared run reads no differently than before.
+            let hasUnminedTransfer = statuses.contains { status in
+                guard case MigrationTransactionStatus.Kind.transfer = status.kind else { return false }
+                if case MigrationTransactionStatus.State.mined = status.state { return false }
+                return true
+            }
+            return hasUnminedTransfer ? .requiresAttention(.invalidTransfer) : .complete
         case .rebuild:
             return .requiresAttention(.transferExpired)
         case .prove, .broadcast, .waiting:

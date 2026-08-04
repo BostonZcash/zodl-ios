@@ -115,6 +115,51 @@ import ZcashLightClientKit
         #expect(Self.banner(advanceStep: .complete, isCompleteAcknowledged: true) == nil)
     }
 
+    // MARK: - M1: a failed run must never read as complete
+
+    /// Campaign-1 A/B, failed side: the engine reports the `.complete` step for a FAILED run
+    /// (upstream's terminal collapse) whose transfers never mined — pre-fix this painted the
+    /// green "Migration complete" banner over a run that moved nothing.
+    @Test func aTerminalRunWithUnminedTransfersAsksForAttentionNotComplete() {
+        let statuses = [
+            Self.status(id: 0, kind: .preparation(layer: 0, index: 0), state: .signed),
+            Self.status(id: 4, kind: .transfer(crossing: 0), state: .signed)
+        ]
+        let state = MigrationState.derive(
+            advanceStep: .complete,
+            progress: nil,
+            statuses: statuses,
+            hasInvalidTransfers: false
+        )
+        #expect(state == .requiresAttention(.invalidTransfer))
+    }
+
+    /// Campaign-2 A/B, healthy side: every transfer mined stays `.complete`.
+    @Test func aTerminalRunWithEveryTransferMinedStaysComplete() {
+        let statuses = [
+            Self.status(id: 0, kind: .preparation(layer: 0, index: 0), state: .mined(height: 3_000_100)),
+            Self.status(id: 4, kind: .transfer(crossing: 0), state: .mined(height: 3_000_200))
+        ]
+        let state = MigrationState.derive(
+            advanceStep: .complete,
+            progress: nil,
+            statuses: statuses,
+            hasInvalidTransfers: false
+        )
+        #expect(state == .complete)
+    }
+
+    /// A finished-and-cleared run (no statuses at all) reads no differently than before.
+    @Test func aTerminalRunWithNoStatusesStaysComplete() {
+        let state = MigrationState.derive(
+            advanceStep: .complete,
+            progress: nil,
+            statuses: [],
+            hasInvalidTransfers: false
+        )
+        #expect(state == .complete)
+    }
+
     // MARK: - Rebuild
 
     /// `.rebuild` is the engine saying a transfer expired unmined: its pre-signed artifact is dead
