@@ -39,9 +39,10 @@ public extension String {
     // `PoolBalance.lockedValue` (matrix B16).
     static let migrationMode = "sharedStateKey_migrationMode"
     /// M3 B2 (MOB-1466): Σ of the received value of the selected account's stored-but-unmined
-    /// migration transactions — the figure the canonical transaction build removes from Activity
-    /// and the balance-breakdown sheet removes from its displayed "Pending" row. Written by
-    /// `RootTransactions` in the same pass that filters the rows, so the two can never disagree.
+    /// migration transactions — the figure the balance-breakdown sheet removes from its displayed
+    /// "Pending" row. Written by `RootTransactions` in the same canonical pass that builds the
+    /// shared transaction list (which now presents those rows as labeled in-flight history), so
+    /// the figure and the list can never disagree.
     static let unminedMigrationPendingValue = "sharedStateKey_unminedMigrationPendingValue"
     static let migrationManualDelivery = "sharedStateKey_migrationManualDelivery"
     static let migrationNetworkPrivacyOptions = "sharedStateKey_migrationNetworkPrivacyOptions"

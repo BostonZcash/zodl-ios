@@ -215,7 +215,7 @@ struct TransactionDetailsView: View {
                     store.send(.noteButtonTapped)
                 }
                 
-                if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.isSwap {
+                if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.isSwap && !store.transaction.isMigrationTransaction {
                     if store.alias == nil {
                         ZashiButton(String(localizable: .transactionHistorySaveAddress)) {
                             store.send(.saveAddressTapped)
@@ -458,7 +458,7 @@ extension TransactionDetailsView {
             
             Spacer()
             
-            if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction {
+            if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.transaction.isMigrationTransaction {
                 if store.areDetailsExpanded {
                     ZashiButton(
                         String(localizable: .generalLess),

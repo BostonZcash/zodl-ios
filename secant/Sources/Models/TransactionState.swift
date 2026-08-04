@@ -96,7 +96,10 @@ struct TransactionState: Equatable, Identifiable {
 
     // UI Colors
     func balanceColor(_ colorScheme: ColorScheme) -> Color {
-        (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
+        if isMigrationTransaction {
+            return Design.Text.primary.color(colorScheme)
+        }
+        return (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
         ? Design.Utility.ErrorRed._600.color(colorScheme)
         : (isSpending || isShieldingTransaction)
         ? Design.Utility.ErrorRed._600.color(colorScheme)

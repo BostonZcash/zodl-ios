@@ -57,10 +57,10 @@ import Foundation
         )
     }
 
-    // MARK: - ZIP 318 kind (M3 Part A, MOB-1466)
+    // MARK: - ZIP 318 kind
 
-    /// The SDK's classification must ride into the app model unchanged — the Activity filter
-    /// keys on it.
+    /// The SDK's classification must ride into the app model unchanged — the labels, the
+    /// coins-swap icon, and the pending-balance correction all key on it.
     @Test func zip318KindFlowsThroughFromOverview() {
         let state = TransactionState(
             transaction: overview(sentNoteCount: 1, receivedNoteCount: 0, value: Zatoshi(-1), zip318Kind: .transfer)
@@ -68,10 +68,11 @@ import Foundation
         #expect(state.zip318Kind == ZcashTransaction.Overview.ZIP318Kind.transfer)
     }
 
-    /// The hide rule, exhaustively: only UNMINED preparation/transfer rows hide. Mined migration
+    /// The flag, exhaustively: only UNMINED preparation/transfer rows count. Mined migration
     /// rows are settled history; `.notClassified` is the absence of a decision and must never be
-    /// treated as one; `.nonconforming` is a regular transaction.
-    @Test func unminedMigrationRowsHideMinedAndUnclassifiedDoNot() {
+    /// treated as one; `.nonconforming` is a regular transaction. The flag no longer hides
+    /// anything — it feeds the balance-breakdown sheet's pending correction (M3 B2).
+    @Test func unminedMigrationRowsAreFlaggedMinedAndUnclassifiedAreNot() {
         typealias Kind = ZcashTransaction.Overview.ZIP318Kind
         let expectations: [(Kind, BlockHeight?, Bool)] = [
             (Kind.preparation, nil, true),
@@ -81,13 +82,13 @@ import Foundation
             (Kind.notClassified, nil, false),
             (Kind.nonconforming, nil, false)
         ]
-        for (kind, minedHeight, hidden) in expectations {
+        for (kind, minedHeight, isUnminedMigration) in expectations {
             let state = TransactionState(
                 transaction: overview(sentNoteCount: 1, receivedNoteCount: 0, value: Zatoshi(-1), minedHeight: minedHeight, zip318Kind: kind)
             )
             #expect(
-                state.isUnminedMigrationTransaction == hidden,
-                "kind \(kind), minedHeight \(String(describing: minedHeight)) expected hidden == \(hidden)"
+                state.isUnminedMigrationTransaction == isUnminedMigration,
+                "kind \(kind), minedHeight \(String(describing: minedHeight)) expected isUnminedMigration == \(isUnminedMigration)"
             )
         }
     }
