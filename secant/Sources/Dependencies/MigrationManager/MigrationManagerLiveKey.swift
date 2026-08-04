@@ -181,6 +181,9 @@ extension MigrationManagerClient: DependencyKey {
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
+            resolveMigrationTorPrompt: { accountUUID in
+                await impl.resolveTorPrompt(accountUUID: accountUUID)
+            },
             overrideBroadcastEndpointToSyncServer: { accountUUID in
                 await impl.overrideBroadcastEndpointToSyncServer(accountUUID: accountUUID)
             },
@@ -567,8 +570,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             preparationRows: preparations,
             // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
             // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
-            // .torHoldActive`'s doc.
-            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID),
+            // .torHoldActive`'s doc. F#9: the pending first-run prompt joins it — both conditions
+            // want the banner's Tor line; the Status sheet distinguishes R14 from R15.
+            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
+                || failureRoutingStorage.pendingTorPrompt(for: resolvedAccountUUID),
             // A13: purely in-session — see `broadcastsInFlight`'s doc. Read last, after every async
             // read above has settled, so the answer is as close to "now" as this function gets.
             // MOB-1466: now only an ACCELERATOR — the durable `.broadcast` row is checked first.
@@ -788,6 +793,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             preparations: preparations,
             planTotal: planTotal,
             isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolved),
+            needsTorFirstRunChoice: failureRoutingStorage.pendingTorPrompt(for: resolved),
             // The in-session "a submit call is open right now" fact, taken LAST so it is as fresh as
             // the snapshot claims to be. Same flag the banner's split arm reads, so the banner's
             // "keep Zodl open" and the timeline's spinner turn on and off together.
@@ -1664,6 +1670,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
 
         failureRoutingStorage.setTorHoldActive(route == MigrationBroadcastFailureRoute.torHold, for: resolvedAccountUUID)
+        // F#9 (MOB-1497 T5 completion): the same chokepoint persists the first-run-choice latch,
+        // so the HEADLESS lane — which discards the returned route for presentation — still leaves
+        // the choice visible to the snapshot pipeline (banner Tor line + Status sheet).
+        failureRoutingStorage.setPendingTorPrompt(route == MigrationBroadcastFailureRoute.torFirstRunChoice, for: resolvedAccountUUID)
         return route
     }
 
@@ -1677,6 +1687,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func overrideTorForRun(accountUUID: AccountUUID?, useTor: Bool) {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         snapshotStorage.overrideUseTorOnActiveSnapshot(useTor, for: resolvedAccountUUID)
+        // F#9: the override IS the first-run choice being made — the pending prompt is consumed
+        // regardless of which surface presented it.
+        failureRoutingStorage.setPendingTorPrompt(false, for: resolvedAccountUUID)
+    }
+
+    /// F#9 (MOB-1497 T5 completion): consumes the pending first-run Tor prompt WITHOUT changing the
+    /// Tor choice — the "Cancel" resolution (keep Tor, wait). The latch re-arms on the next failed
+    /// attempt if Tor is still unreachable, so dismissing is never a permanent silence. Republishes
+    /// so every surface drops the prompt in the same pass.
+    func resolveTorPrompt(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        failureRoutingStorage.setPendingTorPrompt(false, for: resolvedAccountUUID)
+        await reconcile()
     }
 
     /// MOB-1497 (R7-T3, R17): see `MigrationManagerClient.overrideBroadcastEndpointToSyncServer`'s
@@ -5390,6 +5413,32 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
     /// First-run (this run has never had a landed broadcast) ⟺ `false`.
     func hadBroadcast(for accountUUID: AccountUUID) -> Bool {
         lock.withLock { _ in userDefaults.bool(forKey: hadBroadcastKey(for: accountUUID)) }
+    }
+
+    // MARK: Pending background-Tor-prompt latch (MOB-1497 T5, completed by E2E harness F#9)
+
+    /// TRUE ⟺ a broadcast attempt routed `.torFirstRunChoice` (R14) and no surface has resolved
+    /// the choice yet. The set/read half of the latch whose CLEARS (landed broadcast, run-end trio)
+    /// shipped with MOB-1497 T5 — F#9 (2026-08-04) found the setter and reader were never wired, so
+    /// a scheduled-lane user whose Tor was unreachable saw plain "in progress" forever with no path
+    /// to the designed choice.
+    func pendingTorPrompt(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: pendingTorPromptKey(for: accountUUID)) }
+    }
+
+    /// Set/cleared at `routeBroadcastFailure`'s chokepoint — TRUE exactly when the route about to
+    /// be returned is `.torFirstRunChoice`; any other verdict from a fresh attempt supersedes a
+    /// stale pending prompt (an endpoint-class failure means the connection ran, so Tor is not the
+    /// blocker any more). Also cleared by `MigrationManagerImpl.resolveTorPrompt` (choice consumed),
+    /// `markHadBroadcast`, and `clear` (both pre-existing).
+    func setPendingTorPrompt(_ pending: Bool, for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            if pending {
+                userDefaults.set(true, forKey: pendingTorPromptKey(for: accountUUID))
+            } else {
+                userDefaults.removeObject(forKey: pendingTorPromptKey(for: accountUUID))
+            }
+        }
     }
 
     /// SET on any LANDED broadcast, on every lane (FG send, note split, BG — see

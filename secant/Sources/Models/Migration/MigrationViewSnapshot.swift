@@ -102,6 +102,14 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// hold — the `.resume` presentation's Tor footer, read in the same pass as everything else.
     let isTorHoldActive: Bool
 
+    /// MOB-1497 (T5) / E2E harness F#9 (2026-08-04): TRUE while a HEADLESS broadcast attempt has
+    /// routed `.torFirstRunChoice` (R14) and no surface has resolved the choice. The Status screen
+    /// presents the designed first-run Tor sheet from exactly this flag; the banner joins it to
+    /// `isTorHoldActive` for its Tor line. Cleared by resolution (`resolveMigrationTorPrompt`), a
+    /// landed broadcast (`markHadBroadcast`), or run-end (`clear`). Without this flag the scheduled
+    /// lane discarded the routed choice and a Tor-unreachable migration stalled silently forever.
+    let needsTorFirstRunChoice: Bool
+
     /// Whether a migration transaction is ON THE WIRE as this snapshot is taken — see
     /// `MigrationTransferRow.isSubmitting`.
     ///
@@ -162,6 +170,7 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         preparations: [],
         planTotal: nil,
         isTorHoldActive: false,
+        needsTorFirstRunChoice: false,
         isSubmitting: false,
         sessionOrdinal: nil,
         asOfSyncedAt: nil

@@ -295,6 +295,13 @@ struct MigrationManagerClient: Sendable {
     // no-op-when-no-snapshot-at-all shape.
     // `= { _, _ in }` is a no-op default, not a test fallback.
     var overrideTorForRun: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
+    /// F#9 (MOB-1497 T5 completion): consumes the pending first-run Tor prompt WITHOUT changing
+    /// the Tor choice — the "Cancel"/dismiss resolution of the Status screen's headless-routed
+    /// `.torFirstRunChoice` sheet. The latch re-arms on the next failed attempt, so dismissal is
+    /// never permanent silence. ("Proceed without Tor" is `overrideTorForRun(_, false)` above,
+    /// which consumes the prompt itself.) Republishes the snapshot so every surface drops the
+    /// prompt in the same pass.
+    var resolveMigrationTorPrompt: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // MOB-1497 (R7-T3, R17): the consent-gated, doc-sanctioned sync-server fallback once every shipped
     // endpoint for the broadcast provider is unreachable — sets `accountUUID`'s (`nil` resolves the
     // selected account) ACTIVE network snapshot's (committed-else-provisional — same R7-review fix as

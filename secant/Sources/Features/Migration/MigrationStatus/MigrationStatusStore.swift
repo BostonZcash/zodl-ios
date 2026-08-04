@@ -105,6 +105,15 @@ struct MigrationStatus {
         /// `statusProgressState`). (Rebased onto R8-T6: `isSendNowDisabled` is COMPUTED off `rows`
         /// now, so this is the one stored per-load flag left here.)
         var isTorHoldActive = false
+        /// F#9 (MOB-1497 T5 completion): mirrors `snapshot.needsTorFirstRunChoice` — the
+        /// headless-routed first-run Tor choice presents HERE, because the scheduled lane never
+        /// visits the Sending screen that owns the interactive presentation. Present/dismiss
+        /// follows the snapshot, so every surface drops the sheet in the same republish.
+        var isTorChoicePresented = false
+        /// F#9: the R11 off-warning alert for the Status-presented Tor choice — the same
+        /// `AlertState.migrationTorOffWarning` the Sending lane presents (its exact `@Presents`
+        /// + scoped-`.alert` shape).
+        @Presents var alert: AlertState<Action>?
         /// MOB-1496 (W3): the SDK's post-broadcast privacy buffer
         /// (`sdkSynchronizer.migrationPrivacySyncBufferDuration()`), rounded to whole minutes —
         /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
@@ -343,6 +352,15 @@ struct MigrationStatus {
         /// header all land from ONE value, so no two facts on this screen can be from different
         /// moments.
         case snapshotUpdated(MigrationViewSnapshot)
+        /// F#9: the R11 off-warning alert's routing — `MigrationSendingStore`'s exact shape.
+        case alert(PresentationAction<Action>)
+        /// F#9: the sheet's own R11 warning confirmation — proceeds without Tor for this run.
+        case torChoiceOffWarningConfirmed
+        /// F#9: present/dismiss binding for the first-run Tor sheet; `false` resolves the pending
+        /// prompt (keep Tor, wait) — swipe-dismiss and Cancel land here identically.
+        case torChoicePresentedChanged(Bool)
+        /// F#9: the sheet's "Proceed without Tor" — presents the R11 warning alert first.
+        case torChoiceProceedTapped
         /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)
         /// finished — lands on `.rescheduleConfirmed` with the refreshed rows/duration instead of
         /// flipping `isRescheduling` back to `.resume`. The coordinator doesn't send this yet (it
@@ -504,6 +522,41 @@ struct MigrationStatus {
                 migrationManager.refreshMigrationSnapshot(state.selectedWalletAccount?.id)
                 return .none
 
+            case .alert(.presented(let action)):
+                return .send(action)
+
+            case .alert(.dismiss):
+                state.alert = nil
+                return .none
+
+            case .torChoicePresentedChanged(let isPresented):
+                state.isTorChoicePresented = isPresented
+                guard !isPresented else { return .none }
+                // F#9: dismissing IS the "keep Tor, wait" resolution — consuming the latch is
+                // idempotent, and it re-arms on the next failed attempt if Tor stays unreachable.
+                return .run { [account = state.selectedWalletAccount?.id] _ in
+                    await migrationManager.resolveMigrationTorPrompt(account)
+                }
+
+            case .torChoiceProceedTapped:
+                // R11 parity with the Sending lane: proceeding without Tor is a privacy-reducing
+                // choice, so the designed warning alert gates it here exactly as it does there.
+                let usesFullBalanceCopy = migrationManager.migrationMode(state.selectedWalletAccount?.id) == MigrationMode.immediate
+                state.alert = AlertState.migrationTorOffWarning(
+                    usesFullBalanceCopy: usesFullBalanceCopy,
+                    proceedAction: .torChoiceOffWarningConfirmed
+                )
+                return .none
+
+            case .torChoiceOffWarningConfirmed:
+                state.isTorChoicePresented = false
+                return .run { [account = state.selectedWalletAccount?.id] _ in
+                    // The override consumes the pending prompt itself; the explicit resolve after
+                    // it republishes so every surface drops the sheet in the same pass.
+                    migrationManager.overrideTorForRun(account, false)
+                    await migrationManager.resolveMigrationTorPrompt(account)
+                }
+
             case .rescheduleCompleted(let rows, let totalDurationHours):
                 state.presentation = .rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
@@ -592,6 +645,9 @@ struct MigrationStatus {
                 state.rows = IdentifiedArrayOf(uniqueElements: snapshot.transfers)
                 state.totalDurationHours = snapshot.summary.estimatedDurationHours
                 state.isTorHoldActive = snapshot.isTorHoldActive
+                // F#9: presentation follows the snapshot — the sheet appears when the headless
+                // lane latched the first-run choice and drops when any surface resolved it.
+                state.isTorChoicePresented = snapshot.needsTorFirstRunChoice
                 // The render half of the pipeline audit — echoes the manager's "SNAPSHOT:
                 // published" figures, so "DB holds it, UI renders it" is one grep away.
                 MigrationTrace.event(

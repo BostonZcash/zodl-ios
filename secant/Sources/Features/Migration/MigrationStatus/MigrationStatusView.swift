@@ -191,6 +191,23 @@ struct MigrationStatusView: View {
         .onDisappear {
             store.send(.onDisappear)
         }
+        // F#9 (MOB-1497 T5 completion): the headless-routed first-run Tor choice — same designed
+        // sheet the Sending lane presents, from the snapshot's `needsTorFirstRunChoice`. Binding
+        // shape and the WithPerceptionTracking wrapper mirror the split-detail sheet above.
+        .zashiSheet(
+            isPresented: $store.isTorChoicePresented.sending(\.torChoicePresentedChanged)
+        ) {
+            WithPerceptionTracking {
+                MigrationBroadcastFailureSheetView(
+                    failureKind: .torFirstRunChoice,
+                    cancelTapped: { store.send(.torChoicePresentedChanged(false)) },
+                    proceedWithoutTorTapped: { store.send(.torChoiceProceedTapped) },
+                    retryTapped: { store.send(.torChoicePresentedChanged(false)) },
+                    useSyncServerTapped: { }
+                )
+            }
+        }
+        .alert($store.scope(state: \.alert, action: \.alert))
     }
 
     // MARK: - Title + description
