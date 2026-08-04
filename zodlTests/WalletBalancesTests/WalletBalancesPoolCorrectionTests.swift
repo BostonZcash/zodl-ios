@@ -161,6 +161,7 @@ import ComposableArchitecture
             preparations: [],
             planTotal: nil,
             isTorHoldActive: false,
+            needsTorFirstRunChoice: false,
             isSubmitting: false,
             sessionOrdinal: nil,
             asOfSyncedAt: nil
