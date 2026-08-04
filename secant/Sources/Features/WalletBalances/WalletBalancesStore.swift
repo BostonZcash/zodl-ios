@@ -16,6 +16,7 @@ struct WalletBalances {
     struct State: Equatable {
         var CancelStateId = UUID()
         var CancelRateId = UUID()
+        var CancelMigrationSnapshotId = UUID()
         var autoShieldingThreshold: Zatoshi = .zero
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var fiatCurrencyResult: FiatCurrencyResult?
@@ -104,6 +105,7 @@ struct WalletBalances {
 
     @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.walletStorage) var walletStorage
@@ -122,6 +124,13 @@ struct WalletBalances {
                 } else {
                     state.isExchangeRateFeatureOn = false
                 }
+                // M3 Part B: the migration snapshot channel is the push half of the pool-truth
+                // correction — a prove stores a transaction (correction grows) or a transfer
+                // wallet-mines (correction shrinks) during windows where no sync event fires, and
+                // the corrected pool cards must move on that clock too. Subscribed for the account
+                // selected NOW; `.balanceUpdated` always reads the CURRENT account's snapshot at
+                // apply time, so a stale trigger channel can never apply stale values.
+                let snapshotAccountUUID = state.selectedWalletAccount?.id
                 return .merge(
                     .send(.updateBalances),
                     .publisher {
@@ -136,14 +145,21 @@ struct WalletBalances {
                             .map(Action.exchangeRateEvent)
                             .receive(on: mainQueue)
                     }
-                    .cancellable(id: state.CancelRateId, cancelInFlight: true)
+                    .cancellable(id: state.CancelRateId, cancelInFlight: true),
+                    .publisher {
+                        migrationManager.migrationSnapshotEvents(snapshotAccountUUID)
+                            .map { _ in Action.updateBalances }
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.CancelMigrationSnapshotId, cancelInFlight: true)
                 )
 
             case .onDisappear:
                 // __LD2 TESTED
                 return .merge(
                     .cancel(id: state.CancelStateId),
-                    .cancel(id: state.CancelRateId)
+                    .cancel(id: state.CancelRateId),
+                    .cancel(id: state.CancelMigrationSnapshotId)
                 )
                 
             case .availableBalanceTapped:
@@ -217,8 +233,27 @@ struct WalletBalances {
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                 state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
-                state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
-                state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
+
+                // M3 Part B (MOB-1466): the pool CARDS render R11's standard — as if every
+                // migration transaction the wallet has not mined never happened. The SDK's figures
+                // count stored-unmined migration outputs (store-at-prove), so without this the
+                // Ironwood card claims value that has not crossed while the migration header,
+                // corrected by the SAME figure from the SAME derivation pass, says otherwise.
+                // Spendability and both totals above stay raw: locked notes truly are unspendable,
+                // and the two deltas cancel inside the shielded total (Σpools == total holds).
+                let correction = migrationManager.currentMigrationSnapshot(state.selectedWalletAccount?.id)?.poolCorrection
+                    ?? MigrationDerivations.PoolTruthCorrection.none
+                let sdkIronwood = accountBalance?.ironwoodBalance.total() ?? .zero
+                if sdkIronwood.amount < correction.ironwoodOverstatement.amount {
+                    // Impossible-state telemetry, mirroring the migration header's own clamp: the
+                    // SDK figure should always cover the in-flight sum it counted.
+                    MigrationTrace.event(
+                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(sdkIronwood.decimalString())"
+                        + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
+                    )
+                }
+                state.orchardPoolBalance = (accountBalance?.orchardBalance.total() ?? .zero) + correction.orchardUnderstatement
+                state.ironwoodPoolBalance = Zatoshi(max(0, sdkIronwood.amount - correction.ironwoodOverstatement.amount))
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)

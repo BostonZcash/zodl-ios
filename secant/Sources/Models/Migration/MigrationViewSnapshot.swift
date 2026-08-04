@@ -54,6 +54,13 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// exactly the lag we are trying to surface.
     let ironwoodHeld: Zatoshi
 
+    /// M3 Part B (MOB-1466): the in-flight correction the two bubbles above were ALREADY corrected
+    /// by, carried raw so Home's pool sheet can apply the SAME figure to its own SDK-read pool
+    /// balances. One derivation, one clock: Home and the migration header move together or not at
+    /// all — publishing corrected bubbles here while Home re-derived its own correction would be
+    /// the two-clocks shape this type exists to remove.
+    let poolCorrection: MigrationDerivations.PoolTruthCorrection
+
     /// Σ of the transfers the timeline shows as done — and R11 makes "done" mean WALLET-CONFIRMED
     /// (`.sent` rows only; `.confirming` rows are excluded), so this moves in the same sync write
     /// `ironwoodHeld` does. Compared against it by `isPoolFlowSettled`, now trace-only.
@@ -161,6 +168,7 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     static let empty = MigrationViewSnapshot(
         orchardRemaining: .zero,
         ironwoodHeld: .zero,
+        poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
         movedByDoneTransfers: .zero,
         doneTransfers: 0,
         totalTransfers: 0,

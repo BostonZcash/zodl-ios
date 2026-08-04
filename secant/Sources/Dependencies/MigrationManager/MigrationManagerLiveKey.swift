@@ -781,6 +781,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // two agreeing with the greens is the claim; deriving one from the other would make it
             // vacuous, and rendering the raw figure would make it future-tense.
             ironwoodHeld: honestIronwood,
+            // M3 Part B: the raw correction rides along so Home's pool sheet applies the SAME
+            // figure to its own balance reads — same pass, same clock as the bubbles above.
+            poolCorrection: correction,
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,

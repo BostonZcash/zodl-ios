@@ -96,6 +96,7 @@ import ZcashLightClientKit
         let submitting = MigrationViewSnapshot(
             orchardRemaining: Zatoshi(1),
             ironwoodHeld: .zero,
+            poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
             movedByDoneTransfers: .zero,
             doneTransfers: 0,
             totalTransfers: 9,
