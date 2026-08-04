@@ -46,7 +46,11 @@ import Foundation
             value: value,
             isExpiredUmined: nil,
             totalSpent: totalSpent,
-            totalReceived: totalReceived
+            totalReceived: totalReceived,
+            spentNoteCount: sentNoteCount,
+            poolCrossingValue: nil,
+            isTrusted: true,
+            zip318Kind: ZcashTransaction.Overview.ZIP318Kind.notClassified
         )
     }
 
