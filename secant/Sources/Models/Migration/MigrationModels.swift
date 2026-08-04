@@ -69,10 +69,38 @@ struct MigrationRowsSnapshot: Equatable, Sendable {
     var transfers: [MigrationTransferRow]
     /// When this was derived. The claim the "Updating…" label is making.
     var computedAt: Date
+    /// M5: the engine statuses of the SAME derivation pass. Serving cached rows with `nil`
+    /// statuses silently degraded `inFlightPoolCorrection` to its coarser rows-only fallback —
+    /// a second divergence between cache-served and fresh publishes. One epoch, both halves.
+    var statuses: [MigrationTransactionStatus]?
 
-    init(transfers: [MigrationTransferRow], computedAt: Date) {
+    init(
+        transfers: [MigrationTransferRow],
+        computedAt: Date,
+        statuses: [MigrationTransactionStatus]? = nil
+    ) {
         self.transfers = transfers
         self.computedAt = computedAt
+        self.statuses = statuses
+    }
+
+    /// M5 (field, 2026-08-04, the two-worlds screen): the longest window a starvation-guard
+    /// cache-serve may bridge. The guards' justification — "the rows cannot have changed while
+    /// the work that would change them is still running" — is only true across ONE piece of
+    /// in-flight work (a prove sweep runs ≤ ~45 s, a broadcast ~7 s). A suspended app kept these
+    /// caches alive across a 90-minute absence, and under an overdue pile-up every open had work
+    /// in flight, so the guards resurrected the pre-gap world: the screen alternated between two
+    /// internally-consistent epochs (greens flipping back, pool bubbles disagreeing with
+    /// themselves, remaining-count off by the flips). 120 s covers every legitimate bridge with
+    /// margin and excludes any absence by construction.
+    static let maxServableAge: TimeInterval = 120
+
+    /// M5: whether this epoch may still SERVE (bridge in-flight work). Age-based deliberately —
+    /// a process-global session marker would couple the gate to state that other code paths
+    /// (backgrounding) mutate underneath it; the derivation's own timestamp needs no one's
+    /// cooperation to stay true.
+    func isServable(asOf now: Date) -> Bool {
+        now.timeIntervalSince(computedAt) <= Self.maxServableAge
     }
 }
 

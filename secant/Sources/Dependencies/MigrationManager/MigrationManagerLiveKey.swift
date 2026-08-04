@@ -656,7 +656,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // being moved on the coordinator's next re-entry pass costs nothing. Gated on cached rows
         // existing, which is exactly "a run exists" — without it a not-started wallet would be sent
         // to a progress screen for a migration it does not have.
-        if isMigrationWorkInFlight, cachedTransferRows(accountUUID: accountUUID) != nil {
+        if isMigrationWorkInFlight, hasCachedRun(accountUUID: accountUUID) {
             MigrationTrace.event(
                 "route SHORT-CIRCUIT -> statusProgress — migration work in flight, not blocking the UI"
             )
@@ -848,11 +848,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// fresh one. See `summaryCache` for why staleness is safe here and is NOT for the route.
     func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
         let resolved = accountUUID ?? selectedWalletAccount?.id
-        if isMigrationWorkInFlight, let resolved, let cached = summaryCache.withLock({ $0[resolved] }) {
-            return cached
+        // M5: age-gated like `cachedTransferRows` — a cached summary may only bridge in-flight
+        // work, never resurrect a pre-absence world.
+        if isMigrationWorkInFlight,
+            let resolved,
+            let cached = summaryCache.withLock({ $0[resolved] }),
+            Date().timeIntervalSince(cached.computedAt) <= MigrationRowsSnapshot.maxServableAge {
+            return cached.value
         }
         let value = await migrationSummaryComputing(accountUUID: accountUUID)
-        if let resolved { summaryCache.withLock { $0[resolved] = value } }
+        if let resolved {
+            summaryCache.withLock { $0[resolved] = (value, Date()) }
+        }
         return value
     }
 
@@ -930,7 +937,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // finished. The caller renders the snapshot with its "updating…" note, and the poke fired
         // when the sweep completes brings the real values in.
         if isMigrationWorkInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
-            return (cached.transfers, nil, true)
+            // M5: the cached statuses ride along — a cache-serve keeps `inFlightPoolCorrection` at
+            // full precision instead of silently degrading to the coarser rows-only fallback.
+            return (cached.transfers, cached.statuses, true)
         }
         let derived = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
         // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
@@ -942,7 +951,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // the exact never-ending-spinner class the field keeps catching. Both accessors stamp on
         // the way OUT instead (see `stampingActiveSubmit`).
         if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !derived.rows.isEmpty {
-            rowsCache.withLock { $0[resolvedAccountUUID] = MigrationRowsSnapshot(transfers: derived.rows, computedAt: Date()) }
+            rowsCache.withLock {
+                $0[resolvedAccountUUID] = MigrationRowsSnapshot(
+                    transfers: derived.rows,
+                    computedAt: Date(),
+                    statuses: derived.statuses
+                )
+            }
             // The view is FRESH as of this session — see `isMigrationViewFresh`. Stamped here, at
             // the one place the rows are actually derived, so no surface can mark itself fresh
             // without having done the work.
@@ -987,11 +1002,37 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// D3/D6: stamped on the way out (`stampingActiveSubmit`), so the instant-paint copy a reducer
     /// draws during an in-place submit shows the submitting row exactly as the fresh derivation
     /// would — the stored cache itself stays unstamped (the flag is per-instant, never persisted).
+    ///
+    /// M5 (field, 2026-08-04): AGE-GATED — serves only an epoch young enough to be bridging
+    /// in-flight work (`MigrationRowsSnapshot.maxServableAge`). The starvation guards' "cannot
+    /// have changed mid-work" justification holds across one sweep or broadcast, not across an
+    /// absence: a suspended app carried this cache over a 90-minute gap, and under an overdue
+    /// pile-up (every open a broadcast session, work always in flight) the guards resurrected the
+    /// pre-gap world — the screen alternated between two internally-consistent epochs (Lukas's
+    /// two-worlds screenshots). A refused epoch costs one fresh derivation behind at most one
+    /// broadcast (~7 s), which O2's evaluating/updating states already cover honestly.
     func cachedTransferRows(accountUUID: AccountUUID?) -> MigrationRowsSnapshot? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         guard var snapshot = rowsCache.withLock({ $0[resolvedAccountUUID] }) else { return nil }
+        guard snapshot.isServable(asOf: Date()) else {
+            MigrationTrace.event(
+                "rows cache REFUSED — epoch \(Int(Date().timeIntervalSince(snapshot.computedAt)))s old"
+                + " > \(Int(MigrationRowsSnapshot.maxServableAge))s bound (M5 gate)"
+            )
+            return nil
+        }
         snapshot.transfers = stampingActiveSubmit(snapshot.transfers, accountUUID: resolvedAccountUUID)
         return snapshot
+    }
+
+    /// M5: epoch-BLIND existence check, for the ONE consumer whose question is "does a run exist"
+    /// rather than "what does it look like" — `reentryRoute`'s work-in-flight short-circuit. A
+    /// stale epoch still proves a run exists (routing on it is safe; rendering from it is not),
+    /// and without this the first open after a long absence would lose the fast route and queue
+    /// its six actor-bound reads behind the in-flight broadcast.
+    private func hasCachedRun(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return rowsCache.withLock { $0[resolvedAccountUUID] != nil }
     }
 
     /// In-memory only, and deliberately so: it is a paint accelerator, not state. A cold launch has
@@ -1007,8 +1048,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// Safe to serve stale here where it was NOT safe for the route (see `reentryRoute`): these are
     /// CONTENT. A summary and a set of preparation rows cannot have changed while the actor that
     /// produces them was blocked, and the screen re-hydrates on its next pass regardless.
-    private let summaryCache = OSAllocatedUnfairLock<[AccountUUID: MigrationSummary]>(initialState: [:])
-    private let preparationRowsCache = OSAllocatedUnfairLock<[AccountUUID: [MigrationTransferRow]?]>(initialState: [:])
+    // M5: both stamped with their computation time — the guards may bridge in-flight work,
+    // never an absence (see `MigrationRowsSnapshot.maxServableAge`).
+    private let summaryCache =
+        OSAllocatedUnfairLock<[AccountUUID: (value: MigrationSummary, computedAt: Date)]>(initialState: [:])
+    private let preparationRowsCache =
+        OSAllocatedUnfairLock<[AccountUUID: (value: [MigrationTransferRow]?, computedAt: Date)]>(initialState: [:])
 
     /// GROUND_RULES R11: the last WALLET-CONFIRMED txid set each account derived — the display-form
     /// hex ids (`TransactionState.id` ≡ `SentRecord.txId`, both `toHexStringTxId()`) of every
@@ -2773,11 +2818,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1466: see `migrationSummary` — same guard, same reasoning.
     func migrationPreparationRows(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
         let resolved = accountUUID ?? selectedWalletAccount?.id
-        if isMigrationWorkInFlight, let resolved, let cached = preparationRowsCache.withLock({ $0[resolved] }) {
-            return cached
+        // M5: age-gated like `cachedTransferRows` — see `migrationSummary`.
+        if isMigrationWorkInFlight,
+            let resolved,
+            let cached = preparationRowsCache.withLock({ $0[resolved] }),
+            Date().timeIntervalSince(cached.computedAt) <= MigrationRowsSnapshot.maxServableAge {
+            return cached.value
         }
         let value = await migrationPreparationRowsComputing(accountUUID: accountUUID)
-        if let resolved { preparationRowsCache.withLock { $0[resolved] = value } }
+        if let resolved {
+            preparationRowsCache.withLock { $0[resolved] = (value, Date()) }
+        }
         return value
     }
 
