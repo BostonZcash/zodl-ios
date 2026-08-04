@@ -28,6 +28,7 @@ import Foundation
         value: Zatoshi,
         totalSpent: Zatoshi? = nil,
         totalReceived: Zatoshi? = nil,
+        poolCrossingValue: Zatoshi? = nil,
         minedHeight: BlockHeight? = BlockHeight(1),
         zip318Kind: ZcashTransaction.Overview.ZIP318Kind = .notClassified
     ) -> ZcashTransaction.Overview {
@@ -50,7 +51,7 @@ import Foundation
             totalSpent: totalSpent,
             totalReceived: totalReceived,
             spentNoteCount: sentNoteCount,
-            poolCrossingValue: nil,
+            poolCrossingValue: poolCrossingValue,
             isTrusted: true,
             zip318Kind: zip318Kind
         )
@@ -228,5 +229,122 @@ import Foundation
         )
         #expect(swapDeposit.totalReceived == .zero)
         #expect(swapDeposit.netValue == Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
+    }
+
+    // MARK: - ZIP 318 labels (Figma "Transaction Statuses/Labels — Final Designs")
+
+    /// A migration row's user-facing amount is the moved value, not the balance delta — the
+    /// SDK's `poolCrossingValue` must ride into the app model unchanged.
+    @Test func poolCrossingValueFlowsThroughFromOverview() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-10_000),
+                poolCrossingValue: Zatoshi(1_000_000_000),
+                zip318Kind: .transfer
+            )
+        )
+        #expect(state.poolCrossingValue == Zatoshi(1_000_000_000))
+    }
+
+    @Test func isMigrationTransactionCoversExactlyPreparationAndTransfer() {
+        var state = TransactionState(fee: Zatoshi(10), id: "m", status: .paid, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .preparation
+        #expect(state.isMigrationTransaction)
+        state.zip318Kind = .transfer
+        #expect(state.isMigrationTransaction)
+        state.zip318Kind = .notClassified
+        #expect(!state.isMigrationTransaction)
+        state.zip318Kind = .nonconforming
+        #expect(!state.isMigrationTransaction)
+    }
+
+    /// The approved copy matrix: kind × status → row title / detail title. Compared through the
+    /// localization accessors so the mapping is pinned independent of translation values.
+    @Test func zip318TitlesMatchTheApprovedCopy() {
+        var state = TransactionState(fee: Zatoshi(10), id: "m", status: .sending, zecAmount: Zatoshi(-10))
+        let matrix: [(ZcashTransaction.Overview.ZIP318Kind, TransactionState.Status, String, String)] = [
+            (.transfer, .sending, String(localizable: .transactionMigrating), String(localizable: .transactionMigrating)),
+            (.transfer, .paid, String(localizable: .transactionMigrated), String(localizable: .transactionMigrated)),
+            (.transfer, .failed, String(localizable: .transactionMigrationFailed), String(localizable: .transactionMigrationFailed)),
+            (.preparation, .sending, String(localizable: .transactionSplittingBalance), String(localizable: .transactionSplittingBalance)),
+            (.preparation, .paid, String(localizable: .transactionBalanceSplit), String(localizable: .transactionBalanceSplit)),
+            (.preparation, .failed, String(localizable: .transactionSplitFailed), String(localizable: .transactionBalanceSplitFailed))
+        ]
+        for (kind, status, rowTitle, detailTitle) in matrix {
+            state.zip318Kind = kind
+            state.status = status
+            #expect(state.title() == rowTitle, "row title for \(kind)/\(status)")
+            #expect(state.title(true) == detailTitle, "detail title for \(kind)/\(status)")
+        }
+    }
+
+    /// Unclassified and non-conforming transactions keep today's titles — no label may leak.
+    @Test func nonMigrationTitlesAreUntouched() {
+        var state = TransactionState(fee: Zatoshi(10), id: "m", status: .paid, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .notClassified
+        #expect(state.title() == String(localizable: .transactionSent))
+        state.zip318Kind = .nonconforming
+        state.status = .sending
+        #expect(state.title() == String(localizable: .transactionSending))
+    }
+
+    /// Transfers present the pool-crossing value; preparations never cross pools so they fall
+    /// back to `totalReceived` (the re-noted value — the same figure the B2 pending sum uses).
+    @Test func displayedAmountUsesPoolCrossingValueForTransfers() {
+        var state = TransactionState(fee: Zatoshi(10), id: "t", status: .paid, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .transfer
+        state.poolCrossingValue = Zatoshi(1_000_000_000)
+        state.totalReceived = Zatoshi(999_990_000)
+        #expect(state.displayedAmount == Zatoshi(1_000_000_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    @Test func displayedAmountFallsBackToTotalReceivedForPreparations() {
+        var state = TransactionState(fee: Zatoshi(10), id: "p", status: .sending, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .preparation
+        state.poolCrossingValue = nil
+        state.totalReceived = Zatoshi(245_800_000)
+        #expect(state.displayedAmount == Zatoshi(245_800_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// Regular transactions keep `netValue` exactly — including the shielding special case.
+    @Test func displayedAmountOfARegularTransactionIsNetValue() {
+        var state = TransactionState(fee: Zatoshi(10), id: "r", status: .paid, zecAmount: Zatoshi(123_456))
+        state.zip318Kind = .notClassified
+        #expect(state.displayedAmount == state.netValue)
+        var shielding = TransactionState(fee: Zatoshi(10), id: "s", status: .shielded, zecAmount: Zatoshi(0))
+        shielding.isShieldingTransaction = true
+        shielding.totalSpent = Zatoshi(777_000)
+        #expect(shielding.displayedAmount == shielding.netValue)
+    }
+
+    /// Per design, a failed migration row keeps the primary amount color — never the error red
+    /// a regular failed send shows.
+    @Test func failedMigrationRowsKeepPrimaryAmountColor() {
+        var state = TransactionState(fee: Zatoshi(10), id: "f", status: .failed, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .transfer
+        #expect(state.titleColor(.light) == Design.Text.primary.color(.light))
+        #expect(state.titleColor(.dark) == Design.Text.primary.color(.dark))
+    }
+
+    /// Both migration kinds render the coins-swap glyph in every state; color carries the state.
+    @Test func migrationRowsUseTheCoinsSwapGlyph() {
+        var state = TransactionState(fee: Zatoshi(10), id: "i", status: .sending, zecAmount: Zatoshi(-10))
+        state.zip318Kind = .preparation
+        #expect(state.transationIcon == Asset.Assets.Icons.coinsSwap.image)
+        state.zip318Kind = .transfer
+        state.status = .failed
+        #expect(state.transationIcon == Asset.Assets.Icons.coinsSwap.image)
+    }
+
+    /// A stored-but-unmined transaction has no block time; while it is live the subtitle reads
+    /// "Today", and an expired (failed) one keeps the empty subtitle.
+    @Test func unminedPendingRowsReadTodayAndFailedOnesStayBlank() {
+        var state = TransactionState(fee: Zatoshi(10), id: "d", status: .sending, zecAmount: Zatoshi(-10))
+        #expect(state.timestamp == nil)
+        #expect(state.daysAgo == String(localizable: .filterToday))
+        state.status = .failed
+        #expect(state.daysAgo.isEmpty)
     }
 }
