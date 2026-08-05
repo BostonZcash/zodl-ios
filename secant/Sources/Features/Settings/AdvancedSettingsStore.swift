@@ -41,11 +41,12 @@ struct AdvancedSettings {
 
     enum Action: Equatable {
         case alert(PresentationAction<Action>)
-        /// DEBUG-only (Gate 3): rewrites the committed migration schedule's transfer heights onto
-        /// SHORT strides — first due in ~2 blocks, then ~4-block steps — so a real broadcast run can
-        /// be exercised without waiting out ZIP-318's multi-hour privacy delay. Production windows
-        /// are a ~6 h exponential mean; without this a scheduled run is untestable in one sitting.
+        /// DEBUG-only SIGNPOST (retired with SDK PR #1951): the manual "reschedule onto short
+        /// strides" lever is gone — schedules are engine-owned, and test-network schedules arrive
+        /// compressed at commit time. The row stays so QA learns the new mechanism instead of
+        /// hunting for a vanished feature; the tap just presents the explanation.
         case debugMigrationRescheduleTapped
+        /// The signpost alert's payload — see `debugMigrationRescheduleTapped`.
         case debugMigrationRescheduleFinished(String)
         case debugResetIronwoodAnnouncementTapped
         case operationAccessCheck(State.Operation)
@@ -53,8 +54,6 @@ struct AdvancedSettings {
     }
 
     @Dependency(\.localAuthentication) var localAuthentication
-    @Dependency(\.migrationManager) var migrationManager
-    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
 
     init() { }
@@ -71,12 +70,13 @@ struct AdvancedSettings {
 
             case .debugMigrationRescheduleTapped:
                 // Retired with SDK PR #1951: the QA reschedule endpoint is gone — scheduling
-                // belongs to the engine's exported reads, and QA cadence flows through the #1806
-                // spacing floors on the advance call (armed by the `-MigrationFastLane` launch
-                // flag). The button stays as a signpost so QA learns the new mechanism instead of
-                // hunting for a vanished feature; the alert plumbing it reuses is unchanged.
+                // belongs to the engine, and test-network schedules arrive compressed at commit
+                // time (the interim spacing-floor knob on the advance call left the SDK with the
+                // librustzcash rebase). The button stays as a signpost so QA learns the new
+                // mechanism instead of hunting for a vanished feature; the alert plumbing it
+                // reuses is unchanged.
                 return .send(.debugMigrationRescheduleFinished(
-                    "Retired: schedules are engine-owned now. QA cadence comes from the fast-lane floors (launch with -MigrationFastLane) — there is no manual reschedule."
+                    "Retired: schedules are engine-owned now — a fresh testnet run already arrives compressed, and -MigrationFastLane collapses the privacy buffer. There is no manual reschedule."
                 ))
 
             case .debugMigrationRescheduleFinished(let message):

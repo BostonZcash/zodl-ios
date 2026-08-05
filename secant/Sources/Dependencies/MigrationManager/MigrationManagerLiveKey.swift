@@ -1465,10 +1465,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
         MigrationTrace.event("R0 open-lane credits refunded — a fresh schedule was committed; the commit's own drive may proceed")
     }
 
-    /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule
-    /// (appends a `SentRecord` for the first not-yet-sent transfer, in schedule order); non-success
-    /// results and a missing payload (nothing to append against) are both no-ops — see
+    /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule;
+    /// non-success results and a missing payload (nothing to append against) are both no-ops — see
     /// `MigrationScheduleStorage.recordTransferBroadcast`.
+    ///
+    /// MOB-1466 (M2, SDK delegation): the record is keyed to the transfer the lane ACTUALLY
+    /// served, resolved here (`resolveServedTransferId`) — never inferred from row position alone.
+    /// The engine's delivery order is schedule-slot order, not the persisted array's crossing
+    /// order, so the old first-unsent positional guess could attribute a landed broadcast to the
+    /// wrong transfer; it survives only as the unresolvable-id fallback inside the storage layer.
     ///
     /// MOB-1497 (R7-T3): this is the manager-layer chokepoint every LANDED-broadcast lane funnels
     /// through — FG send (`MigrationSendingStore`, including the dust lane), the coordinator's
@@ -1501,7 +1506,39 @@ final class MigrationManagerImpl: @unchecked Sendable {
             LoggerProxy.debug("\(Self.logTag) broadcast record skipped — split phase, not a schedule transfer")
             return
         }
-        scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
+        let servedTransferId = await resolveServedTransferId(accountUUID: resolvedAccountUUID, result: result)
+        scheduleStorage.recordTransferBroadcast(result, transferId: servedTransferId, for: resolvedAccountUUID, now: Date())
+    }
+
+    /// MOB-1466 (M2, SDK delegation): the transfer id a landed broadcast belongs to, or `nil` when
+    /// nothing can vouch for one (the storage layer then falls back to its legacy positional
+    /// guess).
+    ///
+    /// Resolution order:
+    /// 1. Live-status txid match — exact and race-free: the engine's own record of the submit puts
+    ///    the row in `.broadcast(txid:)` before the executor returns, and the payload is RAW byte
+    ///    order while `success(txId:)` speaks display-form hex, so the comparison converts via
+    ///    `toHexStringTxId()` (the same convention `transferRows`' confirmation matching uses).
+    ///    Only `.transfer`-kind rows are considered — a preparation's broadcast must never claim a
+    ///    schedule row (the split-phase guard above already drops the whole record during the prep
+    ///    phase; this keeps the belt on outside it).
+    /// 2. The D6 in-flight marker (`activeBroadcastTxIds`) — the id THIS session submitted, still
+    ///    set while the headless lane records; covers the landed-but-record-failed empty-txid
+    ///    shape, which has no txid to match. The manual send lane sets no marker and resolves via
+    ///    the txid alone.
+    private func resolveServedTransferId(accountUUID: AccountUUID, result: MigrationTransferResult) async -> UInt32? {
+        if case let MigrationTransferResult.success(txId) = result, !txId.isEmpty {
+            let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? []
+            let matched = statuses.first { status in
+                guard case MigrationTransactionStatus.Kind.transfer = status.kind else { return false }
+                guard case let MigrationTransactionStatus.State.broadcast(txid) = status.state else { return false }
+                return txid.toHexStringTxId() == txId
+            }
+            if let matched {
+                return matched.id
+            }
+        }
+        return activeBroadcastTxIds.withLock { $0[accountUUID] }
     }
 
     /// MOB-1496: "Lock balance" now calls the SDK's real `lockMigrationResidual` directly — the
@@ -5371,18 +5408,35 @@ final class MigrationScheduleStorage: @unchecked Sendable {
         }
     }
 
-    /// Appends a `SentRecord` for the FIRST transfer in the persisted schedule that has no sent
-    /// record yet (matched by order), on `.success(txId:)` only — every other result, and a missing
-    /// payload (nothing to append against), is a no-op. An empty `txId` (the record-failed-after-
-    /// broadcast placeholder — the broadcast landed, only the engine's own recording of it failed)
-    /// persists as `nil` rather than an empty string.
-    func recordTransferBroadcast(_ result: MigrationTransferResult, for accountUUID: AccountUUID, now: Date) {
+    /// Appends a `SentRecord` for the broadcast transfer, on `.success(txId:)` only — every other
+    /// result, and a missing payload (nothing to append against), is a no-op. An empty `txId` (the
+    /// record-failed-after-broadcast placeholder — the broadcast landed, only the engine's own
+    /// recording of it failed) persists as `nil` rather than an empty string.
+    ///
+    /// MOB-1466 (M2, SDK delegation): `transferId` is the transfer the delivery lane ACTUALLY
+    /// served, resolved by the manager layer (live-status txid match, else the D6 in-flight
+    /// marker). When it names a not-yet-recorded schedule row, the record is appended against that
+    /// row. The legacy guess — the first row in the persisted array with no sent record — remains
+    /// only as the `nil`/unmatched fallback: the engine delivers in schedule-SLOT order (and
+    /// rebuilds/withholds can reorder further), while the persisted array carries crossing order,
+    /// so a positional guess can attribute a landed broadcast to the wrong transfer — wrong row
+    /// green, wrong amount, txid keyed to the wrong id for R11's wallet-confirmation match.
+    func recordTransferBroadcast(_ result: MigrationTransferResult, transferId: UInt32?, for accountUUID: AccountUUID, now: Date) {
         storage.modify(for: accountUUID) { payload in
             guard case let MigrationTransferResult.success(txId) = result else { return }
             guard var current = payload else { return }
 
             let sentTransferIds = Set(current.sentRecords.map { $0.transferId })
-            guard let transfer = current.schedule.transfers.first(where: { !sentTransferIds.contains($0.transferKey) }) else { return }
+            let identified = transferId.flatMap { servedId in
+                current.schedule.transfers.first { $0.transferKey == String(servedId) && !sentTransferIds.contains($0.transferKey) }
+            }
+            if transferId != nil && identified == nil {
+                // Said, not silent (the file's own discipline): a resolved id that the persisted
+                // schedule cannot place (stale/refreshed payload, or already recorded) degrades to
+                // the legacy positional guess rather than dropping a landed broadcast's record.
+                LoggerProxy.warn("[MigrationScheduleStorage] served transfer id not in the persisted schedule (or already recorded) — falling back to the positional guess")
+            }
+            guard let transfer = identified ?? current.schedule.transfers.first(where: { !sentTransferIds.contains($0.transferKey) }) else { return }
 
             let sentRecord = MigrationCommittedSchedule.SentRecord(
                 transferId: transfer.transferKey,

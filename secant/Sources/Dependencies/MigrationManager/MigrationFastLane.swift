@@ -15,9 +15,13 @@
 //  What the lane changes, when active:
 //   1. `MigrationManagerImpl.sendGate()` reads a ZERO privacy buffer — the app-side post-sync
 //      send spacing collapses, so a due broadcast is deliverable the moment the engine says so.
+//  It is loudly `[MIG] ⚡ FAST LANE`-logged; a trace without that line is a stock run.
+//
 //  (There is no app-side schedule rewrite any more: SDK PR #1951 retired the QA reschedule
-//  endpoint. Compressed QA cadence is the engine's own doing, via the #1806 spacing floors the
-//  advance call passes when this lane is active.)
+//  endpoint, and the schedule-side compression is the engine's own doing — test-network
+//  schedules arrive compressed at commit time. The spacing-floor knob the advance call briefly
+//  passed left the SDK with the librustzcash rebase, so the buffer collapse above is the ONE
+//  lever this lane still owns.)
 //
 //  THE DOUBLE FENCE — why this can never reach users:
 //   1. `#if DEBUG`: Release archives (every TestFlight/App Store build, INCLUDING the testnet

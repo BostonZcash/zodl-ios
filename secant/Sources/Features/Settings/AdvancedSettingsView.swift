@@ -104,9 +104,9 @@ struct AdvancedSettingsView: View {
                             store.send(.debugResetIronwoodAnnouncementTapped)
                         }
 
-                        // Gate 3 affordance: production send windows are a ~6 h exponential mean,
-                        // so a committed run cannot be exercised in one sitting. This rewrites the
-                        // committed schedule's heights onto ~2-then-4-block strides.
+                        // SIGNPOST (retired with SDK PR #1951): the manual reschedule lever is
+                        // gone — the tap explains where QA cadence comes from now, so nobody
+                        // hunts for a vanished feature.
                         ActionRow(
                             icon: Asset.Assets.Icons.clockCheck.image,
                             title: "Migration: reschedule onto short strides",

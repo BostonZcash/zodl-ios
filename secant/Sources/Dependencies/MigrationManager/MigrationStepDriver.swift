@@ -214,11 +214,12 @@ extension MigrationManagerImpl {
         }
 
         // FAST LANE compression is GONE (2026-08-05, with SDK PR #1951): the QA reschedule
-        // endpoint is retired upstream — scheduling belongs to the engine's exported reads, and
-        // QA cadence flows through the #1806 spacing floors on the advance call itself. The old
-        // app-side rewrite also re-ran per session (its once-latch was per driver instance),
-        // desyncing scheds from anchors — campaign 9's F-C9-3. `MigrationFastLane.isActive`
-        // remains solely the privacy-buffer zero switch.
+        // endpoint is retired upstream — scheduling belongs to the engine, and test-network
+        // schedules arrive compressed at commit time (the interim spacing-floor knob on the
+        // advance call left the SDK with the librustzcash rebase). The old app-side rewrite also
+        // re-ran per session (its once-latch was per driver instance), desyncing scheds from
+        // anchors — campaign 9's F-C9-3. `MigrationFastLane.isActive` remains solely the
+        // privacy-buffer zero switch.
 
         // MOB-1466: THE TICK FAST PATH — before any candidate/engine reads, consult the same
         // privacy-buffer source `executeBroadcast` uses below. A tick fires every 30s; spending a
