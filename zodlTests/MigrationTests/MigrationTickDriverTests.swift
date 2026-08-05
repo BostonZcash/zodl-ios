@@ -350,7 +350,11 @@ import ComposableArchitecture
                 clearDeliveredMigrationNotifications: { }
             )
         } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            // R0: open-lane drives need a live session — pinned via the seam, never the global trace.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
             // `.afterSync` — the phase whose plan escalates surviving attention to `.needsUser`.
             return await manager.advance(phase: .afterSync)
         }
@@ -422,7 +426,11 @@ import ComposableArchitecture
                 clearDeliveredMigrationNotifications: { }
             )
         } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            // R0: open-lane drives need a live session — pinned via the seam, never the global trace.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
             return await manager.advance(phase: .beforeSync)
         }
 
@@ -492,7 +500,11 @@ import ComposableArchitecture
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
         } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            // R0: open-lane drives need a live session — pinned via the seam, never the global trace.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
 
             let firstTask = Task { await manager.advance(phase: .beforeSync) }
             await Self.waitUntil { firstReadStarted.value }
@@ -535,7 +547,13 @@ import ComposableArchitecture
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
         } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            // R0: open-lane drives need a live session — pinned via the seam, never the global
+            // trace. The two lanes hold INDEPENDENT credits, so both first drives run under one
+            // ordinal and the FIFO property stays the thing this test pins.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
 
             let firstTask = Task { await manager.advance(phase: .beforeSync) }
             await Self.waitUntil { firstReadStarted.value }

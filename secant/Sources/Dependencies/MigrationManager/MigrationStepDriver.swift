@@ -74,12 +74,16 @@ enum MigrationStepVerdict: Equatable, Sendable {
     case deferredToPhase
     /// A discharge was attempted and failed. Carries the reason; never swallowed.
     case failed(String)
-    /// MOB-1466: a `.tick` arrived while another `advance` call was already in flight, and yielded
-    /// without reading the engine at all — the single-flight latch's fast-reject path. Quiet by
-    /// construction (see `isQuietForTick`): a busy driver is not news the way a stalled or blocked
-    /// run is, and logging it at `.event` every time a 30s tick loses this race would be exactly
-    /// the noise the tick's own log hygiene exists to avoid. `.beforeSync`/`.afterSync` callers
-    /// never see this verdict — they wait their turn (FIFO) and run instead.
+    /// The call yielded without reading the engine at all. Two producers:
+    /// - MOB-1466: a `.tick` arrived while another `advance` call was already in flight — the
+    ///   single-flight latch's fast-reject path. Quiet by construction (see `isQuietForTick`): a
+    ///   busy driver is not news the way a stalled or blocked run is, and logging it at `.event`
+    ///   every time a 30s tick loses this race would be exactly the noise the tick's own log
+    ///   hygiene exists to avoid. Ticks never park (FIFO waiting is the open lanes' privilege).
+    /// - R0: an open lane (`.beforeSync`/`.afterSync`) whose per-session credit is already spent,
+    ///   or that was called with no live session at all (fail-closed) — see the R0 credit gate in
+    ///   `advance(phase:)`. Always `.event`-logged: a refused open-lane drive is the law working,
+    ///   and the log line is how a field trace proves which path over-asked.
     case skipped
 }
 
@@ -146,27 +150,47 @@ extension MigrationManagerImpl {
             return MigrationStepVerdict.notApplicable
         }
 
-        // C6-1 ONCE-LATCH: at most ONE `.beforeSync` discharge per app-open. Root has grown
-        // several launch paths (cold-launch, gate-resume retryStart, the refused-start catch);
-        // convention said each open reaches the driver once, but an open traversing two of them
-        // called twice — and with a due pile-up each call is a BROADCAST (campaign-6: two sends
-        // 4 s apart in one cold session). The law is enforced here, at the chokepoint all paths
-        // share, keyed on the trace's session ordinal: no live session (every unit test, headless
-        // flows) never latches; the refused-start catch's second call now yields — a
-        // mis-classified open defers its send to the next open instead of double-driving, which
-        // is the predictable-over-eager trade the step-driver architecture already chose.
-        if phase == MigrationOpenPhase.beforeSync,
-            let sessionOrdinal = MigrationTrace.currentSessionOrdinal {
-            let alreadyDriven = beforeSyncDrivenSession.withLock { last -> Bool in
-                if last == sessionOrdinal { return true }
-                last = sessionOrdinal
-                return false
+        // R0 — THE GROUND RULE OF ALL GROUND RULES (Lukas, 2026-08-05): one zodl open = ONE
+        // `nextStep()` pass, and nothing may ever drive an open lane again in the same foreground
+        // session — not a second launch path (C6-1: an open traversing two of Root's `.beforeSync`
+        // sites broadcast twice, 4 s apart — a ZIP 318 violation, the engine schedules those sends
+        // APART), not a re-firing sync edge (`.afterSync` has two call sites of its own), not
+        // navigation, not "something finished so ask again". Enforced here, at the chokepoint every
+        // path shares, as consumable per-session credits: `beginSession` (cold launch / foreground)
+        // arms ONE credit per open lane by rolling the ordinal; the lane's first drive consumes it;
+        // every later same-session call yields with a logged verdict.
+        //
+        // FAIL-CLOSED: no live session = no credit = no drive. An open lane acting outside a
+        // session would be exactly the "code calls nextStep() on its own clock" R0 exists to ban —
+        // production always has one (`beginSession` is the first statement of both entry reducers),
+        // so the refusal can only fire where it should: a background wake-up, a stray completion
+        // handler, a future call site added outside the open. `.tick` is not an open lane and is
+        // governed separately (mode belt, privacy buffer, engine schedule — see
+        // `MigrationStepPlan`'s "THE THIRD PHASE").
+        if phase == MigrationOpenPhase.beforeSync || phase == MigrationOpenPhase.afterSync {
+            guard let sessionOrdinal = sessionOrdinalProvider() else {
+                LoggerProxy.event(
+                    "\(Self.logTag) ▸ session verdict (\(phase)): skipped — no live session; open-lane drives are fail-closed (R0)"
+                )
+                MigrationTrace.event("\(phase) REFUSED — no live session (R0 fail-closed)")
+                return MigrationStepVerdict.skipped
+            }
+            let alreadyDriven = openLaneCredits.withLock { credits -> Bool in
+                if phase == MigrationOpenPhase.beforeSync {
+                    if credits.beforeSyncSpentSession == sessionOrdinal { return true }
+                    credits.beforeSyncSpentSession = sessionOrdinal
+                    return false
+                } else {
+                    if credits.afterSyncSpentSession == sessionOrdinal { return true }
+                    credits.afterSyncSpentSession = sessionOrdinal
+                    return false
+                }
             }
             if alreadyDriven {
                 LoggerProxy.event(
-                    "\(Self.logTag) ▸ session verdict (\(phase)): skipped — beforeSync already driven this session (C6-1 once-latch)"
+                    "\(Self.logTag) ▸ session verdict (\(phase)): skipped — \(phase) already driven this session (R0 once-credit)"
                 )
-                MigrationTrace.event("beforeSync SKIPPED — already driven this session (C6-1 once-latch)")
+                MigrationTrace.event("\(phase) SKIPPED — already driven this session (R0 once-credit)")
                 return MigrationStepVerdict.skipped
             }
         }

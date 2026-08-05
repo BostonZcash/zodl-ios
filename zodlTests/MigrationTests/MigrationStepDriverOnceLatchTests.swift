@@ -2,19 +2,23 @@
 //  MigrationStepDriverOnceLatchTests.swift
 //  zodlTests
 //
-//  C6-1 (campaign-6, 2026-08-05): Lukas's law — "zodl open = ONE nextStep() until the next
-//  open" — was enforced only by convention across Root's several launch paths, and a cold open
-//  that traversed two of them drove the engine twice: with a due pile-up, each drive is a
-//  BROADCAST (two sends 4 s apart in one session, on camera). The fix is a once-latch at the
-//  driver chokepoint: at most one `.beforeSync` discharge per session, keyed on the trace's
-//  session ordinal.
+//  R0 — "the ground rule of all ground rules" (Lukas, 2026-08-05): one zodl open = ONE
+//  `nextStep()` pass. The field case (C6-1, campaign-6, on camera): an open traversing two of
+//  Root's `.beforeSync` launch paths drove the engine twice, and with a due pile-up each drive is
+//  a BROADCAST — two sends 4 s apart in one session, a ZIP 318 violation (the engine schedules
+//  those sends APART). The law is enforced at the driver chokepoint as consumable per-session,
+//  per-open-lane credits, FAIL-CLOSED without a live session.
 //
-//  TEST-HARNESS CAVEAT: `MigrationTrace` session state is process-global, and parallel suites
-//  exercise Root reducers whose production paths call `beginSession` — so another suite can
-//  roll the ordinal between any two statements here. The test therefore RETRIES the same-session
-//  observation with a fresh session per attempt: the pinned property is "the latch CAN hold
-//  within one session and a new session drives again", which one clean attempt proves; churn
-//  makes an attempt inconclusive, never wrong.
+//  These tests pin four properties:
+//   1. a lane's second same-session call yields, and a new session drives again;
+//   2. `.afterSync` gets the identical treatment (it has two call sites of its own);
+//   3. the two lanes carry INDEPENDENT credits — one open's designed pair both drive;
+//   4. no live session = no drive, and the refusal never burns a credit.
+//
+//  DETERMINISTIC BY SEAM, not by retries: `MigrationTrace` is process-global and parallel suites
+//  begin/end sessions underneath any test that reads it (the churn that retry-hardened this
+//  file's first version). The driver reads the ordinal through `sessionOrdinalProvider`, so these
+//  tests pin it to a local box and never touch the global trace at all.
 //
 
 import Foundation
@@ -33,38 +37,89 @@ import ComposableArchitecture
         return state
     }
 
-    /// Within one session the second `.beforeSync` is skipped; a NEW session drives again.
     /// (`.notApplicable` is what a drive verdicts to with no wallet accounts installed — still a
-    /// DRIVE: the latch marks attempts, not successes.)
-    @Test func secondBeforeSyncInOneSessionIsSkippedAndANewSessionDrives() async {
+    /// DRIVE: the credit marks attempts, not successes.)
+    @Test func aLanesSecondSameSessionCallYieldsAndANewSessionDrives() async {
         await withDependencies {
             $0.sdkSynchronizer = .mocked(latestState: { Self.atTipState() })
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
-            let manager = MigrationManagerImpl()
+            let ordinal = LockIsolated<Int?>(7)
+            let manager = MigrationManagerImpl(sessionOrdinalProvider: { ordinal.value })
 
-            var observedLatch = false
-            for _ in 0..<3 {
-                MigrationTrace.beginSession(cause: .foreground, tip: Self.tip)
-                let first = await manager.advance(phase: .beforeSync)
-                let second = await manager.advance(phase: .beforeSync)
-                MigrationTrace.endSession(reason: "test attempt teardown")
+            let first = await manager.advance(phase: .beforeSync)
+            let second = await manager.advance(phase: .beforeSync)
+            #expect(first == .notApplicable, "the session's one beforeSync drive")
+            #expect(second == .skipped, "same session, second call — the credit is spent")
 
-                // A parallel suite rolling the global ordinal between the two calls makes both
-                // drives "first" — inconclusive, retry. A clean attempt shows the law exactly.
-                if first == .notApplicable && second == .skipped {
-                    observedLatch = true
-                    break
-                }
-            }
-            #expect(observedLatch, "one clean attempt must show: first drives, second same-session call yields to the once-latch")
-
-            // The reset arm: a fresh session gets its one drive (whatever parallel churn does to
-            // the ordinal, it can only make this a DIFFERENT session — which must drive).
-            MigrationTrace.beginSession(cause: .foreground, tip: Self.tip)
+            ordinal.setValue(8)
             let nextSession = await manager.advance(phase: .beforeSync)
-            MigrationTrace.endSession(reason: "test teardown")
-            #expect(nextSession == .notApplicable, "a NEW session gets its one drive")
+            #expect(nextSession == .notApplicable, "a NEW session arms a new credit")
+        }
+    }
+
+    @Test func afterSyncCarriesTheSameOncePerSessionCredit() async {
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(latestState: { Self.atTipState() })
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let ordinal = LockIsolated<Int?>(3)
+            let manager = MigrationManagerImpl(sessionOrdinalProvider: { ordinal.value })
+
+            let first = await manager.advance(phase: .afterSync)
+            let second = await manager.advance(phase: .afterSync)
+            #expect(first == .notApplicable, "the session's one afterSync drive")
+            #expect(second == .skipped, "a re-firing sync edge in the same session yields")
+
+            ordinal.setValue(4)
+            let nextSession = await manager.advance(phase: .afterSync)
+            #expect(nextSession == .notApplicable, "the next open's edge drives again")
+        }
+    }
+
+    /// One open's DESIGNED pair: `.beforeSync` then `.afterSync` are the two moments of the same
+    /// open (MigrationStepPlan's "THE TWO PHASES") — each holds its own credit, so the pair both
+    /// drive while every repeat of either yields.
+    @Test func theTwoOpenLanesCarryIndependentCreditsWithinOneOpen() async {
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(latestState: { Self.atTipState() })
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let manager = MigrationManagerImpl(sessionOrdinalProvider: { 11 })
+
+            let beforeFirst = await manager.advance(phase: .beforeSync)
+            let afterFirst = await manager.advance(phase: .afterSync)
+            let beforeRepeat = await manager.advance(phase: .beforeSync)
+            let afterRepeat = await manager.advance(phase: .afterSync)
+
+            #expect(beforeFirst == .notApplicable, "the open's pre-wire moment drives")
+            #expect(afterFirst == .notApplicable, "the open's edge moment drives on its OWN credit")
+            #expect(beforeRepeat == .skipped, "beforeSync repeat yields")
+            #expect(afterRepeat == .skipped, "afterSync repeat yields")
+        }
+    }
+
+    /// R0 is FAIL-CLOSED: an open-lane drive with no live session is refused outright — a
+    /// background wake-up or a stray completion handler cannot drive the engine — and the refusal
+    /// burns nothing: the session that eventually opens still gets its full pair.
+    @Test func openLaneDrivesAreRefusedWithoutALiveSessionAndBurnNoCredit() async {
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(latestState: { Self.atTipState() })
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let ordinal = LockIsolated<Int?>(nil)
+            let manager = MigrationManagerImpl(sessionOrdinalProvider: { ordinal.value })
+
+            let sessionlessBefore = await manager.advance(phase: .beforeSync)
+            let sessionlessAfter = await manager.advance(phase: .afterSync)
+            #expect(sessionlessBefore == .skipped, "no session — beforeSync is fail-closed")
+            #expect(sessionlessAfter == .skipped, "no session — afterSync is fail-closed")
+
+            ordinal.setValue(21)
+            let openedBefore = await manager.advance(phase: .beforeSync)
+            let openedAfter = await manager.advance(phase: .afterSync)
+            #expect(openedBefore == .notApplicable, "the open that follows still gets its beforeSync")
+            #expect(openedAfter == .notApplicable, "…and its afterSync")
         }
     }
 }

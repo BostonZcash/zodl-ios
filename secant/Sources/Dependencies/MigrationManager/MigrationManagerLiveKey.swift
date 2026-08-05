@@ -286,6 +286,16 @@ struct MigrationAdvanceLatchState {
     var waiters: [CheckedContinuation<Void, Never>] = []
 }
 
+/// R0: the per-open-lane spent-credit record — see `MigrationManagerImpl.openLaneCredits` for the
+/// law it enforces. Each slot holds the session ordinal whose credit that lane has consumed;
+/// `nil` means the lane has not driven in any session yet. `.tick` deliberately has no slot here:
+/// it is not an open lane (see `MigrationStepPlan`'s "THE THIRD PHASE") and is governed by the
+/// mode belt, the privacy buffer, and the engine's own schedule instead.
+struct MigrationOpenLaneCredits {
+    var beforeSyncSpentSession: Int?
+    var afterSyncSpentSession: Int?
+}
+
 /// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the per-account `stateEvents`
 /// subjects. `@unchecked Sendable`: the only mutable state is `gateStorage`'s own
 /// `OSAllocatedUnfairLock`-protected storage, the `serialExecutor` actor, the `advanceLatch` lock,
@@ -341,18 +351,29 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// episode set) — see `MigrationFailureRoutingStorage`.
     let failureRoutingStorage: MigrationFailureRoutingStorage
 
+    /// R0 seam: where `advance(phase:)` reads the live session ordinal. Production wiring keeps
+    /// the default (the real `MigrationTrace`); driver unit tests pin a constant instead, because
+    /// the trace is PROCESS-GLOBAL and parallel suites exercise Root reducers whose production
+    /// paths begin/end sessions underneath any test that reads it — the same churn that forced
+    /// retry-hardening onto the C6-1 latch test and an age-based (not session-based) M5 cache
+    /// gate. The seam makes the credit logic deterministic under test without weakening the
+    /// production read.
+    let sessionOrdinalProvider: @Sendable () -> Int?
+
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
     init(
         gateStorage: MigrationGateStorage = MigrationGateStorage(),
         scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage(),
         snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage(),
-        failureRoutingStorage: MigrationFailureRoutingStorage = MigrationFailureRoutingStorage()
+        failureRoutingStorage: MigrationFailureRoutingStorage = MigrationFailureRoutingStorage(),
+        sessionOrdinalProvider: @escaping @Sendable () -> Int? = { MigrationTrace.currentSessionOrdinal }
     ) {
         self.gateStorage = gateStorage
         self.scheduleStorage = scheduleStorage
         self.snapshotStorage = snapshotStorage
         self.failureRoutingStorage = failureRoutingStorage
+        self.sessionOrdinalProvider = sessionOrdinalProvider
     }
 
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
@@ -422,14 +443,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// primitive.
     let advanceLatch = OSAllocatedUnfairLock<MigrationAdvanceLatchState>(initialState: MigrationAdvanceLatchState())
 
-    /// C6-1 (campaign-6 field find, 2026-08-05): the session ordinal whose `.beforeSync` drive has
-    /// already run. Lukas's law — "zodl open = ONE nextStep() until the next open" — was enforced
-    /// by convention across Root's launch paths (cold-launch site, gate-resume retryStart, the
-    /// refused-start catch), and an open that traversed two of them drove the engine twice: with a
-    /// due pile-up, each drive is a BROADCAST (two sends 4 s apart in one session, on camera). The
-    /// engine answered honestly both times; the discipline is the app's, so it lives here at the
-    /// one chokepoint every path shares — see `advance(phase:)`'s once-latch.
-    let beforeSyncDrivenSession = OSAllocatedUnfairLock<Int?>(initialState: nil)
+    /// R0 (Lukas, 2026-08-05 — "the ground rule of all ground rules", ratifying C6-1's lesson):
+    /// per-open-lane, per-session drive credits. One zodl open arms exactly ONE `.beforeSync` and
+    /// ONE `.afterSync` credit; the first drive of each lane consumes it and every later
+    /// same-session call yields. Stored as "the session ordinal whose credit this lane has spent"
+    /// rather than a plain armed/disarmed Bool so a stale flag can never leak across opens — a new
+    /// session re-arms both lanes for free by having a new ordinal.
+    ///
+    /// The field case that made this law (C6-1, campaign-6, on camera): Root's launch paths
+    /// (cold-launch site, gate-resume retryStart, the refused-start catch) each call
+    /// `.beforeSync` by convention "once per open" — an open that traversed two of them drove the
+    /// engine twice, and with a due pile-up each drive is a BROADCAST: two sends 4 s apart in one
+    /// session, which is a ZIP 318 violation (the engine schedules those sends APART; asking twice
+    /// collapsed the spacing). `.afterSync` has the same shape available (two call sites, plus a
+    /// sync edge that can re-fire within one foreground). The engine answered honestly every time;
+    /// the discipline is the app's, so it lives at the one chokepoint every path shares — see
+    /// `advance(phase:)`'s R0 credit gate.
+    let openLaneCredits = OSAllocatedUnfairLock<MigrationOpenLaneCredits>(initialState: MigrationOpenLaneCredits())
 
     /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
     /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration
