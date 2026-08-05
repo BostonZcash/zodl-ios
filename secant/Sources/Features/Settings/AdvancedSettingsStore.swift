@@ -70,22 +70,14 @@ struct AdvancedSettings {
                 return .none
 
             case .debugMigrationRescheduleTapped:
-                guard let accountUUID = state.selectedWalletAccount?.id else {
-                    return .send(.debugMigrationRescheduleFinished("No account selected."))
-                }
-                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
-                    do {
-                        let count = try await sdkSynchronizer.debugRescheduleMigrationTransfers(accountUUID)
-                        // Reconcile so the rows/banner pick the new heights up, then re-arm the
-                        // pokes against them — otherwise the notifications would still point at the
-                        // ORIGINAL windows, hours away.
-                        await migrationManager.reconcile()
-                        await migrationManager.armNextWindowNotifications(accountUUID)
-                        await send(.debugMigrationRescheduleFinished("Rescheduled \(count) transfer(s) onto short strides."))
-                    } catch {
-                        await send(.debugMigrationRescheduleFinished(error.toZcashError().localizedDescription))
-                    }
-                }
+                // Retired with SDK PR #1951: the QA reschedule endpoint is gone — scheduling
+                // belongs to the engine's exported reads, and QA cadence flows through the #1806
+                // spacing floors on the advance call (armed by the `-MigrationFastLane` launch
+                // flag). The button stays as a signpost so QA learns the new mechanism instead of
+                // hunting for a vanished feature; the alert plumbing it reuses is unchanged.
+                return .send(.debugMigrationRescheduleFinished(
+                    "Retired: schedules are engine-owned now. QA cadence comes from the fast-lane floors (launch with -MigrationFastLane) — there is no manual reschedule."
+                ))
 
             case .debugMigrationRescheduleFinished(let message):
                 state.alert = AlertState {

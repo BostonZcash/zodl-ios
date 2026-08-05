@@ -242,6 +242,18 @@ final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCen
         if notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
             // D9 foreground policy: the SmartBanner already carries live migration state on screen,
             // so a migration notification presents NOTHING while the app is foregrounded.
+            //
+            // F-C9-4 companion (campaign 9, 2026-08-05): presenting nothing must not mean DOING
+            // nothing. This delivery instant is the send/prove window the arming lane itself
+            // computed, and with no banner there is no tap to answer it — so the landing drives
+            // the tick belt once. Same store-injection caveat as `didReceive` above.
+            let rootStore = self.rootStore
+            let accountUUID = notification.request.content.userInfo["accountUUID"] as? String
+            DispatchQueue.main.async {
+                rootStore?.send(
+                    .initialization(.appDelegate(.migrationPokeLandedInForeground(accountUUID: accountUUID)))
+                )
+            }
             completionHandler([])
         } else {
             completionHandler([.banner, .list, .sound])

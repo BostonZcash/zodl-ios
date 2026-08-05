@@ -461,14 +461,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `advance(phase:)`'s R0 credit gate.
     let openLaneCredits = OSAllocatedUnfairLock<MigrationOpenLaneCredits>(initialState: MigrationOpenLaneCredits())
 
-    #if DEBUG
-    /// FAST LANE (harness-only — see `MigrationFastLane.swift`): whether this process has already
-    /// run its one schedule compression. Per-process on purpose: every harness LAUNCH may
-    /// compress once (idempotent at the engine — already-broadcast rows are untouched), and a
-    /// stock launch never reads this at all.
-    let fastLaneCompressedThisLaunch = OSAllocatedUnfairLock<Bool>(initialState: false)
-    #endif
-
     /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
     /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration
     /// screen. `reconcile()` reads this per-account (`isMigrationFlowPresented`) to decide whether

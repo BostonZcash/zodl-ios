@@ -48,7 +48,14 @@ extension Root {
         /// unqualified. ZERO IS THE OFF SWITCH: at `.zero` the loop never spawns at all (the
         /// effect's leading guard), while the app-open pokes are a separate lane and keep working.
         /// Surfaced to reducers/tests as `DependencyValues.migrationTickInterval`.
-        static let migrationTickInterval: Swift.Duration = .zero
+        ///
+        /// F-C9-4 (campaign 9, 2026-08-05): this constant shipped parked at `.zero`, so the whole
+        /// loop — spawn sites, conditions, self-stop — was correct and NEVER RAN: a foregrounded
+        /// app drove exactly one step per open and then sat forever ("keep Zodl open" with nothing
+        /// moving). Tests stayed green because they override the dependency. 30 s is the belt
+        /// cadence the tick fast-path and stall guard were built against; a companion test now
+        /// pins this constant non-zero so it cannot silently park again.
+        static let migrationTickInterval: Swift.Duration = .seconds(30)
         /// The attribution probe's attempt budget — 9 sleeps (none after the last) at the interval below is 3.0 min, covering the tip skew.
         static let migrationGateStopProbeAttempts = 10
         /// The attribution probe's wait between `migrationAdvanceStep` reads — 9 of these between 10 attempts is 3.0 min.
@@ -183,6 +190,19 @@ extension Root {
                 state.path = nil
                 MigrationTrace.event("notification tap → Home (no deeplink; the banner is the story)")
                 return .none
+
+            case .initialization(.appDelegate(.migrationPokeLandedInForeground(let accountUUID))):
+                // F-C9-4 companion: the poke landed while we're frontmost. D9 presented nothing,
+                // so nobody can tap it — the landing itself is the drive. The `.tick` lane is the
+                // belt lane: single-flight latched, exempt from the R0 open-lane credits, and a
+                // no-op ("waiting"/"idle") when the estimate ran ahead of the chain — in which
+                // case the advance's own reconcile re-arms the next poke and the chain of pokes
+                // continues. No navigation, no state: exactly a tick that fired early.
+                MigrationTrace.event("🔔 poke landed while foregrounded — driving the tick belt (D9: no banner)")
+                _ = accountUUID
+                return .run { _ in
+                    await migrationManager.advance(.tick)
+                }
 
             case .initialization(.appDelegate(.didEnterBackground)):
                 // See the cold-launch marker above. `sdkSynchronizer.stop()` on the next line is

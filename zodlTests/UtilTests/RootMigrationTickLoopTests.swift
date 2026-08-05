@@ -535,3 +535,15 @@ import Testing
         await drain(store)
     }
 }
+
+// F-C9-4 REGRESSION PIN (campaign 9, 2026-08-05): the tick loop was fully wired and NEVER RAN in
+// the field, because `Root.Constants.migrationTickInterval` shipped parked at `.zero` — the
+// documented OFF switch — while every TestStore above overrides the dependency and stayed green.
+// This is the one test that reads the SHIPPED constant: if the loop is ever parked again, this
+// fails instead of a campaign discovering it.
+@Suite struct MigrationTickIntervalLivePin {
+    @Test
+    func theShippedTickIntervalIsNotTheOffSwitch() {
+        #expect(Root.Constants.migrationTickInterval > Swift.Duration.zero)
+    }
+}

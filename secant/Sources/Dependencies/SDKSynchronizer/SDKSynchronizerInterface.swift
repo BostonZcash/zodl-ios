@@ -140,10 +140,6 @@ struct SDKSynchronizerClient: Sendable {
     /// The measured seconds-per-block used by `estimatedMigrationChainTip` (clamped 5–150 s, 75 s
     /// fallback) — the height→time conversion factor for notification fire times.
     let estimatedMigrationSecondsPerBlock: @Sendable () async throws -> Double
-    /// DEBUG/QA ONLY — rewrites the committed schedule's transfer heights onto short strides so a
-    /// real broadcast run can be exercised without waiting out ZIP 318's privacy delay. Returns the
-    /// number of transfers rescheduled. Gate 3 runs on this.
-    let debugRescheduleMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
     /// Wallet-scope: whether ordinary sync should currently be paused for a migration privacy gate.
     /// Non-throwing (degrades open on internal failure).
     var isMigrationSyncBlocked: @Sendable () async -> Bool = { false }

@@ -10354,13 +10354,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tap to reschedule or send now"
+            "value": "Tap to send now"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Toca para reprogramar o enviar ahora"
+            "value": "Toca para enviar ahora"
           }
         }
       }
@@ -13204,6 +13204,40 @@
         }
       }
     },
+    "migrationStatus.asOfHours": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balances as of ~%1$lld h ago — updates on next sync"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Saldos de hace ~%1$lld h — se actualizan en la próxima sincronización"
+          }
+        }
+      }
+    },
+    "migrationStatus.asOfMins": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balances as of ~%1$lld min ago — updates on next sync"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Saldos de hace ~%1$lld min — se actualizan en la próxima sincronización"
+          }
+        }
+      }
+    },
     "migrationStatus.desc": {
       "extractionState": "manual",
       "localizations": {
@@ -13234,6 +13268,23 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Hecho"
+          }
+        }
+      }
+    },
+    "migrationStatus.evaluating": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Evaluating state…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Evaluando el estado…"
           }
         }
       }
@@ -13285,40 +13336,6 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Preparando la transacción…"
-          }
-        }
-      }
-    },
-    "migrationStatus.asOfHours": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Balances as of ~%1$lld h ago — updates on next sync"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Saldos de hace ~%1$lld h — se actualizan en la próxima sincronización"
-          }
-        }
-      }
-    },
-    "migrationStatus.asOfMins": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Balances as of ~%1$lld min ago — updates on next sync"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Saldos de hace ~%1$lld min — se actualizan en la próxima sincronización"
           }
         }
       }
@@ -13380,13 +13397,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Transfer %1$lld of %2$lld was scheduled %3$lld hours ago but wasn't sent. Send now or reschedule."
+            "value": "Transfer %1$lld of %2$lld was scheduled %3$lld hours ago but wasn't sent. Send it now."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "La transferencia %1$lld de %2$lld se programó hace %3$lld horas pero no se envió. Envíala ahora o reprográmala."
+            "value": "La transferencia %1$lld de %2$lld se programó hace %3$lld horas pero no se envió. Envíala ahora."
           }
         }
       }
@@ -13506,23 +13523,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Progreso de la migración"
-          }
-        }
-      }
-    },
-    "migrationStatus.evaluating": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Evaluating state…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Evaluando el estado…"
           }
         }
       }

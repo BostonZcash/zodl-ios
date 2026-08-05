@@ -155,9 +155,6 @@ extension SDKSynchronizerClient: DependencyKey {
             estimatedMigrationSecondsPerBlock: {
                 try await synchronizer.estimatedMigrationSecondsPerBlock()
             },
-            debugRescheduleMigrationTransfers: { accountUUID in
-                try await synchronizer.debugRescheduleMigrationTransfers(accountUUID: accountUUID)
-            },
             isMigrationSyncBlocked: {
                 await synchronizer.isMigrationSyncBlocked()
             },
