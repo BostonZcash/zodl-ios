@@ -146,6 +146,31 @@ extension MigrationManagerImpl {
             return MigrationStepVerdict.notApplicable
         }
 
+        // C6-1 ONCE-LATCH: at most ONE `.beforeSync` discharge per app-open. Root has grown
+        // several launch paths (cold-launch, gate-resume retryStart, the refused-start catch);
+        // convention said each open reaches the driver once, but an open traversing two of them
+        // called twice — and with a due pile-up each call is a BROADCAST (campaign-6: two sends
+        // 4 s apart in one cold session). The law is enforced here, at the chokepoint all paths
+        // share, keyed on the trace's session ordinal: no live session (every unit test, headless
+        // flows) never latches; the refused-start catch's second call now yields — a
+        // mis-classified open defers its send to the next open instead of double-driving, which
+        // is the predictable-over-eager trade the step-driver architecture already chose.
+        if phase == MigrationOpenPhase.beforeSync,
+            let sessionOrdinal = MigrationTrace.currentSessionOrdinal {
+            let alreadyDriven = beforeSyncDrivenSession.withLock { last -> Bool in
+                if last == sessionOrdinal { return true }
+                last = sessionOrdinal
+                return false
+            }
+            if alreadyDriven {
+                LoggerProxy.event(
+                    "\(Self.logTag) ▸ session verdict (\(phase)): skipped — beforeSync already driven this session (C6-1 once-latch)"
+                )
+                MigrationTrace.event("beforeSync SKIPPED — already driven this session (C6-1 once-latch)")
+                return MigrationStepVerdict.skipped
+            }
+        }
+
         if phase == MigrationOpenPhase.tick {
             guard tryAcquireAdvanceLatch() else {
                 LoggerProxy.debug("\(Self.logTag) ▸ session verdict (\(phase)): skipped — another advance is already in flight")

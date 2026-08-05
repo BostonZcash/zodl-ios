@@ -422,6 +422,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// primitive.
     let advanceLatch = OSAllocatedUnfairLock<MigrationAdvanceLatchState>(initialState: MigrationAdvanceLatchState())
 
+    /// C6-1 (campaign-6 field find, 2026-08-05): the session ordinal whose `.beforeSync` drive has
+    /// already run. Lukas's law — "zodl open = ONE nextStep() until the next open" — was enforced
+    /// by convention across Root's launch paths (cold-launch site, gate-resume retryStart, the
+    /// refused-start catch), and an open that traversed two of them drove the engine twice: with a
+    /// due pile-up, each drive is a BROADCAST (two sends 4 s apart in one session, on camera). The
+    /// engine answered honestly both times; the discipline is the app's, so it lives here at the
+    /// one chokepoint every path shares — see `advance(phase:)`'s once-latch.
+    let beforeSyncDrivenSession = OSAllocatedUnfairLock<Int?>(initialState: nil)
+
     /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
     /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration
     /// screen. `reconcile()` reads this per-account (`isMigrationFlowPresented`) to decide whether
