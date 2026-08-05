@@ -2562,7 +2562,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
 
         for accountUUID in accountUUIDs {
-            guard case let MigrationAdvanceStep.broadcast(id)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) else {
+            // ONE-CLOCK DISPATCH (AUD-1, 2026-08-05): deliverability used to be pre-guarded on the
+            // SCANNED-frame step alone, while everything that PROMISES delivery — the sync gate's
+            // ready-broadcast query, the pokes, the row's Overdue label — and the submit itself
+            // (`executeNextPendingMigrationTransfer(_, _, useEstimatedTip: true)`) judge dueness
+            // at the ESTIMATED tip. In the punctual window (a proved transfer whose scheduled
+            // height the wall clock has reached but the scan has not) that mismatch made this
+            // loop refuse the very send the gate was refusing sync FOR — the open could do
+            // neither, and the in-place Send now died the same way (spinner, then nothing). The
+            // scanned step keeps first say (it carries the id with no extra reads); when it is
+            // quiet, the SAME est-aware clock the gate uses gets the second. The submit remains
+            // the single deliverability authority either way: it re-checks dueness against the
+            // estimate and answers `.nothingDue`/`.awaitingProof` honestly, so a false positive
+            // here degrades to a held verdict, never a wrong send.
+            let deliverableId: UInt32?
+            if case let MigrationAdvanceStep.broadcast(stepId)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) {
+                deliverableId = stepId
+            } else if (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
+                let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
+                LoggerProxy.event(
+                    "\(Self.logTag) one-clock dispatch: scanned step is quiet but the estimate says transfer \(proposal.id) is due — attempting delivery (AUD-1)"
+                )
+                deliverableId = proposal.id
+            } else {
+                deliverableId = nil
+            }
+            guard let id = deliverableId else {
                 continue
             }
             // The user asked to press Send themselves. `visitKind()` still suppressed sync for this

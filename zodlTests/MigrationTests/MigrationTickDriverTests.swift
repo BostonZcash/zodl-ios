@@ -182,6 +182,95 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
     }
 
+    // MARK: - One-clock dispatch (AUD-1, 2026-08-05)
+
+    /// THE WEDGE CURE: a proved transfer whose window the wall clock has reached but the scan has
+    /// not reads `.waiting` on the scanned frame — while the est-aware sync gate refuses sync FOR
+    /// it, so the open could do neither. The `.beforeSync` dispatch now consults the same
+    /// est-aware clock the gate uses (`hasOverdueMigrationTransfers(_, useEstimatedTip: true)`)
+    /// and routes to the broadcast lane, whose submit (`useEstimatedTip: true`) stays the single
+    /// deliverability authority.
+    @Test func beforeSyncWaitingButEstimateDueRoutesToTheBroadcastLane() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+        let estFlagsSeen = LockIsolated<[Bool]>([])
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .waiting },
+                executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
+                    submissionCalls.withValue { $0 += 1 }
+                    estFlagsSeen.withValue { $0.append(useEstimatedTip) }
+                    return .executed(.success(txId: "one-clock"))
+                },
+                hasOverdueMigrationTransfers: { _, useEstimatedTip in
+                    estFlagsSeen.withValue { $0.append(useEstimatedTip) }
+                    return true
+                },
+                pendingMigrationTransferProposal: { _ in
+                    MigrationTransferProposal(
+                        id: 9,
+                        amount: Zatoshi(50_000_000),
+                        anchorHeight: Self.activationHeight,
+                        nextExecutableAfterHeight: Self.activationHeight,
+                        expiryHeight: Self.activationHeight + 10_000
+                    )
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            // R0: the open lane needs a live session — pinned via the seam, never the global trace.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .immediate),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .beforeSync)
+        }
+
+        #expect(verdict == .broadcast(id: 9), "the est-due transfer must be delivered, got \(verdict)")
+        #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
+        #expect(
+            estFlagsSeen.value.count >= 2 && estFlagsSeen.value.allSatisfy { $0 },
+            "every dueness consult and the submit itself run est-aware — got \(estFlagsSeen.value)"
+        )
+    }
+
+    /// The quiet mirror: `.waiting` with nothing due by the estimate stays `.idle` and never
+    /// touches the broadcast lane — the one-clock consult is a second opinion from the gate's own
+    /// clock, not a new source of sends.
+    @Test func beforeSyncWaitingWithNothingDueByTheEstimateStaysIdle() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .waiting },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "must-not-run"))
+                },
+                hasOverdueMigrationTransfers: { _, _ in false }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            // R0: the open lane needs a live session — pinned via the seam, never the global trace.
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .immediate),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .beforeSync)
+        }
+
+        #expect(verdict == .idle, "nothing due by either clock — the open arms wake-ups and rests, got \(verdict)")
+        #expect(submissionCalls.value == 0, "the broadcast lane must never run")
+    }
+
     // MARK: - The at-tip tick prove (follow-mode liveness)
 
     /// Slipstream's follow mode pins the wallet at `.upToDate` with no re-firing sync edge, so a

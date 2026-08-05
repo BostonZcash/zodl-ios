@@ -377,7 +377,31 @@ extension MigrationManagerImpl {
         }
 
         for (accountUUID, step) in steps {
-            let action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
+            var action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
+            // ONE-CLOCK DISPATCH (AUD-1, 2026-08-05): `.waiting` is SCANNED-frame truth — the SDK
+            // contract evaluates `migrationAdvanceStep` "on the SCANNED tip only" — while the sync
+            // gate's ready-broadcast query, the pokes, and the submit all judge dueness at the
+            // ESTIMATED tip. In the punctual window (a proved transfer whose scheduled height the
+            // wall clock has reached but the scan has not) the two clocks deadlocked the open: the
+            // gate refused sync FOR the ready broadcast while this dispatch, reading scanned, saw
+            // nothing to send — a dead open that repeats, because un-wedging needed the sync the
+            // gate refuses. The cure is the gate's own clock, applied here too: a quiet `.waiting`
+            // at `.beforeSync` consults the est-aware overdue check, and a due answer routes to
+            // the broadcast lane, whose submit (`useEstimatedTip: true`) stays the single
+            // authority — `.nothingDue`/`.awaitingProof` degrade to a held verdict, never a wrong
+            // send. ONLY `.waiting`, ONLY `.beforeSync`: `.prove`/`.rebuild`/`.requiresAttention`
+            // keep their productive plan routes (the gate never blocks sync for an unproven row,
+            // so those cases have no wedge), `.afterSync` must never broadcast (table law), and
+            // ticks stay confined to the mode belt.
+            if phase == MigrationOpenPhase.beforeSync,
+                action == MigrationStepAction.armWakeups,
+                (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
+                let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
+                LoggerProxy.event(
+                    "\(Self.logTag) one-clock dispatch: scanned step says waiting but the estimate says transfer \(proposal.id) is due — attempting delivery (AUD-1)"
+                )
+                action = MigrationStepAction.broadcast(id: proposal.id)
+            }
             let verdict = await execute(action, accountUUID: accountUUID, phase: phase)
 
             // Audit 2026-08-03 (#13): remember per-account whether this discharge needs the USER —
