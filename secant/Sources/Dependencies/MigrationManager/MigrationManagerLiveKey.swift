@@ -202,7 +202,6 @@ extension MigrationManagerClient: DependencyKey {
             armNextWindowNotifications: { await impl.armNextWindowNotifications(accountUUID: $0) },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
-            cachedTransferRows: { impl.cachedTransferRows(accountUUID: $0) },
             wipeAllMigrationState: { await impl.wipeAllMigrationState() },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
@@ -684,18 +683,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // A 45-second sweep is a 45-second blank screen with a spinner. In the same log the fast
         // session (s2, sweep 2.4 s) routed at +3.24 s. The route time IS the sweep time.
         //
-        // WHY NOT THE CACHE TRICK THE OTHER TWO USE. Banner and rows are CONTENT: serving the last
-        // answer during a sweep is safe, because content cannot have changed while the actor was
-        // busy. A route is NAVIGATION. A stale route opens the wrong screen — `.statusResume`
-        // offers "Send now" — and a wrong action is worse than a slow one. Reaching for the same
-        // pattern a third time because it worked twice is how this bug earns a fourth life.
+        // WHY THIS STILL NEEDS A SHORT-CIRCUIT WHEN BANNER/ROWS NO LONGER DO. Q2-1 moved the six
+        // hot migration reads onto read-only DB connections, so `bannerVariant` and
+        // `migrationTransfers` now simply derive fresh every time — there is no cache left to serve
+        // stale, because there is no slow read left to bridge. `migrationAdvanceStep` did not move:
+        // this function awaits it directly below, and `migrationState` awaits it again internally,
+        // so a route that always fell through would still queue behind an in-flight prove sweep on
+        // that one read. A route is NAVIGATION, not content — a stale route opens the wrong screen
+        // (`.statusResume` offers "Send now"), and a wrong action is worse than a slow one, so this
+        // is the one place a still-serialized read gets a short-circuit instead of a wait.
         //
         // So: fall back to the READ-ONLY list instead. `.statusProgress` shows the transfer
         // timeline and offers no action the engine could refuse, so landing there for a moment and
-        // being moved on the coordinator's next re-entry pass costs nothing. Gated on cached rows
-        // existing, which is exactly "a run exists" — without it a not-started wallet would be sent
-        // to a progress screen for a migration it does not have.
-        if isMigrationWorkInFlight, hasCachedRun(accountUUID: accountUUID) {
+        // being moved on the coordinator's next re-entry pass costs nothing. Gated on a committed
+        // schedule existing, which is exactly "a run exists" — without it a not-started wallet would
+        // be sent to a progress screen for a migration it does not have.
+        if isMigrationWorkInFlight, scheduleStorage.committedSchedule(for: accountUUID) != nil {
             MigrationTrace.event(
                 "route SHORT-CIRCUIT -> statusProgress — migration work in flight, not blocking the UI"
             )
@@ -883,23 +886,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// or pre-commit — the SDK retains no proposal list to derive from either) falls back to the W1
     /// progress-only approximation, kept verbatim below rather than deleted.
     ///
-    /// MOB-1466: serves the last answer while migration work occupies the actor, and records every
-    /// fresh one. See `summaryCache` for why staleness is safe here and is NOT for the route.
+    /// Q2-1: computes fresh on every call — the SDK now serves this read from a read-only
+    /// connection in milliseconds, so the serve-stale bridge this used to need is retired.
     func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
-        let resolved = accountUUID ?? selectedWalletAccount?.id
-        // M5: age-gated like `cachedTransferRows` — a cached summary may only bridge in-flight
-        // work, never resurrect a pre-absence world.
-        if isMigrationWorkInFlight,
-            let resolved,
-            let cached = summaryCache.withLock({ $0[resolved] }),
-            Date().timeIntervalSince(cached.computedAt) <= MigrationRowsSnapshot.maxServableAge {
-            return cached.value
-        }
-        let value = await migrationSummaryComputing(accountUUID: accountUUID)
-        if let resolved {
-            summaryCache.withLock { $0[resolved] = (value, Date()) }
-        }
-        return value
+        await migrationSummaryComputing(accountUUID: accountUUID)
     }
 
     private func migrationSummaryComputing(accountUUID: AccountUUID?) async -> MigrationSummary {
@@ -948,70 +938,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// back to the W1 progress-only approximation, kept verbatim below.
     ///
     /// R13 Brick 1: THE one derivation entry both public readers share — `migrationTransfers` and
-    /// `migrationViewSnapshot` — returning the rows, the engine statuses those rows were derived
-    /// from (`nil` when the engine was not readable in this pass: cache-served, degraded read, or
-    /// the synthesized fallback), and whether the cache served. The side effects that must happen
-    /// exactly once per REAL derivation (rows-cache fill, view-freshness stamp) live here, so the
-    /// two readers cannot drift apart.
+    /// `migrationViewSnapshot` — returning the rows and the engine statuses those rows were derived
+    /// from (`nil` when the engine was not readable in this pass — a degraded read, or the
+    /// synthesized fallback).
+    ///
+    /// Q2-1: used to also cache the rows and stamp view-freshness here, bridging reads that queued
+    /// behind proof chunks on the DB write actor (field-caught 2026-08-02, a 33-second blank
+    /// screen). The SDK now serves this read from a read-only connection in milliseconds, so every
+    /// call derives fresh — the freshness stamp moved to `publishSnapshot`, the one place a build
+    /// actually reaches the screen.
     private func transferDerivation(
         accountUUID: AccountUUID?
-    ) async -> (rows: [MigrationTransferRow], statuses: [MigrationTransactionStatus]?, servedFromCache: Bool) {
-        // THE ACTOR-STARVATION GUARD (field-caught 2026-08-02: a 33-second blank screen).
-        //
-        // `SlipstreamSynchronizer` is an ACTOR, and `finalizeReadyMigrationTransfers` — the prove
-        // sweep — is one of its members. So is `migrationTransactionStatuses`, which every row and
-        // banner derivation below depends on. While a sweep runs, the actor's executor is occupied
-        // and EVERY UI read queues behind it:
-        //
-        //     [MIG s2 +2.46s]  advance step (afterSync): prove(id: 0, …)
-        //     [MIG s2 +35.80s] prove sweep: proved 2 transaction(s)
-        //     [MIG s2 +35.92s] 🐌 SLOW READ migrationTransfers took 33.45s
-        //     [MIG s2 +35.93s] 🐌 SLOW READ bannerVariant took 32.17s   (×3)
-        //
-        // Thirty-three seconds of blank screen with a spinner, which the tester correctly read as
-        // "never progresses" — while the run underneath was in fact progressing perfectly.
-        //
-        // Serving the cache here is not a degradation, it is the honest answer: the rows CANNOT have
-        // changed during the sweep, because the sweep is what would change them and it has not
-        // finished. The caller renders the snapshot with its "updating…" note, and the poke fired
-        // when the sweep completes brings the real values in.
-        if isMigrationWorkInFlight, let cached = cachedTransferRows(accountUUID: accountUUID) {
-            // M5: the cached statuses ride along — a cache-serve keeps `inFlightPoolCorrection` at
-            // full precision instead of silently degrading to the coarser rows-only fallback.
-            return (cached.transfers, cached.statuses, true)
-        }
-        let derived = await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
-        // Cache for the next visit's instant paint — see `MigrationRowsSnapshot`. Only a NON-EMPTY
-        // result is worth keeping: `[]` means "nothing derivable", and prefilling a screen with it
-        // would be the blank screen again, just without the spinner to explain itself.
-        //
-        // The cache stores the UNSTAMPED rows: `isSubmitting` is a truth of THIS INSTANT, and a
-        // cached copy of it would keep a "Sending now" caption alive after the submit returned —
-        // the exact never-ending-spinner class the field keeps catching. Both accessors stamp on
-        // the way OUT instead (see `stampingActiveSubmit`).
-        if let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id, !derived.rows.isEmpty {
-            rowsCache.withLock {
-                $0[resolvedAccountUUID] = MigrationRowsSnapshot(
-                    transfers: derived.rows,
-                    computedAt: Date(),
-                    statuses: derived.statuses
-                )
-            }
-            // The view is FRESH as of this session — see `isMigrationViewFresh`. Stamped here, at
-            // the one place the rows are actually derived, so no surface can mark itself fresh
-            // without having done the work.
-            viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
-        }
-        return (derived.rows, derived.statuses, false)
+    ) async -> (rows: [MigrationTransferRow], statuses: [MigrationTransactionStatus]?) {
+        await MigrationTrace.timed("migrationTransfers") { await migrationTransfersUntimed(accountUUID: accountUUID) }
     }
 
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
         let derivation = await transferDerivation(accountUUID: accountUUID)
-        // The cache-serve path already carries the submit stamp — `cachedTransferRows` stamps its
-        // own exit — so only a real derivation stamps here (both callers of that path agree).
-        return derivation.servedFromCache
-            ? derivation.rows
-            : stampingActiveSubmit(derivation.rows, accountUUID: accountUUID)
+        return stampingActiveSubmit(derivation.rows, accountUUID: accountUUID)
     }
 
     /// D3/D6: overlays `isSubmitting` on the one transfer row whose id the CURRENT broadcast
@@ -1019,8 +963,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// "Transfer N is sending" number reads), while `broadcastsInFlight` says a submit call is
     /// open. This is what lights the row's "Sending now" caption during the in-place Send now's
     /// ~7 s window, from the same two facts the banner and the snapshot's `isSubmitting` read —
-    /// one clock, three renderings. Applied at the accessors' EXITS, never persisted into
-    /// `rowsCache`: the flag is true only while the call is actually open.
+    /// one clock, three renderings. Applied at the accessor's EXIT, never baked into a stored
+    /// derivation: the flag is true only while the call is actually open.
     private func stampingActiveSubmit(_ rows: [MigrationTransferRow], accountUUID: AccountUUID?) -> [MigrationTransferRow] {
         guard
             let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
@@ -1035,74 +979,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    /// See `MigrationManagerClient.cachedTransferRows` — SYNCHRONOUS by design, because a value a
-    /// reducer has to await is a value the screen has to draw a spinner for.
-    ///
-    /// D3/D6: stamped on the way out (`stampingActiveSubmit`), so the instant-paint copy a reducer
-    /// draws during an in-place submit shows the submitting row exactly as the fresh derivation
-    /// would — the stored cache itself stays unstamped (the flag is per-instant, never persisted).
-    ///
-    /// M5 (field, 2026-08-04): AGE-GATED — serves only an epoch young enough to be bridging
-    /// in-flight work (`MigrationRowsSnapshot.maxServableAge`). The starvation guards' "cannot
-    /// have changed mid-work" justification holds across one sweep or broadcast, not across an
-    /// absence: a suspended app carried this cache over a 90-minute gap, and under an overdue
-    /// pile-up (every open a broadcast session, work always in flight) the guards resurrected the
-    /// pre-gap world — the screen alternated between two internally-consistent epochs (Lukas's
-    /// two-worlds screenshots). A refused epoch costs one fresh derivation behind at most one
-    /// broadcast (~7 s), which O2's evaluating/updating states already cover honestly.
-    func cachedTransferRows(accountUUID: AccountUUID?) -> MigrationRowsSnapshot? {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
-        guard var snapshot = rowsCache.withLock({ $0[resolvedAccountUUID] }) else { return nil }
-        guard snapshot.isServable(asOf: Date()) else {
-            MigrationTrace.event(
-                "rows cache REFUSED — epoch \(Int(Date().timeIntervalSince(snapshot.computedAt)))s old"
-                + " > \(Int(MigrationRowsSnapshot.maxServableAge))s bound (M5 gate)"
-            )
-            return nil
-        }
-        snapshot.transfers = stampingActiveSubmit(snapshot.transfers, accountUUID: resolvedAccountUUID)
-        return snapshot
-    }
-
-    /// M5: epoch-BLIND existence check, for the ONE consumer whose question is "does a run exist"
-    /// rather than "what does it look like" — `reentryRoute`'s work-in-flight short-circuit. A
-    /// stale epoch still proves a run exists (routing on it is safe; rendering from it is not),
-    /// and without this the first open after a long absence would lose the fast route and queue
-    /// its six actor-bound reads behind the in-flight broadcast.
-    private func hasCachedRun(accountUUID: AccountUUID?) -> Bool {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
-        return rowsCache.withLock { $0[resolvedAccountUUID] != nil }
-    }
-
-    /// In-memory only, and deliberately so: it is a paint accelerator, not state. A cold launch has
-    /// nothing to show instantly and correctly falls back to the loading state; nothing here is ever
-    /// the source of truth for a decision.
-    private let rowsCache = OSAllocatedUnfairLock<[AccountUUID: MigrationRowsSnapshot]>(initialState: [:])
-
-    /// MOB-1466 — the same starvation guard as `rowsCache`, for the other two reads the migration
-    /// screen's hydration awaits. `reentryRoute`'s short-circuit made the ROUTE fast; the screen
-    /// still blanked because `statusProgressState` then awaited `migrationSummary` and
-    /// `migrationPreparationRows`, both unguarded, both queued behind the same prove sweep.
-    ///
-    /// Safe to serve stale here where it was NOT safe for the route (see `reentryRoute`): these are
-    /// CONTENT. A summary and a set of preparation rows cannot have changed while the actor that
-    /// produces them was blocked, and the screen re-hydrates on its next pass regardless.
-    // M5: both stamped with their computation time — the guards may bridge in-flight work,
-    // never an absence (see `MigrationRowsSnapshot.maxServableAge`).
-    private let summaryCache =
-        OSAllocatedUnfairLock<[AccountUUID: (value: MigrationSummary, computedAt: Date)]>(initialState: [:])
-    private let preparationRowsCache =
-        OSAllocatedUnfairLock<[AccountUUID: (value: [MigrationTransferRow]?, computedAt: Date)]>(initialState: [:])
-
     /// GROUND_RULES R11: the last WALLET-CONFIRMED txid set each account derived — the display-form
     /// hex ids (`TransactionState.id` ≡ `SentRecord.txId`, both `toHexStringTxId()`) of every
     /// transaction the wallet's OWN store has observed mined. This is the set that decides which
     /// rows render green: same standard as Activity and the home balances, because it IS their
     /// source (`getAllTransactions`).
     ///
-    /// Kept for the same two reasons the row caches above exist. (1) Starvation: the read queues
-    /// behind prove sweeps like every other DB read here, and rows served from `rowsCache` during a
-    /// sweep must not pay for a fresh confirmation read that cannot change mid-sweep anyway.
+    /// Kept for two reasons of its own. (1) Starvation: the read queues behind prove sweeps like
+    /// every other DB read here, and a derivation must not pay for a fresh confirmation read on
+    /// every single pass when the confirmed set cannot have changed mid-sweep anyway.
     /// (2) Degradation: a TRANSIENT read failure must not repaint every green row as "Confirming…"
     /// for one derivation pass — on failure the last known set stands. `nil` (no read has EVER
     /// succeeded) tells the derivation to fall back to ENGINE truth rather than un-confirm the
@@ -1150,8 +1035,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    /// True while LONG migration work occupies the `SlipstreamSynchronizer` actor — see the guard in
-    /// `migrationTransfers`.
+    /// True while LONG migration work occupies the `SlipstreamSynchronizer` actor — see the
+    /// short-circuit in `reentryRoute`.
     ///
     /// Covers BOTH occupants, and the second one was field-caught 2026-08-02 after the first was
     /// fixed. The prove sweep is the obvious one (tens of seconds). The broadcast is the sneaky one:
@@ -1165,10 +1050,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// CONDITION (the actor is busy) rather than after one of its causes is what stops a third
     /// occupant from being missed the same way.
     ///
-    /// Not a lock and deliberately not one: it never GATES the work, it only tells the read paths
-    /// that the actor they are about to await is busy for seconds, so they should answer from cache
-    /// instead of queueing. A stale read of this flag costs one slow read or one slightly-early
-    /// fresh one; neither is a correctness problem.
+    /// Not a lock and deliberately not one: it never GATES the work. Q2-1 retired every read path
+    /// that used to consult it for content (their reads are read-only-connection-fast now, so there
+    /// is nothing left worth bridging) — the one remaining reader is `reentryRoute`'s short-circuit,
+    /// which treats a `true` reading as license to skip straight to the read-only fallback route
+    /// instead of awaiting the still-serialized `migrationAdvanceStep`. A stale read of this flag
+    /// costs one overly-conservative route, never a correctness problem.
     private let migrationWorkInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     /// Audit 2026-08-03 (#13): the accounts whose LAST driver discharge answered `.needsUser` —
@@ -1192,21 +1079,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
 
-    /// ONE DERIVATION, TWO RENDERINGS — whether the cached migration view was produced by the LIVE
-    /// session, and so whether any surface rendering it is showing this app-open's answer or the
-    /// last one's.
+    /// ONE DERIVATION, TWO RENDERINGS — whether the PUBLISHED migration snapshot was produced by
+    /// the LIVE session, and so whether any surface rendering it is showing this app-open's answer
+    /// or the last one's.
     ///
     /// Both the banner and the migration screen read this. That is the entire point: they can no
     /// longer disagree about freshness, because there is one answer and they share it.
     ///
-    /// `false` before the first derivation of a session — which is correct, and is what lets a
+    /// `false` before the first publish of a session — which is correct, and is what lets a
     /// surface show "checking" instead of last session's conclusion.
     var isMigrationViewFresh: Bool {
         guard let current = MigrationTrace.currentSessionOrdinal else { return false }
         return viewSnapshotSession.withLock { $0 } == current
     }
 
-    /// The session ordinal the row cache was last populated in — see `isMigrationViewFresh`.
+    /// The session ordinal the snapshot pipeline last published in — see `isMigrationViewFresh`.
     private let viewSnapshotSession = OSAllocatedUnfairLock<Int?>(initialState: nil)
 
     /// GOAL 1: whether the wallet is caught up enough to be ASKED about migrating — see the gate in
@@ -1463,6 +1350,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             $0.afterSyncSpentSession = nil
         }
         MigrationTrace.event("R0 open-lane credits refunded — a fresh schedule was committed; the commit's own drive may proceed")
+        // A newborn run must not wait for the next poke to appear on screen: publish now.
+        refreshMigrationSnapshot(accountUUID: resolvedAccountUUID)
     }
 
     /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule;
@@ -2375,33 +2264,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
         guard !accountUUIDs.isEmpty else { return 0 }
 
-        // MOB-1466 (smart-banner pass): poke BEFORE the sweep, not only after it. `isPreparing` is
-        // already true on the rows at this point — the engine has been saying "ready to prove"
-        // since the previous read — but nothing had asked the banner to look since then, so on a
-        // cold app-open the "Migration Progress · Keep Zodl open" banner would first render at the
-        // post-sweep `reconcile()`, i.e. exactly when it stopped being true. Proving is chunked
-        // (utility QoS) and takes seconds to tens of seconds; this is the window the banner exists
-        // for. A poke is a re-send of the account's current subject value — cheap, idempotent.
-        // WARM THE CACHE BEFORE TAKING THE ACTOR, then flag. Order is the whole fix.
-        //
-        // The poke below asks every subscriber to re-derive. Until 08-02 that derive raced the sweep
-        // and LOST — it queued on the same actor and returned 33 seconds later, which is precisely
-        // the blank screen the poke was added to prevent. Deriving first, while the actor is still
-        // free, means the poke is answered instantly from a cache that is milliseconds old; the
-        // guard in `bannerVariant`/`migrationTransfers`/`migrationSummary`/`migrationPreparationRows`
-        // then keeps every later read off the actor until the sweep is done.
-        //
-        // MOB-1466 (T8 follow-up): `bannerVariant` only ever needed `migrationTransfers` warmed — but
-        // the Migration Progress screen's OWN hydration (`statusProgressState`) also awaits
-        // `migrationSummary` and `migrationPreparationRows` (see `summaryCache`'s doc), which were
-        // never on this list. So the sequence launch -> sweep starts -> user taps the SmartBanner
-        // "More" before any hydration ever completed still fell through those two guards and waited
-        // out proof chunks on the DB actor, once per launch. `warmHydrationCaches` below closes that
-        // gap for all three.
-        for accountUUID in accountUUIDs {
-            _ = await bannerVariant(accountUUID: accountUUID)
-            await warmHydrationCaches(accountUUID: accountUUID)
-        }
         setMigrationWorkInFlight(true)
         defer { setMigrationWorkInFlight(false) }
 
@@ -2454,20 +2316,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         } else {
             fruitlessProveSweeps.withLock { $0 = 0 }
         }
+        // Post-sweep republish: the proofs this sweep persisted are the news; with the
+        // serve-stale layer gone, the builds these pokes trigger read them directly.
+        for accountUUID in accountUUIDs {
+            pokeStateEvent(for: accountUUID)
+        }
         return proved
-    }
-
-    /// Pre-sweep cache warm-up: the serve-stale guards in `migrationTransfers` /
-    /// `migrationSummary` / `migrationPreparationRows` can only serve what a completed
-    /// hydration once stored — and a fresh process has stored nothing, so the first
-    /// banner tap during a sweep used to fall through every guard and wait out proof
-    /// chunks on the DB actor. Computing the three answers HERE, while the actor is
-    /// still free, means any tap during the sweep serves the at-sweep-start snapshot
-    /// instantly; the sweep-end poke refreshes it as always.
-    private func warmHydrationCaches(accountUUID: AccountUUID) async {
-        _ = await migrationTransfers(accountUUID: accountUUID)
-        _ = await migrationSummary(accountUUID: accountUUID)
-        _ = await migrationPreparationRows(accountUUID: accountUUID)
     }
 
     /// Consecutive prove sweeps that produced nothing WHILE the engine reported rows as
@@ -2714,13 +2568,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // D6: the id THIS session submits — the banner renders it, never a row-inferred guess.
             activeBroadcastTxIds.withLock { $0[accountUUID] = id }
 
-            // Warm the caches BEFORE the submit takes the actor, then flag — the same order that
-            // fixed the prove sweep, applied to the occupant that fix did not reach. A Tor bootstrap
-            // plus a submit holds the synchronizer for 4–7 s, EVERY broadcast session, and the poke
-            // below would otherwise queue behind it and land after the broadcast. A tester tapping
-            // the banner in that window got a blank screen with a spinner.
-            _ = await bannerVariant(accountUUID: accountUUID)
-            _ = await migrationTransfers(accountUUID: accountUUID)
             setMigrationWorkInFlight(true)
 
             pokeStateEvent(for: accountUUID)
@@ -2986,21 +2833,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// so a multi-transaction split shows each transaction with its own state and ETA instead of one
     /// summary row. `nil` when the statuses carry no preparation at all (no run stored yet, or a
     /// read failure), which tells the caller to fall back to its synthesized single row.
-    /// MOB-1466: see `migrationSummary` — same guard, same reasoning.
     func migrationPreparationRows(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
-        let resolved = accountUUID ?? selectedWalletAccount?.id
-        // M5: age-gated like `cachedTransferRows` — see `migrationSummary`.
-        if isMigrationWorkInFlight,
-            let resolved,
-            let cached = preparationRowsCache.withLock({ $0[resolved] }),
-            Date().timeIntervalSince(cached.computedAt) <= MigrationRowsSnapshot.maxServableAge {
-            return cached.value
-        }
-        let value = await migrationPreparationRowsComputing(accountUUID: accountUUID)
-        if let resolved {
-            preparationRowsCache.withLock { $0[resolved] = (value, Date()) }
-        }
-        return value
+        await migrationPreparationRowsComputing(accountUUID: accountUUID)
     }
 
     private func migrationPreparationRowsComputing(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
@@ -3197,17 +3031,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// notifications too.
     func wipeAllMigrationState() async {
         MigrationTrace.notificationCancelled("wallet reset")
-        rowsCache.withLock { $0.removeAll() }
-        summaryCache.withLock { $0.removeAll() }
-        preparationRowsCache.withLock { $0.removeAll() }
         // `nil` scope — the wallet reset is the one caller that genuinely means EVERY account.
         await userNotifications.cancelMigrationNotifications(nil)
         gateStorage.wipeEverything()
         broadcastsInFlight.withLock { $0.removeAll() }
-        // Audit 2026-08-03 (#19): the wipe used to clear rowsCache and broadcastsInFlight and
-        // leave every sibling map behind — a same-seed restore (same AccountUUIDs) could then be
-        // served the PREVIOUS wallet's banner from the work-in-flight cache path, and the other
-        // holdovers survived into the next wallet's process lifetime for no reason.
+        // Audit 2026-08-03 (#19): the wipe used to clear the rows cache (since retired — Q2-1) and
+        // broadcastsInFlight and leave every sibling map behind — a same-seed restore (same
+        // AccountUUIDs) could then be served the PREVIOUS wallet's banner from the work-in-flight
+        // cache path, and the other holdovers survived into the next wallet's process lifetime for
+        // no reason.
         //
         // R13 Brick 2b: `bannerCache` is gone (the published snapshot IS the banner's cache), so
         // the published values are the holdover to clear now — exactly the same same-seed-restore
@@ -3482,14 +3314,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private func scheduleSnapshotRepublish(for accountUUID: AccountUUID) {
         guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
 
-        // R13 Brick 2b: while a sweep/broadcast occupies the actor, a build would only queue
-        // behind it and publish a value the completion is about to supersede — so mid-work
-        // requests are dropped, and the COMPLETION poke (every sweep and broadcast edge fires
-        // one; see `transferDerivation`'s "the poke fired when the sweep completes" contract)
-        // re-schedules the moment the work ends. The UI keeps the last published value with its
-        // honest age meanwhile, which is exactly the starvation posture Brick 2 chose. Also what
-        // keeps `MigrationCacheWarmupTests`' pin true: mid-sweep, nothing re-reads the engine.
-        guard !isMigrationWorkInFlight else { return }
+        // Q2-1: builds no longer wait behind migration work — the SDK serves the read paths
+        // from read-only connections — so requests are never dropped; the dirty/inFlight
+        // coalescing below still collapses bursts to at most two builds.
 
         let shouldStart = snapshotRepublishState.withLock { state -> Bool in
             if state.inFlight.contains(accountUUID) {
@@ -3527,6 +3354,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// changed nothing says so, and a published value prints the exact figures every surface's own
     /// "SNAPSHOT applied" line must echo. DB → loader → channel → pixels, confirmable by grep.
     private func publishSnapshot(_ snapshot: MigrationViewSnapshot, for accountUUID: AccountUUID) {
+        // The session-freshness stamp lives at the publish point now (the rows cache it used
+        // to ride on is retired): a build that completed THIS session is what "fresh" means.
+        viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
+
         let subject = snapshotSubjects.withLock { subjects -> CurrentValueSubject<MigrationViewSnapshot?, Never> in
             if let existing = subjects[accountUUID] {
                 return existing
@@ -3591,10 +3422,10 @@ enum MigrationDerivations {
     ///   before broadcast (`.proved` carries no txid to look one up by). The source bubble reads
     ///   LOW by at most one fee per in-flight transfer (~10–20k zatoshi, transient) — conservative,
     ///   never future-tense, exact at rest.
-    /// - `statuses == nil` means the engine could not be read in the rows' own pass (cache-served
-    ///   during a sweep, a degraded read, or the synthesized fallback): only `.confirming` rows
-    ///   contribute then — those are stored BY CONSTRUCTION (broadcast). Freshly-proved pollution
-    ///   inside a sweep window corrects itself at the post-sweep poke's full pass.
+    /// - `statuses == nil` means the engine could not be read in the rows' own pass (a degraded
+    ///   read, or the synthesized fallback): only `.confirming` rows contribute then — those are
+    ///   stored BY CONSTRUCTION (broadcast). Freshly-proved pollution inside a sweep window
+    ///   corrects itself at the post-sweep poke's full pass.
     /// - `.invalid` engine states contribute nothing: whether their stored transaction still counts
     ///   is unknowable here; the residual dies with store-at-broadcast.
     /// - SPLITS are exempt: intra-Orchard, their net unmined effect is −fee only (same bound).

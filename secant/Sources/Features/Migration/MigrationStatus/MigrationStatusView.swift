@@ -282,8 +282,8 @@ struct MigrationStatusView: View {
     /// R13-3: the wallet-facts age label, from the snapshot's own `asOfSyncedAt` (see the render
     /// site's comment). `nil` — line hidden — when no sync has ever completed (nothing honest to
     /// state) or when the age is under the threshold (fresh enough that a label is noise; 2 min,
-    /// matching the caches' own `maxServableAge` notion of "recent"). Bucketed to minutes then
-    /// hours, floored — a floored age errs stale-looking, never fresh-looking.
+    /// a couple of minutes). Bucketed to minutes then hours, floored — a floored age errs
+    /// stale-looking, never fresh-looking.
     private var asOfLine: String? {
         guard let syncedAt = store.poolFlow.asOfSyncedAt else { return nil }
         let ageMinutes = Int(Date().timeIntervalSince(syncedAt) / 60)
