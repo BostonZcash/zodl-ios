@@ -271,6 +271,181 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 0, "the broadcast lane must never run")
     }
 
+    // MARK: - Kind-aware preparation delivery (AUD-3)
+
+    /// A status row whose kind marks the id as a note-PREPARATION — the discriminator every
+    /// AUD-3 policy site (plan's afterSync cell, mode belt, manual hold, buffer, visit) keys off.
+    private static func preparationStatus(id: UInt32) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: id,
+            kind: .preparation(layer: 0, index: 0),
+            state: .proved,
+            scheduledHeight: 4_134_100,
+            expiryHeight: nil,
+            isReady: true,
+            nextAction: .broadcast,
+            blockedOn: nil,
+            dependsOn: [],
+            anchorBoundaryHeight: nil
+        )
+    }
+
+    /// F2: "a preparation is broadcast as soon as it is proved" (the engine's own contract) — a
+    /// proved prep offered at the sync edge goes out AT that edge instead of costing the user a
+    /// whole extra open. ZIP 318 exempts preps from the sync/broadcast separation.
+    @Test func afterSyncDeliversAProvedPreparationAtTheEdge() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "prep-at-edge"))
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .broadcast(id: 9), "a proved prep is delivered at the edge that proved it, got \(verdict)")
+        #expect(submissionCalls.value == 1)
+    }
+
+    /// The transfer half of the same cell stands: a TRANSFER broadcast at the sync edge still
+    /// defers to the next open (ZIP 318's session separation is exactly about transfers).
+    @Test func afterSyncStillDefersATransferBroadcastToTheNextOpen() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationTransactionStatuses: { _ in [] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "must-not-run"))
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .deferredToPhase, "a transfer at the edge waits for the next open, got \(verdict)")
+        #expect(submissionCalls.value == 0)
+    }
+
+    /// F1: the post-sync privacy buffer is a TRANSFER rule — a prep's wake-up IS a sync session,
+    /// so the buffer would otherwise hold every prep by construction. Stamped gate + 600 s buffer:
+    /// the transfer arm holds, the prep arm delivers.
+    @Test func beforeSyncPreparationDeliveryBypassesThePrivacyBuffer() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "prep-past-buffer"))
+                },
+                migrationPrivacySyncBufferDuration: { 600 }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let storage = Self.freshGateStorage(mode: .privateScheduled)
+            storage.recordSyncCompleted(at: Date())
+            let manager = MigrationManagerImpl(gateStorage: storage, sessionOrdinalProvider: { 1 })
+            return await manager.advance(phase: .beforeSync)
+        }
+
+        #expect(verdict == .broadcast(id: 9), "the buffer never holds a preparation, got \(verdict)")
+        #expect(submissionCalls.value == 1)
+    }
+
+    /// The buffer's transfer arm is untouched: same stamped gate, transfer kind → held.
+    @Test func beforeSyncTransferBroadcastStaysHeldByThePrivacyBuffer() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationTransactionStatuses: { _ in [] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "must-not-run"))
+                },
+                migrationPrivacySyncBufferDuration: { 600 }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let storage = Self.freshGateStorage(mode: .privateScheduled)
+            storage.recordSyncCompleted(at: Date())
+            let manager = MigrationManagerImpl(gateStorage: storage, sessionOrdinalProvider: { 1 })
+            return await manager.advance(phase: .beforeSync)
+        }
+
+        guard case .held = verdict else {
+            Issue.record("a transfer inside the buffer must hold, got \(verdict)")
+            return
+        }
+        #expect(submissionCalls.value == 0)
+    }
+
+    /// F4: the mode belt is transfer pacing — an `.immediate` run's due PREPARATION still
+    /// tick-delivers (the existing immediate-mode test pins the transfer arm's hold).
+    @Test func tickDeliversAnImmediateRunsDuePreparation() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "prep-on-tick"))
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .immediate))
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(verdict == .broadcast(id: 9), "an immediate-mode run's prep still tick-delivers, got \(verdict)")
+        #expect(submissionCalls.value == 1)
+    }
+
     // MARK: - The at-tip tick prove (follow-mode liveness)
 
     /// Slipstream's follow mode pins the wallet at `.upToDate` with no re-firing sync edge, so a

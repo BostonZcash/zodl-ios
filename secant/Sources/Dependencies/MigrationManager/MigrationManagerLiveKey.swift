@@ -2262,7 +2262,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
         guard !accountUUIDs.isEmpty else { return .sync }
 
-        var steps: [MigrationAdvanceStep?] = []
+        // AUD-3: decided PER ACCOUNT and OR-ed — transfer ids are per-run, so two accounts can
+        // both own id 3 and a pooled id set would misclassify. A due PREPARATION broadcast keeps
+        // the visit `.sync` (ZIP-exempt — see `MigrationVisit`'s header); only TRANSFER dueness
+        // suppresses sync for the open.
+        var visit = MigrationVisit.sync
         for accountUUID in accountUUIDs {
             let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
             // THE key driver, logged verbatim. Everything this lane does follows from the engine's
@@ -2271,13 +2275,41 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // `broadcast`, so "nothing is happening" could not be told from "the engine is asking
             // for something nobody does".
             LoggerProxy.event("\(Self.logTag) advance step: \(step.map { String(describing: $0) } ?? "none (no run)")")
-            steps.append(step)
+
+            var preparationIds: Set<UInt32> = []
+            if case MigrationAdvanceStep.broadcast? = step {
+                preparationIds = await preparationTransactionIds(accountUUID: accountUUID)
+            }
+            if MigrationVisit.decide(advanceSteps: [step], preparationIds: preparationIds) == MigrationVisit.send {
+                visit = MigrationVisit.send
+            } else if case let MigrationAdvanceStep.broadcast(id)? = step, preparationIds.contains(id) {
+                LoggerProxy.event(
+                    "\(Self.logTag) preparation \(id) due — ZIP-exempt, the session stays a sync session (AUD-3)"
+                )
+            }
         }
-        let visit = MigrationVisit.decide(advanceSteps: steps)
         if visit == .send {
             LoggerProxy.event("\(Self.logTag) broadcast due — this session will NOT sync")
         }
         return visit
+    }
+
+    /// AUD-3: the ids of `accountUUID`'s note-PREPARATION transactions, from the same statuses
+    /// read every surface uses. ZIP 318 scopes the sync/broadcast separation and the post-sync
+    /// buffer to TRANSFERS ("a preparation transaction is a fully shielded send-to-self"), so
+    /// every kind-aware policy site (the visit, the plan's afterSync cell, the mode belt, the
+    /// manual-delivery hold, the send gate) keys off this set. A failed read degrades to the
+    /// EMPTY set — i.e. to the conservative transfer treatment, never to an over-eager send.
+    func preparationTransactionIds(accountUUID: AccountUUID) async -> Set<UInt32> {
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? []
+        return Set(
+            statuses.compactMap { status in
+                if case MigrationTransactionStatus.Kind.preparation = status.kind {
+                    return status.id
+                }
+                return nil
+            }
+        )
     }
 
     /// THE PROVE SWEEP over every candidate account — see `MigrationManagerClient.runProveSweep`.
@@ -2525,7 +2557,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the belt had just held (an `.immediate` account's due transfer delivered off a tick). The
     /// driver now passes the account it vetted and the session delivers THAT one; the wallet-wide
     /// sweep remains for the parameterless client member (no production caller today).
-    func runBroadcastSession(vettedAccountUUID: AccountUUID? = nil) async -> Bool {
+    /// `vettedPreparationDelivery` (AUD-3): the driver vetted this session's id as a note-
+    /// PREPARATION. ZIP 318 exempts preps from the post-sync privacy buffer and from the
+    /// manual-delivery contract (a prep is wallet plumbing, never a user-pressed send — holding
+    /// it for a button that does not exist wedged manual accounts' preps forever), so both holds
+    /// below are skipped. The submit itself is unchanged — same artifact handout, same outcome
+    /// verification, same `mark_broadcast` recording.
+    func runBroadcastSession(vettedAccountUUID: AccountUUID? = nil, vettedPreparationDelivery: Bool = false) async -> Bool {
         guard isIronwoodActivated() else { return false }
 
         let accountUUIDs = vettedAccountUUID.map { [$0] } ?? MigrationDerivations.candidateAccountUUIDs(
@@ -2559,18 +2597,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // sync stall a run indefinitely — but it is logged, because a broadcast on the heels of a
         // live sync is the tightest adjacency of all and we currently have no field data on how
         // often this lane meets one.
-        let gate = await sendGate()
-        switch gate {
-        case MigrationSendGate.waitUntil(let gateUntil):
-            LoggerProxy.event(
-                "\(Self.logTag) broadcast held by the privacy buffer until \(gateUntil)"
-                + " — \(Int(gateUntil.timeIntervalSinceNow))s to go; this session does nothing"
-            )
-            return false
-        case MigrationSendGate.syncRequired:
-            LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
-        case MigrationSendGate.allowed:
-            break
+        // AUD-3: the buffer is a TRANSFER rule — a vetted PREPARATION delivery skips this consult
+        // entirely (ZIP 318: "a preparation transaction is a fully shielded send-to-self"; its
+        // wake-up IS a sync session, so the buffer would otherwise hold every prep by
+        // construction). `broadcastOneTransfer`'s own stop-if-syncing handling still applies.
+        if !vettedPreparationDelivery {
+            let gate = await sendGate()
+            switch gate {
+            case MigrationSendGate.waitUntil(let gateUntil):
+                LoggerProxy.event(
+                    "\(Self.logTag) broadcast held by the privacy buffer until \(gateUntil)"
+                    + " — \(Int(gateUntil.timeIntervalSinceNow))s to go; this session does nothing"
+                )
+                return false
+            case MigrationSendGate.syncRequired:
+                LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
+            case MigrationSendGate.allowed:
+                break
+            }
         }
 
         for accountUUID in accountUUIDs {
@@ -2606,7 +2650,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // session — the engine says a broadcast is due, and that is what makes the session a
             // send one regardless of who presses the button — so the transfer stays deliverable the
             // moment they tap. This lane simply never taps for them.
-            guard !gateStorage.isManualDelivery(for: accountUUID) else {
+            //
+            // AUD-3: manual delivery is a TRANSFER contract — there is no user button for a
+            // note-PREPARATION, so holding one here wedged a manual account's preps forever. A
+            // vetted prep delivery skips the hold.
+            guard vettedPreparationDelivery || !gateStorage.isManualDelivery(for: accountUUID) else {
                 LoggerProxy.event("\(Self.logTag) broadcast \(id) is due but delivery is manual — leaving it to the user")
                 continue
             }

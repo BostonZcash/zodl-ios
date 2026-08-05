@@ -64,4 +64,26 @@ import ZcashLightClientKit
         #expect(MigrationVisit.decide(advanceSteps: [nil, nil]) == .sync)
         #expect(MigrationVisit.decide(advanceSteps: [nil, .broadcast(id: 1)]) == .send)
     }
+
+    // MARK: - Kind-aware broadcasts (AUD-3)
+
+    /// A due PREPARATION broadcast is ZIP-exempt from the session separation ("a fully shielded
+    /// send-to-self") — its open stays a sync session, exactly the wake-up that proves AND
+    /// broadcasts it.
+    @Test func aDuePreparationBroadcastStaysASyncVisit() {
+        #expect(MigrationVisit.decide(advanceSteps: [.broadcast(id: 7)], preparationIds: [7]) == .sync)
+    }
+
+    /// A due TRANSFER beside a due preparation still suppresses sync — the exemption is
+    /// per-transaction, never per-open.
+    @Test func aDueTransferBesideAPreparationIsStillASendVisit() {
+        let steps: [MigrationAdvanceStep?] = [.broadcast(id: 7), .broadcast(id: 3)]
+        #expect(MigrationVisit.decide(advanceSteps: steps, preparationIds: [7]) == .send)
+    }
+
+    /// The conservative default: with no id set supplied, every broadcast is treated as a
+    /// transfer — the pre-AUD-3 behavior, and the safe direction for a failed statuses read.
+    @Test func withoutAKindSetEveryBroadcastIsATransfer() {
+        #expect(MigrationVisit.decide(advanceSteps: [.broadcast(id: 7)]) == .send)
+    }
 }

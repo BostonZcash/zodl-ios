@@ -411,7 +411,21 @@ extension MigrationManagerImpl {
         }
 
         for (accountUUID, step) in steps {
-            var action = MigrationStepPlan.action(for: step, phase: phase, isWalletAtTip: isWalletAtTip)
+            // AUD-3: kind-awareness for the broadcast cells. A note-PREPARATION is ZIP-exempt from
+            // the transfer-only throttles (session separation, buffer, mode belt, manual hold),
+            // and the plan's `.afterSync` broadcast cell forks on it — so the kind is derived
+            // BEFORE the plan is consulted, from the same statuses read every surface uses. Lazy:
+            // only a `.broadcast` step pays the read.
+            var isPreparationBroadcast = false
+            if case let MigrationAdvanceStep.broadcast(id)? = step {
+                isPreparationBroadcast = await preparationTransactionIds(accountUUID: accountUUID).contains(id)
+            }
+            var action = MigrationStepPlan.action(
+                for: step,
+                phase: phase,
+                isWalletAtTip: isWalletAtTip,
+                isPreparationBroadcast: isPreparationBroadcast
+            )
             // ONE-CLOCK DISPATCH (AUD-1, 2026-08-05): `.waiting` is SCANNED-frame truth — the SDK
             // contract evaluates `migrationAdvanceStep` "on the SCANNED tip only" — while the sync
             // gate's ready-broadcast query, the pokes, and the submit all judge dueness at the
@@ -425,8 +439,9 @@ extension MigrationManagerImpl {
             // authority — `.nothingDue`/`.awaitingProof` degrade to a held verdict, never a wrong
             // send. ONLY `.waiting`, ONLY `.beforeSync`: `.prove`/`.rebuild`/`.requiresAttention`
             // keep their productive plan routes (the gate never blocks sync for an unproven row,
-            // so those cases have no wedge), `.afterSync` must never broadcast (table law), and
-            // ticks stay confined to the mode belt.
+            // so those cases have no wedge), `.afterSync` never broadcasts a TRANSFER (table law —
+            // a proved preparation may, AUD-3), and ticks stay confined to the mode belt (preps
+            // exempt, AUD-3).
             if phase == MigrationOpenPhase.beforeSync,
                 action == MigrationStepAction.armWakeups,
                 (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
@@ -435,8 +450,15 @@ extension MigrationManagerImpl {
                     "\(Self.logTag) one-clock dispatch: scanned step says waiting but the estimate says transfer \(proposal.id) is due — attempting delivery (AUD-1)"
                 )
                 action = MigrationStepAction.broadcast(id: proposal.id)
+                // AUD-3: the est-dispatched id gets the same kind check as a step-named one.
+                isPreparationBroadcast = await preparationTransactionIds(accountUUID: accountUUID).contains(proposal.id)
             }
-            let verdict = await execute(action, accountUUID: accountUUID, phase: phase)
+            let verdict = await execute(
+                action,
+                accountUUID: accountUUID,
+                phase: phase,
+                isPreparationBroadcast: isPreparationBroadcast
+            )
 
             // Audit 2026-08-03 (#13): remember per-account whether this discharge needs the USER —
             // `armNextWindowNotifications` turns that into a near-term poke, because a blocked run
@@ -482,7 +504,8 @@ extension MigrationManagerImpl {
     private func execute(
         _ action: MigrationStepAction,
         accountUUID: AccountUUID,
-        phase: MigrationOpenPhase
+        phase: MigrationOpenPhase,
+        isPreparationBroadcast: Bool = false
     ) async -> MigrationStepVerdict {
         switch action {
         case let MigrationStepAction.broadcast(id):
@@ -499,7 +522,12 @@ extension MigrationManagerImpl {
                 // worth its own session-scoped log lines.
                 MigrationTrace.beginSession(cause: MigrationTrace.Cause.timer, tip: sdkSynchronizer.latestState().latestBlockHeight)
             }
-            return await executeBroadcast(id: id, accountUUID: accountUUID, phase: phase)
+            return await executeBroadcast(
+                id: id,
+                accountUUID: accountUUID,
+                phase: phase,
+                isPreparation: isPreparationBroadcast
+            )
 
         case MigrationStepAction.prove:
             // The sweep is wallet-wide by construction (it walks every candidate account), so it
@@ -565,7 +593,12 @@ extension MigrationManagerImpl {
     /// threaded through (rather than read from a stored property) so `MigrationStepPlan` stays
     /// pure — the plan already decided this action is due; this is the one place that still needs
     /// to know WHICH phase asked, for the mode belt below.
-    private func executeBroadcast(id: UInt32, accountUUID: AccountUUID, phase: MigrationOpenPhase) async -> MigrationStepVerdict {
+    private func executeBroadcast(
+        id: UInt32,
+        accountUUID: AccountUUID,
+        phase: MigrationOpenPhase,
+        isPreparation: Bool = false
+    ) async -> MigrationStepVerdict {
         // MOB-1466: THE MODE BELT. A tick is a broadcast opportunity ONLY for a run the user chose
         // to run on a schedule (`.privateScheduled`) — see `MigrationStepPlan`'s tick-column doc. An
         // `.immediate` run still gets its one delivery from the open lanes (`.beforeSync`); ticking
@@ -574,25 +607,44 @@ extension MigrationManagerImpl {
         // the manual-delivery read below: an immediate-mode account is never manual-delivery's
         // business to begin with, and ordering it first keeps "why this tick held" from ever being
         // misread as the user's own delivery preference.
-        if phase == MigrationOpenPhase.tick, migrationMode(accountUUID: accountUUID) != MigrationMode.privateScheduled {
+        //
+        // AUD-3: the belt is a TRANSFER pacing choice — a note-PREPARATION is wallet plumbing on
+        // the engine's own schedule, exempt regardless of mode.
+        if phase == MigrationOpenPhase.tick,
+            !isPreparation,
+            migrationMode(accountUUID: accountUUID) != MigrationMode.privateScheduled {
             return MigrationStepVerdict.held(reason: "immediate-mode run — ticks leave it to the open lanes")
         }
 
-        if gateStorage.isManualDelivery(for: accountUUID) {
+        // AUD-3: manual delivery is likewise a TRANSFER contract — no user button exists for a
+        // preparation, so the hold would wedge a manual account's preps forever.
+        if !isPreparation, gateStorage.isManualDelivery(for: accountUUID) {
             return MigrationStepVerdict.held(reason: "delivery is manual — transfer \(id) is left for the user to send")
         }
 
-        let gate = await sendGate()
-        if case let MigrationSendGate.waitUntil(gateUntil) = gate {
-            return MigrationStepVerdict.held(
-                reason: "privacy buffer until \(gateUntil) (\(Int(gateUntil.timeIntervalSinceNow))s)"
+        // AUD-3: the post-sync buffer is scoped to TRANSFERS by ZIP 318 ("a preparation
+        // transaction is a fully shielded send-to-self") — a prep's own wake-up IS a sync
+        // session, so consulting the buffer here held every single prep by construction.
+        if !isPreparation {
+            let gate = await sendGate()
+            if case let MigrationSendGate.waitUntil(gateUntil) = gate {
+                return MigrationStepVerdict.held(
+                    reason: "privacy buffer until \(gateUntil) (\(Int(gateUntil.timeIntervalSinceNow))s)"
+                )
+            }
+        } else {
+            LoggerProxy.event(
+                "\(Self.logTag) preparation \(id) delivery — ZIP-exempt from the buffer and session separation (AUD-3)"
             )
         }
 
         // The account THIS discharge vetted (mode belt, manual delivery, send gate above) is the
         // one the session delivers — see `runBroadcastSession(vettedAccountUUID:)`'s doc for the
         // held-account submission its own sweep used to make.
-        let didBroadcast = await runBroadcastSession(vettedAccountUUID: accountUUID)
+        let didBroadcast = await runBroadcastSession(
+            vettedAccountUUID: accountUUID,
+            vettedPreparationDelivery: isPreparation
+        )
         return didBroadcast
             ? MigrationStepVerdict.broadcast(id: id)
             : MigrationStepVerdict.held(reason: "broadcast session submitted nothing for transfer \(id)")

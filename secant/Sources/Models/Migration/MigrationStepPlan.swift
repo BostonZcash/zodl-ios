@@ -32,7 +32,11 @@
 //     the only phase that may broadcast.
 //   - `.afterSync` — the sync-complete edge. The wallet is at the tip, so every settled anchor is
 //     witnessable: this is the only phase that may prove. Having just synced, it must never
-//     broadcast.
+//     broadcast a TRANSFER. A note-PREPARATION is the documented exception (AUD-3, 2026-08-05):
+//     ZIP 318 scopes the sync/broadcast separation to Phase 2 transfers ("a preparation
+//     transaction is a fully shielded send-to-self"), and the engine's own contract is "a
+//     preparation is broadcast as soon as it is proved" — so a prep proved at this edge is
+//     delivered at this edge (`isPreparationBroadcast` below).
 //
 //  A step whose discharge belongs to the other phase yields `.nothing(.wrongPhase)`, which is a
 //  first-class answer meaning "this open is a sync session; let it sync and I will be asked again
@@ -154,10 +158,18 @@ enum MigrationStepPlan {
     ///   - isWalletAtTip: whether sync currently reads `.upToDate` — consulted by exactly one
     ///     cell, the `.prove` row's `.tick` column (see that case's comment). The default keeps
     ///     the conservative pre-follow-mode table; the driver always passes the live value.
+    ///   - isPreparationBroadcast: AUD-3 — whether a `.broadcast` step's id names a note-
+    ///     PREPARATION (the driver derives it from `migrationTransactionStatuses`). Consulted by
+    ///     exactly one cell, the `.broadcast` row's `.afterSync` column: ZIP 318's sync/broadcast
+    ///     separation is scoped to TRANSFERS ("a preparation transaction is a fully shielded
+    ///     send-to-self"), and the engine's own contract is "a preparation is broadcast as soon
+    ///     as it is proved" — at the very edge that proved it. The default `false` keeps the
+    ///     conservative transfer treatment.
     static func action(
         for step: MigrationAdvanceStep?,
         phase: MigrationOpenPhase,
-        isWalletAtTip: Bool = false
+        isWalletAtTip: Bool = false,
+        isPreparationBroadcast: Bool = false
     ) -> MigrationStepAction {
         guard let step else { return MigrationStepAction.nothing(MigrationStepHold.noRun) }
 
@@ -168,9 +180,15 @@ enum MigrationStepPlan {
                 // ZIP 318: a proven transfer is delivered in a session that does not sync.
                 return MigrationStepAction.broadcast(id: id)
             case MigrationOpenPhase.afterSync:
-                // This session has ALREADY synced, so broadcasting here would create exactly the
-                // adjacency the separation exists to prevent — it waits for the next open.
-                return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
+                // A TRANSFER must wait for the next open: this session has ALREADY synced, and
+                // broadcasting a pool-crossing here would create exactly the adjacency the
+                // separation exists to prevent. A PREPARATION is the documented exception
+                // (AUD-3): ZIP 318 exempts it from the separation, and deferring it here is what
+                // used to cost every prep a whole extra human open — proved at this edge, it
+                // goes out at this edge.
+                return isPreparationBroadcast
+                    ? MigrationStepAction.broadcast(id: id)
+                    : MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             case MigrationOpenPhase.tick:
                 // THE TICK COLUMN's one substantive answer — see the file header's "THE THIRD
                 // PHASE" note. A tick runs no sync of its own, same as `.beforeSync`, so the same
