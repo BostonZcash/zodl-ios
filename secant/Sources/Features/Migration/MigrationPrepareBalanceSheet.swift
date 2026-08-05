@@ -169,7 +169,9 @@ struct MigrationPrepareBalanceSheet: View {
             return .neutral
         case .readyToSend, .preparing:
             return .active
-        case .waitsOn:
+        case .scheduled, .waitsOn:
+            // A future turn and a dependency wait are the same visual weight: nothing is
+            // happening yet, and nothing needs to.
             return .pending
         case .invalid:
             // The amber exclamation the timeline already uses for invalid/expired rows — the one
@@ -186,6 +188,10 @@ struct MigrationPrepareBalanceSheet: View {
             return String(localizable: .migrationPrepareStateDone)
         case .readyToSend:
             return String(localizable: .migrationPrepareStateReady)
+        case .scheduled:
+            // The time line under the row's title carries the WHEN ("Starts in ~12 min");
+            // this trailing word only names the state.
+            return String(localizable: .migrationPrepareStateScheduled)
         case .sent:
             // The shared one-word caption Andrea's ladder gave the whole on-chain span
             // (`migrationStatus.sent`) — one key, every surface.

@@ -154,6 +154,7 @@ import ZcashLightClientKit
         #expect(MigrationPrepareBalanceSheet.stateCaption(for: .done) == String(localizable: .migrationPrepareStateDone))
         #expect(MigrationPrepareBalanceSheet.stateCaption(for: .readyToSend) == String(localizable: .migrationPrepareStateReady))
         #expect(MigrationPrepareBalanceSheet.stateCaption(for: .preparing) == String(localizable: .migrationPrepareStatePreparing))
+        #expect(MigrationPrepareBalanceSheet.stateCaption(for: .scheduled) == String(localizable: .migrationPrepareStateScheduled))
     }
 
     // MARK: - Interim ladder (provisional data, permanent shape)
@@ -233,6 +234,42 @@ import ZcashLightClientKit
         ])
 
         #expect(steps.map(\.minutesFromNow) == [41, 42], "41 and 42 minutes must not both read as 0")
+    }
+
+    // MARK: - Schedule-aware states (field, 2026-08-05)
+
+    /// A pending step whose turn is still ahead is SCHEDULED — never "Ready to send". No user
+    /// send action exists for a preparation (the app proves and delivers it), and the old
+    /// mapping stamped every pending step ready regardless of a turn minutes-to-hours away.
+    @Test func aFutureTurnReadsScheduledNotReadyToSend() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .active, minutesFromNow: 12)
+        ])
+
+        #expect(steps.first?.state == .scheduled)
+        #expect(steps.first?.minutesFromNow == 12, "the time line carries the WHEN")
+    }
+
+    /// A due step is the app's work — "Preparing" — whether or not the sweep has picked it up
+    /// yet. The field sheet this pins against: overdue rows stamped "Ready to send" with
+    /// "Starts right away" as their only time line.
+    @Test func aDueStepReadsPreparingEvenBeforeTheSweepPicksItUp() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .overdue, minutesFromNow: 0)
+        ])
+
+        #expect(steps.first?.state == .preparing)
+    }
+
+    /// On the chain's side: no forward time. A plain 0 there rendered "Starts right away"
+    /// under the word "Sent" — the same lie the done-row fix already removed.
+    @Test func aConfirmingStepCarriesNoForwardTime() {
+        let steps = MigrationPrepareBalanceRow.from(preparations: [
+            Self.preparation(id: "0", status: .confirming, minutesFromNow: 7)
+        ])
+
+        #expect(steps.first?.state == .sent)
+        #expect(steps.first?.minutesFromNow == nil)
     }
 
     /// The fallback stays: a row with no minute-precise value still reports its coarse one rather

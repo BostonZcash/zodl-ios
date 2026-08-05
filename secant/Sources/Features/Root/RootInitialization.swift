@@ -1647,10 +1647,18 @@ extension Root {
             selectedAccountUUID: state.selectedWalletAccount?.id,
             walletAccounts: state.walletAccounts
         )
-        let hasScheduledCandidate = accountUUIDs.contains { accountUUID in
-            migrationManager.migrationMode(accountUUID) == MigrationMode.privateScheduled
+        // ANY committed run spawns the loop, immediate mode included (G1 fix, field 2026-08-05 —
+        // a fresh-commit session sat under "Keep Zodl open" forever): a run's note-PREPARATIONS
+        // are engine-paced wallet plumbing in EVERY mode, and the tick lane is what proves and
+        // delivers them between opens (AUD-3 F4 exempts preps from the tick's mode belt; D2 sends
+        // a proved prep in the same pass). The belt still holds immediate-mode TRANSFERS — pacing
+        // those stays the user's own choice, and a live loop does not change it. No stored mode =
+        // no committed run = nothing for a tick to help with; the loop also self-stops on
+        // `.complete`/`.noRun`.
+        let hasCommittedCandidate = accountUUIDs.contains { accountUUID in
+            migrationManager.migrationMode(accountUUID) != nil
         }
-        guard hasScheduledCandidate else {
+        guard hasCommittedCandidate else {
             return .none
         }
 

@@ -291,8 +291,31 @@ import Testing
 
     // MARK: - Spawn condition
 
-    @Test func noPrivateScheduledAccountNeverSpawnsTheLoop() async {
+    /// G1 (field 2026-08-05): an IMMEDIATE-mode run spawns the loop too. A run's
+    /// note-preparations are engine-paced wallet plumbing in EVERY mode, and the tick lane is
+    /// what proves and delivers them between opens — the belt still holds immediate-mode
+    /// TRANSFERS (AUD-3 F4 exempts preps from it), so a live loop changes nothing about the
+    /// user's own delivery pace. The old pin here asserted the opposite and starved immediate
+    /// runs' splits of their only between-opens discharger.
+    @Test func immediateModeCandidateSpawnsTheLoop() async {
         let spy = TickSpy(migrationMode: .immediate)
+        let testClock = TestClock()
+        let store = makeStore(spy: spy, testClock: testClock)
+
+        await store.send(.initialization(.initializationSuccessfullyDone))
+
+        await testClock.advance(by: .seconds(30))
+        await waitUntil { spy.tickCalls == 1 }
+        #expect(spy.tickCalls == 1, "a committed immediate-mode run must tick — its preparations are engine-paced")
+
+        await drain(store)
+    }
+
+    /// No stored mode = no committed run = nothing for a tick to help with — the loop never
+    /// spawns. (This is the fresh-install / pre-commit shape; a run committed MID-session gets
+    /// its loop from the commit delegates in `RootCoordinator`, not from this launch-time spawn.)
+    @Test func noCommittedRunNeverSpawnsTheLoop() async {
+        let spy = TickSpy(migrationMode: nil)
         let testClock = TestClock()
         let store = makeStore(spy: spy, testClock: testClock)
 
@@ -301,7 +324,7 @@ import Testing
         await testClock.advance(by: .seconds(600))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(spy.tickCalls == 0, "an immediate-only wallet must never spawn the tick loop at all")
+        #expect(spy.tickCalls == 0, "with no committed run the loop must never spawn at all")
 
         await drain(store)
     }

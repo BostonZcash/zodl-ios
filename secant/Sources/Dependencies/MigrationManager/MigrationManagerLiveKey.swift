@@ -4767,17 +4767,20 @@ enum MigrationDerivations {
     /// function's real work — and it is why an id that is not itself a preparation (a transfer this
     /// step somehow depended on) is dropped rather than rendered as a number pointing at nothing.
     ///
-    /// State mapping, in precedence order — terminal facts first, then actionability, then the
-    /// reason for waiting:
-    /// - `.mined` -> `.done`
-    /// - `.broadcast` -> `.preparing` (in flight)
-    /// - `.invalid` -> `.invalid` (SDK addendum §3 — dead by observed event)
-    /// - `isReady` -> `.readyToSend`, whatever the next action is (prove or broadcast — the sheet
-    ///   does not distinguish, and neither does the user's decision)
+    /// State mapping, in precedence order — terminal facts first, then the reason for waiting
+    /// (field 2026-08-05: the old `isReady -> .readyToSend` arm was schedule-blind — every pending
+    /// step read "Ready to send" regardless of a turn still minutes-to-hours ahead, and no user
+    /// send action exists for a preparation in the first place: the app proves and delivers it):
+    /// - `.mined` -> `.done` (no forward time)
+    /// - `.broadcast` -> `.sent` (no forward time — the chain is working, not a schedule)
+    /// - `.invalid` -> `.invalid` (SDK addendum §3 — dead by observed event; no forward time)
     /// - `blockedOn == .dependencies` with known predecessors -> `.waitsOn([display numbers])`
-    /// - anything else still waiting (its scheduled height, an anchor, a signature) -> `.preparing`:
-    ///   work is under way and there is nothing for the user to do, which is exactly what that
-    ///   caption says. `.waitsOn([])` would render as "waits on nothing".
+    /// - scheduled turn still ahead -> `.scheduled` (the time line under the title says when;
+    ///   schedule truth outranks `isReady`, which only means the PROOF can be built early)
+    /// - due (turn arrived) -> `.preparing`: the app's work, whether the sweep has picked it up
+    ///   yet or not — a tick is seconds away, and there is nothing for the user to do, which is
+    ///   exactly what that caption says. `.waitsOn([])` also lands here ("waits on nothing" is
+    ///   not a state a user can act on).
     static func prepareBalanceRows(
         statuses: [MigrationTransactionStatus],
         clock: MigrationChainClock
@@ -4799,29 +4802,38 @@ enum MigrationDerivations {
         }
 
         return ordered.enumerated().map { index, status in
+            let forwardMinutes = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+            var minutesFromNow: Int? = forwardMinutes
             let state: MigrationPrepareBalanceRow.State
             switch status.state {
             case MigrationTransactionStatus.State.mined:
                 state = MigrationPrepareBalanceRow.State.done
+                minutesFromNow = nil
 
             case MigrationTransactionStatus.State.broadcast:
                 // Andrea's ladder (2026-08-03): a broadcast step reads "Sent", never "Preparing" —
-                // the word "Preparing" is reserved for work the app itself is doing.
+                // the word "Preparing" is reserved for work the app itself is doing. No forward
+                // time either: the chain is working, not a schedule.
                 state = MigrationPrepareBalanceRow.State.sent
+                minutesFromNow = nil
 
             case MigrationTransactionStatus.State.invalid:
                 // SDK addendum §3. Below `.mined` for the same reason every other surface puts it
-                // there — chain inclusion outranks an invalid verdict.
+                // there — chain inclusion outranks an invalid verdict. No forward time: no chain
+                // condition makes it actionable again.
                 state = MigrationPrepareBalanceRow.State.invalid
+                minutesFromNow = nil
 
             default:
-                if status.isReady {
-                    state = MigrationPrepareBalanceRow.State.readyToSend
-                } else if status.blockedOn == MigrationTransactionStatus.Blocker.dependencies {
+                if status.blockedOn == MigrationTransactionStatus.Blocker.dependencies {
                     let waitsOn = status.dependsOn.compactMap { displayNumber[$0] }.sorted()
                     state = waitsOn.isEmpty
-                        ? MigrationPrepareBalanceRow.State.preparing
+                        ? (forwardMinutes > 0
+                            ? MigrationPrepareBalanceRow.State.scheduled
+                            : MigrationPrepareBalanceRow.State.preparing)
                         : MigrationPrepareBalanceRow.State.waitsOn(waitsOn)
+                } else if forwardMinutes > 0 {
+                    state = MigrationPrepareBalanceRow.State.scheduled
                 } else {
                     state = MigrationPrepareBalanceRow.State.preparing
                 }
@@ -4831,7 +4843,7 @@ enum MigrationDerivations {
                 id: String(status.id),
                 index: index,
                 state: state,
-                minutesFromNow: MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+                minutesFromNow: minutesFromNow
             )
         }
     }

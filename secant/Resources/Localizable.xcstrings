@@ -12524,6 +12524,23 @@
         }
       }
     },
+    "migrationPrepare.stateScheduled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduled"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Programado"
+          }
+        }
+      }
+    },
     "migrationPrepare.stepsTitle": {
       "extractionState": "manual",
       "localizations": {

@@ -289,6 +289,23 @@ extension Root {
                     migrationTickLoopEffect(state: state)
                 )
 
+            // G1 (field 2026-08-05): THE IN-FLOW COMMIT CURE. `flowFinished` below re-spawns the
+            // tick loop for a run committed mid-session — but only when the user LEAVES the flow,
+            // and the session that commits then sits watching the progress screen never does: its
+            // R0 open-lane credit is long spent (the log's "afterSync SKIPPED — already driven"),
+            // no sync edge is coming on an up-to-date wallet, and the loop was never spawned
+            // because the app-open's spawn ran before the run existed. The banner honestly said
+            // "Keep Zodl open" while nothing in the session could ever discharge the first
+            // preparation. So: spawn the loop the moment the run is BORN, from both commit
+            // delegates (the scheduled plan's and the review screen's). Idempotent —
+            // `cancelInFlight: true` makes a duplicate spawn a restart, and every guard
+            // (off switch, activation, committed candidate) lives inside the effect itself.
+            // The first tick lands 30 s later: prove sweep, then D2 delivers the proved prep in
+            // the same pass.
+            case .migrationCoordFlow(.path(.element(id: _, action: .transferPlan(.delegate(.confirmed))))),
+                .migrationCoordFlow(.path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed))))):
+                return migrationTickLoopEffect(state: state)
+
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil
                 // Audit 2026-08-03 (#15): the flow-presented guard's disarm — see the coordinator

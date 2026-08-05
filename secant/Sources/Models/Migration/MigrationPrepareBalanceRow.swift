@@ -42,8 +42,16 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
         /// it yet. Andrea's five-state ladder (2026-08-03): the word is "Sent", the check is the
         /// neutral one, and there is NO spinner — the chain is working, not the app.
         case sent
-        /// Built and due — the wallet can act on it now.
+        /// Built and due — the wallet can act on it now. Emitted only by the pre-commit
+        /// `interimLadder` today: on a REAL run there is no user send action for a preparation
+        /// (the app proves and delivers it — D2), so live rows read `.scheduled` or `.preparing`
+        /// instead (field 2026-08-05 — this state used to be stamped on every pending step,
+        /// schedule-blind).
         case readyToSend
+        /// Its scheduled turn is still ahead — the time line under the title says when. Distinct
+        /// from `.preparing` because Andrea's ladder reserves that word for work the app is doing
+        /// NOW, and from `.readyToSend` because a future turn promises no action to anyone.
+        case scheduled
         /// In flight: broadcast, waiting to mine.
         case preparing
         /// Blocked until the listed steps have mined. Values are the step numbers AS DISPLAYED
@@ -107,7 +115,14 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
             case .invalid, .expired:
                 state = .invalid
             case .active, .overdue:
-                state = row.isPreparing ? .preparing : .readyToSend
+                // Schedule-aware (field 2026-08-05): a row whose turn is still minutes-to-hours
+                // ahead is SCHEDULED — the old mapping stamped every pending step "Ready to send",
+                // and once rows drifted overdue under the G1 tick gap their 0-clamped ETAs read
+                // "Starts right away" beside it: a sheet full of ready-to-send steps with no time
+                // anywhere. A due step is `.preparing` whether or not the sweep has picked it up
+                // yet — the app's work is seconds away (the tick loop), and no user action exists
+                // for a preparation either way.
+                state = !row.isPreparing && row.forwardETAMinutes > 0 ? .scheduled : .preparing
             case .pending:
                 // Displayed step numbers are 1-based, and a first step that is somehow pending
                 // waits on nothing the user can see — the caption treats an empty list as
@@ -123,8 +138,18 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
                 // Multiplying the coarse field discarded precision the engine had already computed:
                 // every step under an hour collapsed to 0 and read "Starts right away", so a real
                 // ladder (the design draws ~0 / ~1 / ~2 / ~3 hours) flattened into four identical
-                // lines. `.sent` gets nil — a finished step has no forward time; see the property.
-                minutesFromNow: row.status == .sent ? nil : max(0, row.forwardETAMinutes)
+                // lines. No forward time for a step with no future to state: finished (`.sent`),
+                // on the chain's side (`.confirming` — the chain is working, not a schedule), or
+                // needing the user (`.invalid`/`.expired`). A plain 0 on those rendered "Starts
+                // right away" under "Sent" — the same lie the done-row fix already removed.
+                minutesFromNow: {
+                    switch row.status {
+                    case .sent, .confirming, .invalid, .expired:
+                        return nil
+                    default:
+                        return max(0, row.forwardETAMinutes)
+                    }
+                }()
             )
         }
     }
