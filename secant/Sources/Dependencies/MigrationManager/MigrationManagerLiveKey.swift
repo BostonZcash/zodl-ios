@@ -1459,6 +1459,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
             scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
             markNetworkSnapshotCommitted(accountUUID: resolvedAccountUUID)
         }
+        // G1 (field 2026-08-05, Lukas: the Start-migration button should trigger the first
+        // `nextStep`, not a later session): a committed schedule is a NEWBORN run, and the
+        // session's open-lane credits were typically spent on the PRE-commit "noRun" pass —
+        // refund them so the commit delegate's immediate drive (`RootCoordinator`) is not
+        // refused. R0's law bans re-driving the SAME state twice per open; a run that did not
+        // exist at the earlier drive is not the same state. Open lanes only — the tick lane
+        // has no credit here and keeps its own governance (belt, buffer, engine schedule).
+        openLaneCredits.withLock {
+            $0.beforeSyncSpentSession = nil
+            $0.afterSyncSpentSession = nil
+        }
+        MigrationTrace.event("R0 open-lane credits refunded — a fresh schedule was committed; the commit's own drive may proceed")
     }
 
     /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule

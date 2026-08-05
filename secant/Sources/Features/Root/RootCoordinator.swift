@@ -300,11 +300,22 @@ extension Root {
             // delegates (the scheduled plan's and the review screen's). Idempotent —
             // `cancelInFlight: true` makes a duplicate spawn a restart, and every guard
             // (off switch, activation, committed candidate) lives inside the effect itself.
-            // The first tick lands 30 s later: prove sweep, then D2 delivers the proved prep in
-            // the same pass.
+            // And drive the newborn run's first step RIGHT NOW (Lukas, 2026-08-05: "I was hoping
+            // to trigger first nextStep with the start migration button") — the same at-tip
+            // `.afterSync` drive `flowFinished` runs, which works here because the commit itself
+            // refunded the session's open-lane credits (`recordCommittedSchedule` — a newborn run
+            // is not the state the pre-commit pass drove). Mid-sync, the guard defers to the
+            // coming edge, whose own drive now also holds a fresh credit. The tick loop stays the
+            // belt for everything after.
             case .migrationCoordFlow(.path(.element(id: _, action: .transferPlan(.delegate(.confirmed))))),
                 .migrationCoordFlow(.path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed))))):
-                return migrationTickLoopEffect(state: state)
+                return .merge(
+                    migrationTickLoopEffect(state: state),
+                    .run { [migrationManager, sdkSynchronizer] _ in
+                        guard case .upToDate = sdkSynchronizer.latestState().syncStatus else { return }
+                        await migrationManager.advance(.afterSync)
+                    }
+                )
 
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil

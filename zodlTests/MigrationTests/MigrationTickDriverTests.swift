@@ -1011,7 +1011,15 @@ import ComposableArchitecture
 
             #expect(firstVerdict == .idle)
             #expect(secondVerdict == .idle)
-            #expect(engineReadCount.value == 2, "the second call must run its own engine read once the first released the latch")
+            // `>=`, not `==` (field 2026-08-05, order-dependence caught by a suite-composition
+            // shift): the notification-arming lane issues its own async `migrationAdvanceStep`
+            // reads after a drive, and whether they fire here depends on the arming dedup's
+            // process-global signature — earlier tests in a full run can leave it pre-armed
+            // (reads skipped, count 2), while an isolated run arms fresh (count 4). The FIFO
+            // property this test pins is only that the PARKED call eventually ran its own read:
+            // the parked-check above already proved nothing ran concurrently, and any count
+            // below 2 here would mean the second drive never read at all.
+            #expect(engineReadCount.value >= 2, "the second call must run its own engine read once the first released the latch")
         }
     }
 

@@ -122,4 +122,36 @@ import ComposableArchitecture
             #expect(openedAfter == .notApplicable, "…and its afterSync")
         }
     }
+
+    /// G1 (field 2026-08-05, Lukas: "I was hoping to trigger first nextStep with the start
+    /// migration button"): a fresh commit REFUNDS the session's open-lane credits. The session
+    /// that commits typically spent its credits on the PRE-commit "noRun" pass, and R0's law bans
+    /// re-driving the SAME state — a run that did not exist at the earlier drive is not the same
+    /// state. Without the refund, the newborn run's first step waited for the next app-open.
+    @Test func aFreshCommitRefundsTheSessionsOpenLaneCredits() async {
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(latestState: { Self.atTipState() })
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let manager = MigrationManagerImpl(sessionOrdinalProvider: { 31 })
+
+            let preCommit = await manager.advance(phase: .afterSync)
+            let spent = await manager.advance(phase: .afterSync)
+            #expect(preCommit == .notApplicable, "the pre-commit pass consumes the credit")
+            #expect(spent == .skipped, "…and a plain repeat is refused")
+
+            await manager.recordCommittedSchedule(
+                accountUUID: AccountUUID(id: [UInt8](repeating: 0x07, count: 16)),
+                schedule: MigrationSchedule(
+                    transfers: [],
+                    estimatedDurationHours: 1,
+                    proposalHandle: 7,
+                    preparations: []
+                )
+            )
+
+            let postCommit = await manager.advance(phase: .afterSync)
+            #expect(postCommit == .notApplicable, "the commit's own drive proceeds on the refunded credit")
+        }
+    }
 }
