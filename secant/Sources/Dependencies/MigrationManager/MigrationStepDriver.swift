@@ -213,6 +213,17 @@ extension MigrationManagerImpl {
             return MigrationStepVerdict.notApplicable
         }
 
+        #if DEBUG
+        // FAST LANE (harness-only, double-fenced — see MigrationFastLane.swift): compress the
+        // committed schedule to QA cadence ONCE per process, inside the session's one credited
+        // `.beforeSync` drive — part of THE nextStep() pass, so R0's "no bytes change outside a
+        // drive" holds even here. The step reads below then see the compressed schedule in the
+        // same pass.
+        if phase == MigrationOpenPhase.beforeSync {
+            await fastLaneCompressIfNeeded(accountUUIDs: accountUUIDs)
+        }
+        #endif
+
         // MOB-1466: THE TICK FAST PATH — before any candidate/engine reads, consult the same
         // privacy-buffer source `executeBroadcast` uses below. A tick fires every 30s; spending a
         // per-account engine read on every one of them just to re-learn "the buffer is holding",
@@ -305,6 +316,29 @@ extension MigrationManagerImpl {
 
         return verdict
     }
+
+    #if DEBUG
+    /// FAST LANE: the once-per-process schedule compression — see `MigrationFastLane.swift` for
+    /// the contract and the double fence. Uses the SDK's QA-only
+    /// `debugRescheduleMigrationTransfers` (first due ~2 blocks, then 4-block strides); a thrown
+    /// call is logged and skipped — a campaign on a wallet with no stored run compresses nothing.
+    private func fastLaneCompressIfNeeded(accountUUIDs: [AccountUUID]) async {
+        guard MigrationFastLane.isActive else { return }
+        let alreadyCompressed = fastLaneCompressedThisLaunch.withLock { done -> Bool in
+            if done { return true }
+            done = true
+            return false
+        }
+        guard !alreadyCompressed else { return }
+        for accountUUID in accountUUIDs {
+            let count = (try? await sdkSynchronizer.debugRescheduleMigrationTransfers(accountUUID)) ?? 0
+            LoggerProxy.event(
+                "\(Self.logTag) ⚡ FAST LANE: compressed \(count) transfer(s) to QA cadence — harness-only, zero buffer active"
+            )
+            MigrationTrace.event("⚡ FAST LANE schedule compression — \(count) transfer(s) (harness-only)")
+        }
+    }
+    #endif
 
     /// Non-blocking acquire for `.tick` callers — see `advance(phase:)`'s single-flight latch.
     /// `true` means the latch is now held by THIS call; `false` means another `advance` is already
