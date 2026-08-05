@@ -567,7 +567,14 @@ struct MigrationStatus {
                 }
 
             case .rescheduleCompleted(let rows, let totalDurationHours):
-                state.presentation = .rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)
+                // NEVER-LIE BELT (AUD-2b interim, 2026-08-05): land back on `.resume`, NOT on
+                // `.rescheduleConfirmed` — no production reschedule API exists yet, so nothing was
+                // rescheduled and the confirmation copy ("successfully rescheduled") was false.
+                // The CTA that reached this is withheld from the view for the same reason; this
+                // arm is the belt for any path that still sends the action. Restore
+                // `.rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)` only
+                // when the completion reports a REAL engine re-spread (librustzcash #2927/#2932).
+                state.presentation = .resume
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
                 state.totalDurationHours = totalDurationHours
                 state.isRescheduling = false

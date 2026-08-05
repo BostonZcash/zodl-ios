@@ -13289,6 +13289,40 @@
         }
       }
     },
+    "migrationStatus.asOfHours": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balances as of ~%1$lld h ago — updates on next sync"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Saldos de hace ~%1$lld h — se actualizan en la próxima sincronización"
+          }
+        }
+      }
+    },
+    "migrationStatus.asOfMins": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balances as of ~%1$lld min ago — updates on next sync"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Saldos de hace ~%1$lld min — se actualizan en la próxima sincronización"
+          }
+        }
+      }
+    },
     "migrationStatus.reschedule": {
       "extractionState": "manual",
       "localizations": {

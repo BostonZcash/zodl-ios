@@ -77,6 +77,20 @@ struct MigrationStatusView: View {
                                 .zFont(size: 14, style: Design.Text.tertiary)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .padding(.bottom, asOfLine == nil ? 24 : 4)
+                        }
+
+                        // R13-3 (Brick 3, the VISIBLE BLINDFOLD): during a deliberate no-sync hold
+                        // (ZIP 318's send visit) the wallet-derived facts on this screen — greens,
+                        // pool values — are frozen by design, and R13's charter permits showing
+                        // old truth ONLY labeled with its age. `asOfSyncedAt` (Brick 1) is that
+                        // label's source; this line renders it once the age is old enough to
+                        // matter. Re-derives on every snapshot publish — between publishes the
+                        // stated age can lag, which errs stale-looking, never fresh-looking.
+                        if let asOfLine {
+                            Text(asOfLine)
+                                .zFont(size: 12, style: Design.Text.tertiary)
+                                .multilineTextAlignment(.leading)
                                 .padding(.bottom, 24)
                         }
 
@@ -263,6 +277,20 @@ struct MigrationStatusView: View {
         case .rescheduleConfirmed(let first, let last):
             return String(localizable: .migrationStatusRescheduledDesc(first, last))
         }
+    }
+
+    /// R13-3: the wallet-facts age label, from the snapshot's own `asOfSyncedAt` (see the render
+    /// site's comment). `nil` — line hidden — when no sync has ever completed (nothing honest to
+    /// state) or when the age is under the threshold (fresh enough that a label is noise; 2 min,
+    /// matching the caches' own `maxServableAge` notion of "recent"). Bucketed to minutes then
+    /// hours, floored — a floored age errs stale-looking, never fresh-looking.
+    private var asOfLine: String? {
+        guard let syncedAt = store.poolFlow.asOfSyncedAt else { return nil }
+        let ageMinutes = Int(Date().timeIntervalSince(syncedAt) / 60)
+        guard ageMinutes >= 2 else { return nil }
+        return ageMinutes < 60
+            ? String(localizable: .migrationStatusAsOfMins(ageMinutes))
+            : String(localizable: .migrationStatusAsOfHours(ageMinutes / 60))
     }
 
     // MARK: - Caption
@@ -494,25 +522,14 @@ struct MigrationStatusView: View {
             }
         case .resume:
             VStack(spacing: 8) {
-                if store.isRescheduling {
-                    ZashiButton(
-                        String(localizable: .migrationStatusReschedulingTitle),
-                        type: .tertiary,
-                        prefixView: ProgressView()
-                    ) {
-                        store.send(.rescheduleTapped)
-                    }
-                    .disabled(true)
-                } else {
-                    ZashiButton(String(localizable: .migrationStatusReschedule), type: .secondary) {
-                        store.send(.rescheduleTapped)
-                    }
-                    // D3: down while an in-place send runs — the reschedule/send mutual exclusion,
-                    // now needed in BOTH directions since the tap stays on this screen. See
-                    // `MigrationStatus.State.isRescheduleDisabled`.
-                    .disabled(store.isRescheduleDisabled)
-                }
-
+                // RESCHEDULE CTA WITHHELD (AUD-2b interim, 2026-08-05, the never-lie ruling: "the
+                // false confirmation must not survive either way"). No production reschedule API
+                // exists yet — the old button's effect was a pure engine READ whose result was
+                // discarded, followed by a screen claiming "successfully rescheduled". The real
+                // re-spread lands with the engine stack (librustzcash #2927/#2932); wire-vs-remove
+                // is a Lukas+Andrea decision AFTER that. The store's reschedule machinery
+                // (`rescheduleTapped`/`rescheduleCompleted`/`isRescheduling`) stays for that
+                // wiring — this screen just no longer offers an action it cannot perform.
                 if store.isSendNowInFlight {
                     // D3 (Figma 5217:36636): the in-place send's own CTA treatment — the exact
                     // in-flight shape the reschedule button above already established on this
