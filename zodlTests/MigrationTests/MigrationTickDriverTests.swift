@@ -446,6 +446,97 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 1)
     }
 
+    // MARK: - D2: prep prove→broadcast in the same pass, no re-ask (danny + nuttycom, 2026-08-05)
+
+    /// A PREPARATION proved this pass is broadcast THIS pass — and the `.prove(id, kind)` step is
+    /// ITSELF the sanction. nuttycom, on the shape: "there should be no second call needed —
+    /// inspect the kind attribute of `Prove { id, kind }`, and if it matches Preparation then
+    /// prove and broadcast." The pin here: statuses are scripted EMPTY, so any implementation
+    /// that re-derives the kind from a statuses read (or gates the send on a `next_step` re-ask
+    /// offering the id) refuses the delivery — only "the step's own kind sanctions it" passes.
+    /// One open, zero extra wake-ups — the split phase halves.
+    @Test func provePassBroadcastsAProvedPreparationWithoutReasking() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+        let stepReads = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                // Faithful engine model: the FIRST read answers `.prove`; every later read answers
+                // `.broadcast(2)` UNTIL the submit records, then `.waiting` — because the machine
+                // has no cursor, its answer flips on PERSISTED state, not on being asked. (The
+                // delivery lane's own id-pick read is one of those later reads — the DRIVER makes
+                // no read of its own beyond the first; the statuses-empty pin below is what
+                // catches a smuggled-back decision re-ask.)
+                migrationAdvanceStep: { _ in
+                    if submissionCalls.value > 0 { return .waiting }
+                    let read = stepReads.withValue { $0 += 1; return $0 }
+                    return read == 1 ? .prove(id: 2, kind: .preparation(layer: 1, index: 0)) : .broadcast(id: 2)
+                },
+                // EMPTY on purpose — the old chain's `preparationTransactionIds.contains(id)`
+                // cross-check would break here; the step's kind must be the only authority.
+                migrationTransactionStatuses: { _ in [] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "d2-samepass-prep"))
+                },
+                finalizeReadyMigrationTransfers: { _ in 1 }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .broadcast(id: 2), "the proved prep must go out in the same pass, got \(verdict)")
+        #expect(submissionCalls.value == 1, "exactly one same-pass delivery")
+    }
+
+    /// The hard scope: a TRANSFER's `.prove` never broadcasts. The pass proves it and ends — the
+    /// transfer waits for its own broadcast session (ZIP 318's separation is exactly about
+    /// transfers), so the one-transfer-per-open law is untouched by D2. The mock is a TRAP: it
+    /// stands ready to answer `.broadcast(4)` to any post-prove read, so if the discharge ever
+    /// consulted the engine again and acted on it, the submission count would betray it.
+    @Test func provePassNeverBroadcastsAfterProvingATransfer() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+        let stepReads = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    let read = stepReads.withValue { $0 += 1; return $0 }
+                    return read == 1 ? .prove(id: 4, kind: .transfer(crossing: 0)) : .broadcast(id: 4)
+                },
+                migrationTransactionStatuses: { _ in [] },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "must-not-run"))
+                },
+                finalizeReadyMigrationTransfers: { _ in 1 }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 1), "a transfer's prove pass ends at the proof, got \(verdict)")
+        #expect(submissionCalls.value == 0, "a transfer must never be delivered from a prove pass")
+    }
+
     // MARK: - The unconditional tick prove (FIND-5, 2026-08-05)
 
     /// A tick runs the sweep whenever the engine says `.prove` — at the tip (the 2026-08-02

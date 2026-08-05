@@ -105,8 +105,12 @@ enum MigrationOpenPhase: Equatable, Sendable {
 enum MigrationStepAction: Equatable, Sendable {
     /// Submit the named transaction and END the session (no sync). `.beforeSync` only.
     case broadcast(id: UInt32)
-    /// Run the prove sweep. `.afterSync` only — proving needs the commitment tree at the tip.
-    case prove(id: UInt32)
+    /// Run the prove sweep. `.afterSync` and `.tick` (FIND-5) — proving needs the commitment tree
+    /// at the tip. `isPreparation` carries the step's own kind into the discharge: a proved
+    /// note-PREPARATION also broadcasts in the SAME pass (D2 — nuttycom: "no second call needed,
+    /// inspect the kind attribute of `Prove { id, kind }` and if it matches Preparation then
+    /// prove and broadcast"), while a transfer's broadcast waits for its own session.
+    case prove(id: UInt32, isPreparation: Bool)
     /// Rebuild the expired transfer in place. `.afterSync` only: the rebuilt rows are re-anchored
     /// against the current tip, so a stale tip would rebuild them straight back into staleness.
     case rebuild(id: UInt32)
@@ -203,14 +207,18 @@ enum MigrationStepPlan {
                 return MigrationStepAction.broadcast(id: id)
             }
 
-        case let MigrationAdvanceStep.prove(id, _):
+        case let MigrationAdvanceStep.prove(id, kind):
             // The kind (`.transfer` vs `.preparation`) changes what happens AFTER the proof — a
-            // preparation may also broadcast at the same wake-up, a transfer waits for its own
-            // session — and that is the broadcast lane's business, decided by the engine's next
-            // answer. It does not change whether we prove now, which is the only question here.
+            // preparation broadcasts at the SAME wake-up, a transfer waits for its own session —
+            // so it rides the action into the driver's prove discharge. D2 (nuttycom, 2026-08-05):
+            // "there should be no second call needed — inspect the kind attribute of
+            // `Prove { id, kind }`, and if it matches Preparation then prove and broadcast." The
+            // step itself is the sanction; nothing re-asks the engine. (An earlier draft chained a
+            // `next_step` re-ask after the sweep and delivered only what it offered — one call too
+            // many, by the author's own word.)
             switch phase {
             case MigrationOpenPhase.afterSync:
-                return MigrationStepAction.prove(id: id)
+                return MigrationStepAction.prove(id: id, isPreparation: kind.isPreparation)
             case MigrationOpenPhase.tick:
                 // A tick proves UNCONDITIONALLY (FIND-5, 2026-08-05). Two prior versions of this
                 // cell each starved a real session: full deferral (pre-2026-08-02) starved
@@ -224,7 +232,7 @@ enum MigrationStepPlan {
                 // mid-sync. Proving is local computation, so ZIP 318's broadcast-session
                 // separation is untouched. The one tick-side refinement lives in the driver: a
                 // sweep already adjudicated STALLED is not re-run every 30s.
-                return MigrationStepAction.prove(id: id)
+                return MigrationStepAction.prove(id: id, isPreparation: kind.isPreparation)
             case MigrationOpenPhase.beforeSync:
                 // The open's own edge is moments away and must stay free to broadcast instead —
                 // deferring here is unchanged even at the tip.
@@ -277,5 +285,14 @@ enum MigrationStepPlan {
             if case MigrationAdvanceStep.broadcast? = step { return true }
             return false
         }
+    }
+}
+
+extension MigrationTransactionStatus.Kind {
+    /// A note-PREPARATION ("split") — wallet plumbing on the engine's own schedule, ZIP-318-exempt
+    /// ("a fully shielded send-to-self") and broadcast as soon as it is proved (D2).
+    var isPreparation: Bool {
+        if case MigrationTransactionStatus.Kind.preparation = self { return true }
+        return false
     }
 }

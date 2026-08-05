@@ -530,7 +530,7 @@ extension MigrationManagerImpl {
                 isPreparation: isPreparationBroadcast
             )
 
-        case MigrationStepAction.prove:
+        case let MigrationStepAction.prove(id, isPreparation):
             // FIND-5 refinement: a `.tick` never RE-RUNS a sweep already adjudicated stalled. The
             // stall verdict means the engine reported rows ready and two consecutive sweeps proved
             // nothing — burning a full sweep (DB-actor traffic, cache warm-ups, pokes) every 30s
@@ -550,6 +550,40 @@ extension MigrationManagerImpl {
                 // running. Staying in the app does not help, so the app stops asking the user to —
                 // and says so rather than leaving a spinner up.
                 return MigrationStepVerdict.needsUser(MigrationStepBlocker.provingStalled)
+            }
+            // D2 (danny + nuttycom, 2026-08-05): a PREPARATION proved this pass is broadcast THIS
+            // pass — and the step we are discharging is itself the sanction. nuttycom, on the
+            // chain shape: "there should be no second call needed — inspect the kind attribute of
+            // `Prove { id, kind }`, and if it matches Preparation then prove and broadcast." So:
+            // no `next_step` re-ask, no statuses cross-check — the engine named this id a
+            // preparation in the very answer that brought us here. ZIP 318 exempts preps from the
+            // sync/broadcast session separation ("a fully shielded send-to-self"; the engine's
+            // contract is "a preparation is broadcast as soon as it is proved"), and this halves
+            // the split phase: each prep layer used to cost a prove pass PLUS a separate delivery
+            // wake-up.
+            //
+            // Still engine-guarded end-to-end: the delivery lane's submit
+            // (`executeNextPendingMigrationTransfer`) re-adjudicates dueness itself and answers
+            // `.nothingDue`/`.awaitingProof` honestly, so a failed or straggling proof degrades to
+            // a held verdict with its reason logged — never a wrong send. A TRANSFER arrives here
+            // as `isPreparation == false` and falls straight through: its broadcast waits for its
+            // own session, so the one-transfer-per-open law is untouched.
+            if isPreparation, proved > 0 {
+                LoggerProxy.event(
+                    "\(Self.logTag) D2: preparation \(id) proved this pass — broadcasting in the same pass (the step's kind is the sanction; no re-ask)"
+                )
+                let deliveryVerdict = await executeBroadcast(
+                    id: id,
+                    accountUUID: accountUUID,
+                    phase: phase,
+                    isPreparation: true
+                )
+                if case MigrationStepVerdict.broadcast = deliveryVerdict {
+                    return deliveryVerdict
+                }
+                // A held/failed delivery is not retried here — its verdict's log line carries the
+                // reason, and the next pass (tick or edge) gets a fresh shot at what is by then a
+                // plain `.broadcast` step.
             }
             return MigrationStepVerdict.proved(count: proved)
 

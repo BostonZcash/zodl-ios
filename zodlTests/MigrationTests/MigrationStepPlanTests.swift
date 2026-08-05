@@ -66,19 +66,20 @@ import ZcashLightClientKit
     @Test func proveIsOfferedOnlyAfterSync() {
         let step = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
 
-        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 1))
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 1, isPreparation: false))
         #expect(MigrationStepPlan.action(for: step, phase: .beforeSync) == .nothing(.wrongPhase))
     }
 
-    /// A preparation and a transfer are both simply "prove it" here. The kind decides what may
-    /// happen AFTER the proof — a preparation may broadcast at the same wake-up — and that is the
-    /// engine's next answer to give, not a fork in this table.
-    @Test func bothProveKindsProduceTheSameWork() {
+    /// Both kinds prove, and the action CARRIES the kind (D2 — nuttycom: "no second call needed,
+    /// inspect the kind attribute of `Prove { id, kind }`"). The step's own kind is what sanctions
+    /// a preparation's same-pass broadcast in the discharge — not a statuses re-read, and never a
+    /// `next_step` re-ask.
+    @Test func bothProveKindsProveButTheActionCarriesTheKind() {
         let preparation = MigrationAdvanceStep.prove(id: 9, kind: .preparation(layer: 0, index: 0))
         let transfer = MigrationAdvanceStep.prove(id: 9, kind: .transfer(crossing: 0))
 
-        #expect(MigrationStepPlan.action(for: preparation, phase: .afterSync) == .prove(id: 9))
-        #expect(MigrationStepPlan.action(for: transfer, phase: .afterSync) == .prove(id: 9))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .afterSync) == .prove(id: 9, isPreparation: true))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .afterSync) == .prove(id: 9, isPreparation: false))
     }
 
     // MARK: - The quiet answers
@@ -131,8 +132,8 @@ import ZcashLightClientKit
         let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
         let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
 
-        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(id: 1))
-        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(id: 1))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(id: 1, isPreparation: false))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(id: 1, isPreparation: true))
     }
 
     /// The tick prove changes nothing about the other cells: `.beforeSync` keeps deferring the
