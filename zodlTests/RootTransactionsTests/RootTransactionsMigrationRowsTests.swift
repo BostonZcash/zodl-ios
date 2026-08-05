@@ -1,14 +1,16 @@
 //
-//  RootTransactionsMigrationFilterTests.swift
+//  RootTransactionsMigrationRowsTests.swift
 //  zodlTests
 //
-//  M3 Part A (MOB-1466): Activity shows settled history; the Migration Status screen owns the
-//  in-flight story. The engine stores a migration transaction into the wallet's own tables at
-//  PROVE time — hours or days before its scheduled broadcast — so without the filter the E2E
-//  campaign saw eleven phantom "Sending…" rows minutes after committing a plan. The hide rule
-//  itself (unmined ∧ preparation/transfer) is table-tested on `TransactionState`
-//  (ModelsTests/TransactionStateTests); this file pins the GLUE: `.fetchedTransactions` — the one
-//  canonical build every consumer of the shared `$transactions` reads — actually applies it.
+//  ZIP 318 labels: Activity PRESENTS migration transactions instead of hiding them. The engine
+//  stores a migration transaction into the wallet's own tables at PROVE time — hours or days
+//  before its scheduled broadcast — and the approved design (Figma "Transaction Statuses/Labels —
+//  Final Designs") renders that in-flight story right on the list ("Migrating…", "Splitting
+//  Balance…", failed states) rather than filtering it. This supersedes the M3 Part A filter.
+//  What this file pins now: `.fetchedTransactions` — the one canonical build every consumer of
+//  the shared `$transactions` reads — RETAINS every row, and still publishes the unmined
+//  migration rows' received value for the balance-breakdown sheet's Pending correction (M3 B2),
+//  which is a balance concern and outlived the filter.
 //
 //  Mirrors `RootTransactionsAccountSwitchTests`' established pattern for Root-level tests: a plain
 //  `Store` (not `TestStore`) — Root's init effects are too heavy for exhaustive assertion — with a
@@ -23,7 +25,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootTransactionsMigrationFilterTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootTransactionsMigrationRowsTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -52,9 +54,9 @@ import ComposableArchitecture
         return row
     }
 
-    /// The canonical list build drops stored-but-unmined migration rows and keeps everything else:
-    /// mined migration history, regular unmined sends, and unclassified rows all survive.
-    @Test func fetchedTransactionsHidesUnminedMigrationRows() async {
+    /// The canonical list build keeps EVERY row — stored-but-unmined migration rows included —
+    /// and still publishes their received value for the breakdown sheet's Pending correction.
+    @Test func fetchedTransactionsRetainsMigrationRowsAndPublishesPendingValue() async {
         let account = Self.walletAccount(idByte: 7)
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -77,10 +79,9 @@ import ComposableArchitecture
         await store.send(.fetchedTransactions(account.id, payload)).finish()
 
         let ids = Set(sharedTransactions.wrappedValue.map(\.id))
-        #expect(ids == Set(["transfer-mined", "regular-unmined"]))
+        #expect(ids == Set(["prep-unmined", "transfer-unmined", "transfer-mined", "regular-unmined"]))
 
-        // M3 B2: the SAME pass publishes the dropped rows' received value for the breakdown
-        // sheet's Pending row — only the two hidden rows contribute (600 + 400), never the mined
+        // M3 B2: only the unmined migration rows contribute (600 + 400) — never the mined
         // migration row or the regular unmined send.
         #expect(initialState.unminedMigrationPendingValue == Zatoshi(1_000))
 

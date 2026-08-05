@@ -263,7 +263,7 @@ struct TransactionDetails {
                 state.isSwap = userMetadataProvider.isSwapTransaction(state.transaction.zAddress ?? "")
                 state.umSwapId = userMetadataProvider.swapDetailsForTransaction(state.transaction.zAddress ?? "")
                 state.hasInteractedWithBookmark = false
-                state.areDetailsExpanded = state.transaction.isShieldingTransaction
+                state.areDetailsExpanded = state.transaction.isShieldingTransaction || state.transaction.isMigrationTransaction
                 state.messageStates = []
                 state.alias = nil
                 if !state.isSwap {

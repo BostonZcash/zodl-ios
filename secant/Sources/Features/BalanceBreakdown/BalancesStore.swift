@@ -47,18 +47,18 @@ struct Balances {
 
         /// M3 B2 (MOB-1466): the "Pending" row's DISPLAYED figure — the SDK's pending lanes minus
         /// the value sitting in stored-but-unmined migration transactions, clamped at zero. The
-        /// Migration Status screen owns the in-flight story (R11's standard: render as if the
-        /// not-yet-mined migration transaction never happened); without this the sheet claimed the
-        /// whole plan as "Pending" minutes after commit, days before anything broadcast. The
-        /// subtrahend is published by the SAME canonical pass that filters those rows out of
-        /// Activity, so the row and the list can never disagree.
+        /// balances story renders as if the not-yet-mined migration transaction never happened
+        /// (R11's standard); without this the sheet claimed the whole plan as "Pending" minutes
+        /// after commit, days before anything broadcast. Activity, by contrast, now presents those
+        /// rows as labeled in-flight history ("Migrating…", "Splitting Balance…") — the subtrahend
+        /// is published by the same canonical pass that builds that list, so the two never drift.
         var displayedPendingBalance: Zatoshi {
             Zatoshi(max(0, changePending.amount + pendingTransactions.amount - unminedMigrationPendingValue.amount))
         }
 
         /// Whether the "Pending" row (and the pending header copy) should show — the corrected
         /// figure's own truth, not the raw lanes': migration-only pending renders as nothing here,
-        /// exactly like the transactions it comes from.
+        /// because the migration surfaces and the labeled Activity rows own that in-flight story.
         var isDisplayedPendingInProcess: Bool {
             displayedPendingBalance.amount > 0
         }

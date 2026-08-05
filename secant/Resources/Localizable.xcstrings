@@ -22941,6 +22941,40 @@
         }
       }
     },
+    "transaction.balanceSplit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance Split"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saldo dividido"
+          }
+        }
+      }
+    },
+    "transaction.balanceSplitFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance Split Failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "División de saldo fallida"
+          }
+        }
+      }
+    },
     "transaction.failedReceive": {
       "extractionState": "manual",
       "localizations": {
@@ -22988,6 +23022,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fondos Protegidos Fallidos"
+          }
+        }
+      }
+    },
+    "transaction.migrated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrated"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrado"
+          }
+        }
+      }
+    },
+    "transaction.migrating": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrating"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrando"
+          }
+        }
+      }
+    },
+    "transaction.migrationFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migration Failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migración fallida"
           }
         }
       }
@@ -23091,6 +23176,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Protegiendo"
+          }
+        }
+      }
+    },
+    "transaction.splitFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split Failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "División fallida"
+          }
+        }
+      }
+    },
+    "transaction.splittingBalance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Splitting Balance"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dividiendo saldo"
           }
         }
       }
