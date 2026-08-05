@@ -1402,14 +1402,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // decision is worse than no reason, because it reads like an explanation.
         if case MigrationState.splitPendingConfirmation = state {
             let mined = preparations.filter { $0.status == MigrationTransferRow.Status.sent }.count
+            // FIND-8 (2026-08-05): "the prove sweep will run this session" dwelt for 70+ minutes
+            // in a marathon session whose one credited sweep had already run — a promise the
+            // session could no longer keep. The reason now names the discharge that actually
+            // serves it (the sync edge, or any 30s tick — FIND-5 made ticks prove
+            // unconditionally), which holds however long the session lasts.
             return isProvable
-                ? "split phase — provable now, the prove sweep will run this session"                : "split phase — \(mined)/\(preparations.count) preparations mined, waiting on the next step"
+                ? "split phase — provable now, a prove discharge is due (sync edge or tick)"
+                : "split phase — \(mined)/\(preparations.count) preparations mined, waiting on the next step"
         }
         if isProvingStalled {
             return "PROVE STALLED — the engine reports rows ready to prove and sweeps produce nothing"
         }
         if isProvable {
-            return "provable now — the prove sweep will run this session"
+            return "provable now — a prove discharge is due (sync edge or tick)"
         }
         if let sending = (preparations + rows).first(where: { $0.isBroadcasting }) {
             return "on the wire (\(sending.kind == .splitBalance ? "split" : "transfer") \(sending.index + 1)), awaiting mining"
@@ -3809,8 +3815,15 @@ enum MigrationDerivations {
             //
             // `isPreparingRun` is unchanged: proving needs the app open for tens of seconds, and the
             // rows corroborate it.
+            //
+            // FIND-6 (2026-08-05): `.preparing` carries the run's counts — see the variant's own
+            // doc for the monotone-information rule this serves (numbers, once shown, are never
+            // replaced by a numberless spinner).
             if isPreparingRun || isBroadcastInFlight {
-                return MigrationBannerVariant.preparing
+                return MigrationBannerVariant.preparing(
+                    done: transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count,
+                    total: transferRows.count
+                )
             }
             let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
             let splitDisplayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
@@ -3866,8 +3879,13 @@ enum MigrationDerivations {
             // MOB-1466 (2026-08-02): `reentryRoute` now ranks the ENGINE'S STEP above `hasOverdue`,
             // so an overdue run the engine is not offering a broadcast for lands on Progress rather
             // than Resume. This arm has to move with it or the two surfaces disagree again.
+            //
+            // FIND-6 (2026-08-05): counts on the case — monotone information, see the variant doc.
             if isPreparingRun {
-                return MigrationBannerVariant.preparing
+                return MigrationBannerVariant.preparing(
+                    done: transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count,
+                    total: transferRows.count
+                )
             }
             // `hasOverdue` has exactly two causes (see the SDK's own doc): a PROVED due transaction,
             // and a due, dependency-satisfied but still unproved one. The first makes the engine's
@@ -4394,12 +4412,20 @@ enum MigrationDerivations {
                 )
             }
 
+            // FIND-1 (2026-08-05, campaign 7): whether THIS row's engine status says it is waiting
+            // on other transactions of its own run (unmined preparations, an earlier transfer).
+            // Feeds two honesty rules below: the schedule-clock `.overdue` badge never lands on a
+            // row the clock cannot serve, and the caption says what the row is actually waiting
+            // for. `nil` liveStatus stays `false` — no guess.
+            let isAwaitingRunDependencies = seed.liveStatus?.blockedOn == MigrationTransactionStatus.Blocker.dependencies
+
             let status = nonSentRowStatus(
                 transferId: seed.transferId,
                 isFirstNonSent: index == firstNonChainSideIndex,
                 state: state,
                 hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
-                hasLiveStatus: seed.liveStatus != nil
+                hasLiveStatus: seed.liveStatus != nil,
+                isAwaitingRunDependencies: isAwaitingRunDependencies
             )
             // MOB-1513 (T-A): a matched live status's own `scheduledHeight` feeds the ETA in
             // preference to the persisted schedule's `nextExecutableAfterHeight` (see this
@@ -4415,6 +4441,7 @@ enum MigrationDerivations {
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled),
+                isAwaitingRunDependencies: isAwaitingRunDependencies,
                 // D4: real elapsed for the overdue caption (Figma B8 "Overdue · 5h ago").
                 overdueMinutesAgo: status == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: scheduledHeight, clock: clock)
@@ -4452,12 +4479,23 @@ enum MigrationDerivations {
     /// schedule/`statuses` read doesn't currently cover. `.invalid`/`.overdue`/`.active` are
     /// unaffected — only the `.expired` branch was ever backed by this position-plus-aggregate-flag
     /// proxy instead of a per-row signal.
+    ///
+    /// FIND-1 (2026-08-05, campaign 7): `isAwaitingRunDependencies` vetoes the `.overdue` badge.
+    /// `hasOverdueMigrationTransfers` is a WALLET-WIDE aggregate, and the engine's overdue set
+    /// counts preparation rows too — so a due note-split put "Overdue · 1 min ago" on Transfer 1
+    /// while the very preparations that fund it were still unmined. A row the engine says is
+    /// waiting on its own run's dependencies is ON PLAN, not late: the clock passing its height
+    /// changes nothing the user (or the app) can act on, and the engine re-draws that height at
+    /// release anyway. Such a row stays `.active` (it is still the front of the queue) and its
+    /// caption comes from the dependency truth, not the clock — see `MigrationStatusView`'s
+    /// caption arm.
     private static func nonSentRowStatus(
         transferId: String,
         isFirstNonSent: Bool,
         state: MigrationState,
         hasOverdueMigrationTransfers: Bool,
-        hasLiveStatus: Bool
+        hasLiveStatus: Bool,
+        isAwaitingRunDependencies: Bool = false
     ) -> MigrationTransferRow.Status {
         // A25, RESOLVED (SDK addendum §3). This used to put the invalid badge on the first non-sent
         // row whenever the RUN reported an invalidation, because nothing said which transfer was
@@ -4472,7 +4510,9 @@ enum MigrationDerivations {
             return MigrationTransferRow.Status.expired
         }
 
-        return hasOverdueMigrationTransfers ? MigrationTransferRow.Status.overdue : MigrationTransferRow.Status.active
+        return hasOverdueMigrationTransfers && !isAwaitingRunDependencies
+            ? MigrationTransferRow.Status.overdue
+            : MigrationTransferRow.Status.active
     }
 
     /// `transferred`/`transfersSent` come straight from `sentRecords`; `transfersTotal` adds the
@@ -4664,9 +4704,15 @@ enum MigrationDerivations {
                 )
             }
 
+            // FIND-1 (2026-08-05): the same dependency veto `transferRows`'s lane applies — this
+            // fallback lane reads the height's lateness per row, but a `blockedOn == .dependencies`
+            // row is on plan, not late, and the clock's badge must not land on it.
+            let isAwaitingRunDependencies = status.blockedOn == MigrationTransactionStatus.Blocker.dependencies
             let rowStatus: MigrationTransferRow.Status
             if index == firstNonTerminalIndex {
-                rowStatus = minutesFromNow > 0 ? MigrationTransferRow.Status.active : MigrationTransferRow.Status.overdue
+                rowStatus = minutesFromNow > 0 || isAwaitingRunDependencies
+                    ? MigrationTransferRow.Status.active
+                    : MigrationTransferRow.Status.overdue
             } else {
                 rowStatus = MigrationTransferRow.Status.pending
             }
@@ -4679,6 +4725,7 @@ enum MigrationDerivations {
                 hoursFromNow: minutesFromNow / 60,
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
+                isAwaitingRunDependencies: isAwaitingRunDependencies,
                 // D4: real elapsed for the overdue caption, W1-fallback lane.
                 overdueMinutesAgo: rowStatus == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: status.scheduledHeight, clock: clock)

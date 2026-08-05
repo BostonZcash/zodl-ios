@@ -400,16 +400,6 @@ extension MigrationManagerImpl {
         var fallback = MigrationStepVerdict.noRun
         var firstHeld: MigrationStepVerdict?
 
-        // The plan's one status-aware cell (the `.prove` row's `.tick` column) keys off whether
-        // sync currently reads `.upToDate` — read ONCE per driver call, from the same live source
-        // the flowFinished drive uses, so every account's discharge sees the same answer.
-        let isWalletAtTip: Bool
-        if case .upToDate = sdkSynchronizer.latestState().syncStatus {
-            isWalletAtTip = true
-        } else {
-            isWalletAtTip = false
-        }
-
         for (accountUUID, step) in steps {
             // AUD-3: kind-awareness for the broadcast cells. A note-PREPARATION is ZIP-exempt from
             // the transfer-only throttles (session separation, buffer, mode belt, manual hold),
@@ -423,7 +413,6 @@ extension MigrationManagerImpl {
             var action = MigrationStepPlan.action(
                 for: step,
                 phase: phase,
-                isWalletAtTip: isWalletAtTip,
                 isPreparationBroadcast: isPreparationBroadcast
             )
             // ONE-CLOCK DISPATCH (AUD-1, 2026-08-05): `.waiting` is SCANNED-frame truth — the SDK
@@ -434,15 +423,27 @@ extension MigrationManagerImpl {
             // gate refused sync FOR the ready broadcast while this dispatch, reading scanned, saw
             // nothing to send — a dead open that repeats, because un-wedging needed the sync the
             // gate refuses. The cure is the gate's own clock, applied here too: a quiet `.waiting`
-            // at `.beforeSync` consults the est-aware overdue check, and a due answer routes to
-            // the broadcast lane, whose submit (`useEstimatedTip: true`) stays the single
-            // authority — `.nothingDue`/`.awaitingProof` degrade to a held verdict, never a wrong
-            // send. ONLY `.waiting`, ONLY `.beforeSync`: `.prove`/`.rebuild`/`.requiresAttention`
-            // keep their productive plan routes (the gate never blocks sync for an unproven row,
-            // so those cases have no wedge), `.afterSync` never broadcasts a TRANSFER (table law —
-            // a proved preparation may, AUD-3), and ticks stay confined to the mode belt (preps
-            // exempt, AUD-3).
-            if phase == MigrationOpenPhase.beforeSync,
+            // consults the est-aware overdue check, and a due answer routes to the broadcast
+            // lane, whose submit (`useEstimatedTip: true`) stays the single authority —
+            // `.nothingDue`/`.awaitingProof` degrade to a held verdict, never a wrong send.
+            //
+            // `.beforeSync` AND `.tick` (FIND-5, 2026-08-05 — the marathon session). The dispatch
+            // shipped `.beforeSync`-only, which cured the wedge one REOPEN at a time and left the
+            // keep-open session inside it: the gate blocked sync restart FOR an est-frame-released
+            // row pinned one block past the frozen scanned tip, every 30s tick read `.waiting` off
+            // that frozen frame and armed wake-ups, and the run sat immobile for 50+ minutes until
+            // a cold reopen minted the next `.beforeSync` pass — with the DB showing the whole
+            // time that one row was due and deliverable. A tick is a broadcast opportunity on
+            // `.beforeSync`'s exact terms (no sync of its own — the table's own doc), so it gets
+            // the same clock. Everything a tick must still respect lives WHERE IT LIVED: the mode
+            // belt (`.immediate` runs stay the open lanes' business), the manual-delivery hold,
+            // and the privacy buffer are all inside the broadcast lane this routes to, and R0 is
+            // untouched — this consults the gate's own deliverability reads, it never re-drives
+            // `nextStep()`. ONLY `.waiting`: `.prove`/`.rebuild`/`.requiresAttention` keep their
+            // productive plan routes (the gate never blocks sync for an unproven row, so those
+            // cases have no wedge), and `.afterSync` never broadcasts a TRANSFER (table law — a
+            // proved preparation may, AUD-3).
+            if phase == MigrationOpenPhase.beforeSync || phase == MigrationOpenPhase.tick,
                 action == MigrationStepAction.armWakeups,
                 (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
                 let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
@@ -530,6 +531,15 @@ extension MigrationManagerImpl {
             )
 
         case MigrationStepAction.prove:
+            // FIND-5 refinement: a `.tick` never RE-RUNS a sweep already adjudicated stalled. The
+            // stall verdict means the engine reported rows ready and two consecutive sweeps proved
+            // nothing — burning a full sweep (DB-actor traffic, cache warm-ups, pokes) every 30s
+            // against that same contradiction is pure heat. The open lanes deliberately keep
+            // retrying at their edges: each sync gives the engine fresh data and the stall an
+            // honest chance to clear.
+            if phase == MigrationOpenPhase.tick, isProvingStalled {
+                return MigrationStepVerdict.needsUser(MigrationStepBlocker.provingStalled)
+            }
             // The sweep is wallet-wide by construction (it walks every candidate account), so it
             // runs once per driver call rather than once per account. The first account to ask for
             // it gets it; the rest see the proofs it produced.

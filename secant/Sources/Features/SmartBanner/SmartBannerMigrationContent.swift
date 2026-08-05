@@ -59,7 +59,25 @@ enum MigrationBannerVariant: Equatable {
     /// app can genuinely prove or submit, `.inProgress` while it waits. Where the designed
     /// vocabulary is thin, that is a gap to take to the designers, not one to fill by inventing a
     /// string.
-    case preparing
+    ///
+    /// COUNTS RESTORED 2026-08-05 (FIND-6, campaign 7) — and this is NOT the `isWorkingNow`
+    /// mistake again, so read before reverting. The payload-free case obeyed "don't invent copy"
+    /// and, in the field, violated a rule that outranks it: MONOTONE INFORMATION. A run at
+    /// "1 of 11 transfers · 9%" flipped to this variant the moment the next transfer went
+    /// prove-pending, and the banner REPLACED the numbers with a numberless spinner — for 12
+    /// straight minutes in the marathon session, over the copy "Keep Zodl open". The user watched
+    /// known progress vanish and read it as the run breaking ("I don't think this works").
+    /// Numbers, once shown, must never be taken back by a lower-information costume.
+    ///
+    /// So the case carries the same `done`/`total` the `.inProgress` banner shows, and `info`
+    /// renders the DESIGNED counts line whenever `done > 0` — both strings already in the catalog,
+    /// nothing invented. Before any transfer is done (`done == 0`, the split phase and the first
+    /// prove) nothing was ever shown that could regress, and the designed keep-open ask stands
+    /// unchanged. The spinner icon stays in both shapes: since FIND-5 the tick lane proves and
+    /// serves unconditionally, so work genuinely runs (or is seconds from running) whenever this
+    /// variant shows. A designed counts-plus-working frame remains Andrea's to draw
+    /// (SMART_BANNER_STATES §8); this is the honest composition of what exists today.
+    case preparing(done: Int, total: Int)
     /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
     /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
     case nextRoundRequired(round: Int, totalRounds: Int?)
@@ -131,6 +149,14 @@ enum MigrationBannerVariant: Equatable {
     /// buttonless `.checkingStatus` above pass for a design decision instead of a deviation from one.
     var showsButton: Bool { true }
 
+    /// Membership test for the preparing SHAPE, payload-blind — what the row-truth tests assert
+    /// ("this run reads as PREPARING") without pinning counts those tests are not about. Prefer
+    /// this over `== .preparing(...)` anywhere the counts are incidental.
+    var isPreparingVariant: Bool {
+        if case .preparing = self { return true }
+        return false
+    }
+
     var title: String {
         switch self {
         case .required, .nextRoundRequired:
@@ -170,7 +196,15 @@ enum MigrationBannerVariant: Equatable {
                 return String(localizable: .migrationBannerProgressRoundCountsInfoNoTotal(round, done, total))
             }
             return String(localizable: .migrationBannerProgressCountsInfo(done, total, percent))
-        case .preparing:
+        case let .preparing(done, total):
+            // FIND-6: monotone information — once real progress exists, the counts line (the same
+            // designed string `.inProgress` renders) stays on screen through the preparing phases;
+            // the spinner icon alone carries "work is running". Only a run with nothing yet done
+            // shows the keep-open ask in this slot, because there are no numbers to take back.
+            if done > 0 && total > 0 {
+                let percent = (done * 100) / total
+                return String(localizable: .migrationBannerProgressCountsInfo(done, total, percent))
+            }
             return String(localizable: .migrationBannerKeepOpenInfo)
         case .nextRoundRequired(let round, let totalRounds):
             if let totalRounds {

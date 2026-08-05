@@ -46,7 +46,7 @@ import ZcashLightClientKit
         let actionable: [MigrationBannerVariant] = [
             .required,
             .inProgress(done: 1, total: 4, round: nil, totalRounds: nil),
-            .preparing,
+            .preparing(done: 0, total: 4),
             .nextRoundRequired(round: 2, totalRounds: 3),
             .transferWaiting(number: 1, torHold: false),
             .transferSending(number: 1),
@@ -94,7 +94,7 @@ import ZcashLightClientKit
     /// Equatable is what the store's hold-and-apply logic compares on; a variant that failed to
     /// distinguish itself would make the dwell untestable and the flicker trace lie.
     @Test func checkingIsDistinctFromEveryOtherState() {
-        #expect(MigrationBannerVariant.checkingStatus != .preparing)
+        #expect(!MigrationBannerVariant.checkingStatus.isPreparingVariant)
         #expect(MigrationBannerVariant.checkingStatus != .required)
         #expect(MigrationBannerVariant.checkingStatus != .complete)
         #expect(MigrationBannerVariant.checkingStatus == .checkingStatus)

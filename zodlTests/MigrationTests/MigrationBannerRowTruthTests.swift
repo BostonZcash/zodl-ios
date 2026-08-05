@@ -155,7 +155,7 @@ import ZcashLightClientKit
             transferRows: [Self.row(index: 0, status: .pending)],
             preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)]
         )
-        #expect(variant != .preparing)
+        #expect(variant?.isPreparingVariant != true)
     }
 
     /// The submission itself DOES ask — that window is seconds long and dies with the app.
@@ -250,7 +250,7 @@ import ZcashLightClientKit
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [Self.row(index: 0, status: .active, isPreparing: true)]
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// THE field ordering. A transfer whose window passed while its proof was outstanding is both
@@ -262,7 +262,7 @@ import ZcashLightClientKit
             transferRows: [Self.row(index: 0, status: .overdue, isPreparing: true)],
             hasOverdue: true
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// Same reason in the manual lane: offering Review for a transfer that cannot be sent yet ends
@@ -274,7 +274,7 @@ import ZcashLightClientKit
             isManualDelivery: true,
             isNextTransferDue: true
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// But a broadcast already in flight outranks it — that transfer is past preparing, and naming
@@ -303,7 +303,7 @@ import ZcashLightClientKit
                 Self.row(index: 1, status: .overdue, isPreparing: true)
             ]
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// …but a PENDING row that merely happens to be provable does NOT raise it, and this is the
@@ -337,7 +337,7 @@ import ZcashLightClientKit
             ]
         )
 
-        #expect(variant != .preparing)
+        #expect(variant?.isPreparingVariant != true)
         #expect(variant == .inProgress(done: 0, total: 6, round: nil, totalRounds: nil))
     }
 
@@ -349,7 +349,7 @@ import ZcashLightClientKit
             transferRows: [Self.row(index: 0, status: .pending)],
             preparationRows: [Self.row(index: 0, status: .active, isPreparing: true, kind: .splitBalance)]
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// FIELD-CAUGHT 2026-08-01. A note-split is proved at commit and BROADCAST later, in its own
@@ -365,7 +365,7 @@ import ZcashLightClientKit
             preparationRows: [Self.row(index: 0, status: .active, isBroadcasting: true, kind: .splitBalance)],
             isBroadcastInFlight: true
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// `.preparing` and not `.transferSending`, deliberately: the thing going out is a Split
@@ -390,7 +390,7 @@ import ZcashLightClientKit
             transferRows: [Self.row(index: 0, status: .pending)],
             isBroadcastInFlight: true
         )
-        #expect(variant == .preparing)
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// The immediate (send-max) lane keeps its deliberate silence — it runs behind its own
@@ -430,19 +430,35 @@ import ZcashLightClientKit
         #expect(variant?.info == String(localizable: .migrationBannerProgressCountsInfo(1, 6, 16)))
     }
 
-    /// Both work-in-flight states carry the same second line, because both are asking for the same
-    /// one thing. Figma 5139:35270 and 5139:34287 print it identically.
+    /// Both work-in-flight states carry the same second line — WHILE the run has no numbers to
+    /// show yet. Figma 5139:35270 and 5139:34287 print it identically.
     @Test func bothWorkingStatesAskTheUserToStay() {
         let keepOpen = "Keep Zodl open on active phone screen"
-        #expect(MigrationBannerVariant.preparing.info == keepOpen)
+        #expect(MigrationBannerVariant.preparing(done: 0, total: 6).info == keepOpen)
         #expect(MigrationBannerVariant.transferSending(number: 1).info == keepOpen)
+    }
+
+    /// FIND-6 (2026-08-05, campaign 7): MONOTONE INFORMATION. Once the banner has shown real
+    /// progress ("1 of 11 · 9%"), flipping to `.preparing` must NOT replace the numbers with a
+    /// numberless spinner — the field watched exactly that for 12 minutes and read it as the run
+    /// breaking. With `done > 0` the preparing banner renders the SAME designed counts line
+    /// `.inProgress` shows; the spinner icon alone says work is running.
+    @Test func preparingKeepsTheCountsOnceProgressExists() {
+        #expect(
+            MigrationBannerVariant.preparing(done: 1, total: 11).info
+                == MigrationBannerVariant.inProgress(done: 1, total: 11, round: nil, totalRounds: nil).info,
+            "numbers, once shown, are never taken back by the preparing costume"
+        )
     }
 
     /// Preparing is run-level, so it borrows the run-level title and the run-level button — it is
     /// not about one transfer and must not offer to review one.
     @Test func preparingIsTitledAndButtonedAtRunLevel() {
-        #expect(MigrationBannerVariant.preparing.title == MigrationBannerVariant.inProgress(done: 0, total: 6, round: nil, totalRounds: nil).title)
-        #expect(MigrationBannerVariant.preparing.buttonLabel == MigrationBannerVariant.required.buttonLabel)
+        #expect(
+            MigrationBannerVariant.preparing(done: 0, total: 6).title
+                == MigrationBannerVariant.inProgress(done: 0, total: 6, round: nil, totalRounds: nil).title
+        )
+        #expect(MigrationBannerVariant.preparing(done: 0, total: 6).buttonLabel == MigrationBannerVariant.required.buttonLabel)
     }
 
     // MARK: - The row flag itself
@@ -529,8 +545,7 @@ import ZcashLightClientKit
             transferRows: [Self.row(index: 0, status: .expired)]
         )
         #expect(flagged == unflagged)
-        #expect(flagged != .preparing)
-        #expect(flagged != .preparing)
+        #expect(flagged?.isPreparingVariant != true)
     }
 
     /// The two new parameters default, so every pre-existing call site — none of which know they
@@ -634,7 +649,7 @@ import ZcashLightClientKit
             transferRows: stalledRows
         )
 
-        #expect(variant != .preparing, "never ask the user to stay for a sweep that produces nothing")
+        #expect(variant?.isPreparingVariant != true, "never ask the user to stay for a sweep that produces nothing")
         #expect(variant == .transferWaiting(number: 1, torHold: false))
     }
 

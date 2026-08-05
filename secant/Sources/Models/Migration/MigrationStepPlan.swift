@@ -60,15 +60,21 @@
 //  straight to the SAME action `.beforeSync` produces, not a variant of it: as far as the wire is
 //  concerned, the two are indistinguishable.
 //
-//  Everything else stays anchored to a sync boundary — with ONE follow-mode exception. `.rebuild`
-//  and `.requiresAttention` a tick can only ever defer (`.wrongPhase`): rebuilding re-anchors
-//  against the post-sync tip and attention's cheap first half IS a sync. `.prove` defers too,
-//  UNLESS the wallet currently reads `.upToDate` (`isWalletAtTip`): slipstream's follow mode pins
-//  sync at the tip with no re-firing edge, so a prove that became ready mid-session had no
-//  discharge until the next app-open — and "the post-sync edge owns proving" was always a proxy
-//  for "the commitment tree is current", which an at-tip tick satisfies directly (field-caught
-//  2026-08-02, twice). `.waiting`/`.complete`/`nil` were never phase-dependent in the first place
-//  and stay that way.
+//  Everything else stays anchored to a sync boundary — with ONE exception. `.rebuild` and
+//  `.requiresAttention` a tick can only ever defer (`.wrongPhase`): rebuilding re-anchors
+//  against the post-sync tip and attention's cheap first half IS a sync. `.prove` a tick DOES
+//  discharge, unconditionally (FIND-5, 2026-08-05 — the marathon-session starvation). The tick
+//  prove began 2026-08-02 gated on the wallet reading `.upToDate`, on the theory that "the
+//  post-sync edge owns proving" was a proxy for "the commitment tree is current". The field then
+//  produced a session where that gate starved proving for 50+ minutes: broadcast churn and the
+//  sync gate's own ready-broadcast hold kept `syncStatus` off `.upToDate` essentially forever,
+//  so ticks deferred every prove while no edge was coming, and the whole run's throughput
+//  collapsed to one prove sweep per app-REOPEN — in the very session whose banner said "Keep
+//  Zodl open". The gate was conservatism, not correctness: the engine's `.prove` answer is
+//  evaluated on the SCANNED frame (an anchor it names is settled in data the wallet has), and
+//  the SDK documents the sweep as safe on any schedule, including mid-sync. So the tick obeys
+//  the engine, full stop. `.waiting`/`.complete`/`nil` were never phase-dependent in the first
+//  place and stay that way.
 //
 //  See `docs/slipstream/migration/MIGRATION_STACK_MAP.md` §5 for the full-stack picture this
 //  implements, and `MigrationStepDriver` for the executor — including the single-flight latch, the
@@ -155,9 +161,6 @@ enum MigrationStepPlan {
     /// - Parameters:
     ///   - step: the engine's answer, or `nil` when no run is stored.
     ///   - phase: which moment of the app-open this is.
-    ///   - isWalletAtTip: whether sync currently reads `.upToDate` — consulted by exactly one
-    ///     cell, the `.prove` row's `.tick` column (see that case's comment). The default keeps
-    ///     the conservative pre-follow-mode table; the driver always passes the live value.
     ///   - isPreparationBroadcast: AUD-3 — whether a `.broadcast` step's id names a note-
     ///     PREPARATION (the driver derives it from `migrationTransactionStatuses`). Consulted by
     ///     exactly one cell, the `.broadcast` row's `.afterSync` column: ZIP 318's sync/broadcast
@@ -165,10 +168,13 @@ enum MigrationStepPlan {
     ///     send-to-self"), and the engine's own contract is "a preparation is broadcast as soon
     ///     as it is proved" — at the very edge that proved it. The default `false` keeps the
     ///     conservative transfer treatment.
+    ///
+    /// (An `isWalletAtTip` parameter lived here 2026-08-02 → 2026-08-05, consulted by the
+    /// `.prove` row's `.tick` column. FIND-5 removed it — see the file header's "with ONE
+    /// exception" note for the marathon-session starvation it caused.)
     static func action(
         for step: MigrationAdvanceStep?,
         phase: MigrationOpenPhase,
-        isWalletAtTip: Bool = false,
         isPreparationBroadcast: Bool = false
     ) -> MigrationStepAction {
         guard let step else { return MigrationStepAction.nothing(MigrationStepHold.noRun) }
@@ -206,17 +212,19 @@ enum MigrationStepPlan {
             case MigrationOpenPhase.afterSync:
                 return MigrationStepAction.prove(id: id)
             case MigrationOpenPhase.tick:
-                // Follow-mode liveness (field-caught 2026-08-02, twice): slipstream keeps the
-                // wallet pinned at `.upToDate` with no re-firing sync edge, so a prove that
-                // became ready MID-SESSION had no discharge until the next app-open — ticks
-                // deferred it while no edge was ever coming. "The post-sync edge owns proving"
-                // was always a proxy for "the commitment tree is current"; an at-tip tick
-                // satisfies that property directly, so it proves. Off the tip the old column
-                // stands — proving against a stale tree stays the edge's business. Proving is
-                // local computation, so ZIP 318's broadcast-session separation is untouched.
-                return isWalletAtTip
-                    ? MigrationStepAction.prove(id: id)
-                    : MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
+                // A tick proves UNCONDITIONALLY (FIND-5, 2026-08-05). Two prior versions of this
+                // cell each starved a real session: full deferral (pre-2026-08-02) starved
+                // follow-mode, where no sync edge ever re-fires; the at-tip gate that replaced it
+                // starved the marathon session, where broadcast churn and the sync gate's own
+                // ready-broadcast hold keep `syncStatus` off `.upToDate` for the whole sitting —
+                // the field saw proving collapse to one sweep per app-REOPEN, under a banner
+                // asking the user to keep the app open. The gate guarded nothing: the engine
+                // answers `.prove` on the SCANNED frame (the anchor it names is settled in data
+                // the wallet has), and the sweep is documented safe on any schedule, including
+                // mid-sync. Proving is local computation, so ZIP 318's broadcast-session
+                // separation is untouched. The one tick-side refinement lives in the driver: a
+                // sweep already adjudicated STALLED is not re-run every 30s.
+                return MigrationStepAction.prove(id: id)
             case MigrationOpenPhase.beforeSync:
                 // The open's own edge is moments away and must stay free to broadcast instead —
                 // deferring here is unchanged even at the tip.

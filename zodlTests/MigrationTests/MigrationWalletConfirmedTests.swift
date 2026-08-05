@@ -478,4 +478,68 @@ import ZcashLightClientKit
         #expect(variant == .inProgress(done: sentCount, total: rows.count, round: nil, totalRounds: nil))
         #expect(sentCount == 2)
     }
+
+    // MARK: - FIND-1 (2026-08-05, campaign 7): the dependency-blocked row never reads "Overdue"
+
+    /// `hasOverdueMigrationTransfers` is WALLET-WIDE and the engine's overdue set counts
+    /// preparation rows too — so a due note-split used to stamp "Overdue · 1 min ago" on
+    /// Transfer 1 while the very preparations funding it were still unmined. A row whose own live
+    /// status says `blockedOn == .dependencies` is ON PLAN, not late: the aggregate flag must not
+    /// put the clock's badge on it.
+    @Test func aDependencyBlockedFirstRowIsNeverOverdue() {
+        let dependencyBlocked = MigrationTransactionStatus(
+            id: 1,
+            kind: .transfer(crossing: 0),
+            state: .signed,
+            scheduledHeight: 2_999_990,
+            expiryHeight: nil,
+            isReady: false,
+            nextAction: nil,
+            blockedOn: .dependencies,
+            dependsOn: [7],
+            anchorBoundaryHeight: nil
+        )
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: Self.committedSchedule(sentRecords: []),
+            state: .inProgress(Self.progress(completed: 0, total: 1)),
+            hasOverdueMigrationTransfers: true,
+            now: Self.now,
+            clock: Self.clock,
+            statuses: [dependencyBlocked]
+        )
+
+        #expect(rows[0].status == .active, "the aggregate overdue flag must not badge a dependency-blocked row, got \(rows[0].status)")
+        #expect(rows[0].isAwaitingRunDependencies, "the dependency truth must ride the row for the caption")
+        #expect(rows[0].overdueMinutesAgo == nil)
+        #expect(!rows[0].isInFlight, "nothing runs on this device for a dependency-blocked row — no spinner")
+    }
+
+    /// The mirror that keeps FIND-1 a veto, not a blanket: the same aggregate flag over a
+    /// schedule-blocked first row still reads `.overdue` — the clock's badge is exactly right when
+    /// the row itself is what is late.
+    @Test func aScheduleBlockedFirstRowStillReadsOverdue() {
+        let scheduleBlocked = MigrationTransactionStatus(
+            id: 1,
+            kind: .transfer(crossing: 0),
+            state: .proved,
+            scheduledHeight: 2_999_990,
+            expiryHeight: nil,
+            isReady: false,
+            nextAction: nil,
+            blockedOn: .schedule,
+            dependsOn: [],
+            anchorBoundaryHeight: nil
+        )
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: Self.committedSchedule(sentRecords: []),
+            state: .inProgress(Self.progress(completed: 0, total: 1)),
+            hasOverdueMigrationTransfers: true,
+            now: Self.now,
+            clock: Self.clock,
+            statuses: [scheduleBlocked]
+        )
+
+        #expect(rows[0].status == .overdue)
+        #expect(!rows[0].isAwaitingRunDependencies)
+    }
 }

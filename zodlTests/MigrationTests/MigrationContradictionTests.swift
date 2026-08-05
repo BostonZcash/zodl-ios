@@ -189,7 +189,7 @@ import ZcashLightClientKit
             $0.isPreparing && ($0.status == .active || $0.status == .overdue)
         }
 
-        if variant == .preparing {
+        if variant?.isPreparingVariant == true {
             #expect(anyRowInFlight, "banner is .preparing with no row actually in flight: \(context)")
         }
         if !anyRowInFlight {
@@ -197,7 +197,7 @@ import ZcashLightClientKit
                 variant == .inProgress(done: sentCount, total: transferRows.count, round: nil, totalRounds: nil),
                 "expected the idle progress rendering, got \(String(describing: variant)): \(context)"
             )
-            #expect(variant != .preparing, "spinner with no counterpart: \(context)")
+            #expect(variant?.isPreparingVariant != true, "spinner with no counterpart: \(context)")
         }
     }
 

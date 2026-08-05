@@ -220,6 +220,20 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// Purely in-session by nature — there is no durable form of "a call is in progress", and an app
     /// kill mid-submit means it is no longer true.
     var isSubmitting: Bool
+    /// FIND-1 (2026-08-05, campaign 7): the engine says this row is waiting on OTHER transactions
+    /// of its own run (`blockedOn == .dependencies` — unmined preparations, an earlier transfer).
+    /// Straight from the row's joined live status; `false` when no status joined (no guess).
+    ///
+    /// Two honesty rules read it. The derivation's `nonSentRowStatus` vetoes the schedule-clock
+    /// `.overdue` badge for such a row — the wallet-wide overdue aggregate counts preparation rows
+    /// too, so a due note-split used to stamp "Overdue · 1 min ago" on Transfer 1 while the very
+    /// preparations funding it were still unmined; a dependency-blocked row is ON PLAN, not late.
+    /// And `MigrationStatusView`'s caption prefers the dependency truth over a "Ready now" the
+    /// engine would refuse.
+    ///
+    /// NOT part of `isInFlight`: nothing is running on this device for a dependency-blocked row,
+    /// so it never earns the spinner or the keep-open ask.
+    var isAwaitingRunDependencies: Bool
     /// GROUND_RULES D4: minutes since this row's window passed — set only for `.overdue` rows
     /// (Figma B8: "Overdue · 5h ago"); nil elsewhere. The derivation populates it; a plain 0 hid
     /// real elapsed time behind "just overdue".
@@ -276,6 +290,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         isBroadcasting: Bool = false,
         isPreparing: Bool = false,
         isSubmitting: Bool = false,
+        isAwaitingRunDependencies: Bool = false,
         overdueMinutesAgo: Int? = nil,
         kind: Kind = .transfer
     ) {
@@ -289,6 +304,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.isBroadcasting = isBroadcasting
         self.isPreparing = isPreparing
         self.isSubmitting = isSubmitting
+        self.isAwaitingRunDependencies = isAwaitingRunDependencies
         self.overdueMinutesAgo = overdueMinutesAgo
         self.kind = kind
     }

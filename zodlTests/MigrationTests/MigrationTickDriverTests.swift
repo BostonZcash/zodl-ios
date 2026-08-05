@@ -446,13 +446,16 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 1)
     }
 
-    // MARK: - The at-tip tick prove (follow-mode liveness)
+    // MARK: - The unconditional tick prove (FIND-5, 2026-08-05)
 
-    /// Slipstream's follow mode pins the wallet at `.upToDate` with no re-firing sync edge, so a
-    /// prove that became ready mid-session sat undischarged until the next app-open (ticks
-    /// deferred it as wrong-phase, field-caught 2026-08-02). At the tip, the tick now runs the
-    /// sweep itself — this is the driver half of `MigrationStepPlanTests`' at-tip column.
-    @Test func tickRunsTheProveSweepWhenTheWalletIsAtTheTip() async {
+    /// A tick runs the sweep whenever the engine says `.prove` — at the tip (the 2026-08-02
+    /// follow-mode case this lane was born for) and equally OFF it. The at-tip gate that stood
+    /// here starved the marathon session: broadcast churn plus the sync gate's ready-broadcast
+    /// hold kept `syncStatus` off `.upToDate` for 50+ minutes, ticks deferred every prove while
+    /// no edge was coming, and throughput collapsed to one sweep per app-REOPEN under a "Keep
+    /// Zodl open" banner. This is the driver half of `MigrationStepPlanTests`'
+    /// `tickProvesUnconditionally`.
+    @Test func tickRunsTheProveSweepAtTheTip() async {
         Self.installCandidateAccount()
         let sweepCalls = LockIsolated<Int>(0)
 
@@ -477,9 +480,10 @@ import ComposableArchitecture
         #expect(sweepCalls.value == 1, "the sweep must run exactly once")
     }
 
-    /// Off the tip a tick still defers the prove — proving against a stale tree stays the sync
-    /// edge's business, and the sweep must not run at all.
-    @Test func tickOffTheTipStillDefersTheProve() async {
+    /// The marathon pin: OFF the tip (`SynchronizerState.zero`'s status is not `.upToDate`) the
+    /// tick proves all the same. The engine's `.prove` is scanned-frame truth; "wait until the
+    /// wallet reads up-to-date" was the exact condition send churn never let come true.
+    @Test func tickRunsTheProveSweepOffTheTipToo() async {
         Self.installCandidateAccount()
         let sweepCalls = LockIsolated<Int>(0)
 
@@ -500,8 +504,89 @@ import ComposableArchitecture
             return await manager.advance(phase: .tick)
         }
 
-        #expect(verdict == .deferredToPhase, "an off-tip tick must keep deferring the prove, got \(verdict)")
-        #expect(sweepCalls.value == 0, "the sweep must never run off the tip")
+        #expect(verdict == .proved(count: 1), "an off-tip tick must run the sweep too, got \(verdict)")
+        #expect(sweepCalls.value == 1, "the sweep must run exactly once")
+    }
+
+    // MARK: - One-clock dispatch at ticks (FIND-5, 2026-08-05)
+
+    /// THE MARATHON CURE, tick half. The frozen frame: an est-frame-released transfer pinned one
+    /// block past the scanned tip, the sync gate refusing sync FOR it, every 30s tick reading
+    /// `.waiting` off the frozen scanned frame — for 50+ minutes, until a cold reopen minted a
+    /// fresh `.beforeSync` pass. A tick is a broadcast opportunity on `.beforeSync`'s exact terms
+    /// (no sync of its own), so the same est-aware dispatch now serves the row without a reopen.
+    @Test func tickWaitingButEstimateDueRoutesToTheBroadcastLane() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .waiting },
+                executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
+                    submissionCalls.withValue { $0 += 1 }
+                    #expect(useEstimatedTip, "the submit stays the est-aware single authority")
+                    return .executed(.success(txId: "tick-one-clock"))
+                },
+                hasOverdueMigrationTransfers: { _, useEstimatedTip in useEstimatedTip },
+                pendingMigrationTransferProposal: { _ in
+                    MigrationTransferProposal(
+                        id: 11,
+                        amount: Zatoshi(20_000_000),
+                        anchorHeight: Self.activationHeight,
+                        nextExecutableAfterHeight: Self.activationHeight,
+                        expiryHeight: Self.activationHeight + 10_000
+                    )
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(verdict == .broadcast(id: 11), "the est-due transfer must be tick-delivered, got \(verdict)")
+        #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
+    }
+
+    /// The belt survives the new clock: an `.immediate` run's est-due TRANSFER is still held at a
+    /// tick — the est-aware dispatch routes INTO the same broadcast lane, it does not tunnel past
+    /// the mode belt. (`.immediate` keeps its one delivery at the open lanes, as ever.)
+    @Test func tickEstimateDispatchStillRespectsTheModeBelt() async {
+        Self.installCandidateAccount()
+        let submissionCalls = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in .waiting },
+                executeNextPendingMigrationTransfer: { _, _, _ in
+                    submissionCalls.withValue { $0 += 1 }
+                    return .executed(.success(txId: "must-not-run"))
+                },
+                hasOverdueMigrationTransfers: { _, _ in true },
+                pendingMigrationTransferProposal: { _ in
+                    MigrationTransferProposal(
+                        id: 11,
+                        amount: Zatoshi(20_000_000),
+                        anchorHeight: Self.activationHeight,
+                        nextExecutableAfterHeight: Self.activationHeight,
+                        expiryHeight: Self.activationHeight + 10_000
+                    )
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .immediate))
+            return await manager.advance(phase: .tick)
+        }
+
+        #expect(Self.isHeld(verdict), "an immediate-mode est-due transfer stays held at a tick, got \(verdict)")
+        #expect(submissionCalls.value == 0, "the broadcast lane must never submit")
     }
 
     // MARK: - Held accounts must not starve their siblings (audit 2026-08-03, #4)

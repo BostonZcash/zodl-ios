@@ -348,6 +348,16 @@ struct MigrationStatusView: View {
             // A pending row's ETA is true whether or not its proof is being built, so it keeps it.
             // Proving only earns the caption when it is the reason a row cannot do what it claims.
             return String(localizable: .migrationStatusPreparing)
+        case .active where row.isAwaitingRunDependencies && row.forwardETAMinutes <= 0:
+            // FIND-1 (2026-08-05, campaign 7): the front-of-queue row, its window passed, but the
+            // ENGINE says it is waiting on other transactions of its own run (unmined
+            // preparations). The derivation already vetoes the `.overdue` badge for it — see
+            // `nonSentRowStatus` — and the default ETA arm below would say "Ready now", a send the
+            // engine refuses until the dependencies mine. "Preparing transaction…" is the honest
+            // word from Andrea's own ladder: the run IS preparing this transfer's funding. NO
+            // spinner — `isInFlight` stays false, nothing runs on this device for it. A row whose
+            // window is still ahead keeps its plain ETA (the time is true either way).
+            return String(localizable: .migrationStatusPreparing)
         case .overdue:
             // GROUND_RULES D4: real elapsed, from the row (Figma "Overdue · 5h ago"). The 0 placeholder is dead.
             let ago = row.overdueMinutesAgo ?? 0

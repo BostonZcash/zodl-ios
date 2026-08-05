@@ -112,49 +112,38 @@ import ZcashLightClientKit
     /// Proving, rebuilding, and attention all stay pinned to the two moments that bracket an actual
     /// sync. A tick runs no sync of its own, so none of the three gains a new discharge here — only
     /// the phase check stands between them and the open/edge that already owns them.
-    @Test func tickDefersProveRebuildAndAttentionToTheOpensAndEdges() {
-        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
-        let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
-
-        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .nothing(.wrongPhase))
-        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .nothing(.wrongPhase))
+    @Test func tickDefersRebuildAndAttentionToTheOpensAndEdges() {
         #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
         #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
     }
 
-    // MARK: - The at-tip tick prove (follow-mode liveness)
+    // MARK: - The unconditional tick prove (FIND-5, 2026-08-05)
 
-    /// Slipstream's follow mode keeps the wallet pinned at `.upToDate` with no re-firing sync
-    /// edge, so a prove that became ready MID-SESSION had no discharge until the next app-open —
-    /// ticks deferred it as wrong-phase while no edge was ever coming (field-caught 2026-08-02,
-    /// twice: the confirm-after-edge wedge, then prove(id 4) sitting through a block drought). At
-    /// the tip, a tick satisfies the exact property `.afterSync` was proxying for — the commitment
-    /// tree is current — so the table offers the prove there too.
-    @Test func tickProvesWhenTheWalletIsAtTheTip() {
+    /// A tick proves whatever the engine says is provable, with NO tip condition. Both prior
+    /// shapes of this cell starved a real session — full deferral starved follow-mode (no sync
+    /// edge ever re-fires), and the at-tip gate that replaced it starved the marathon session
+    /// (broadcast churn plus the sync gate's ready-broadcast hold kept `syncStatus` off
+    /// `.upToDate` for 50+ minutes, collapsing proving to one sweep per app-REOPEN under a
+    /// "Keep Zodl open" banner). The engine's `.prove` answer is scanned-frame truth and the
+    /// sweep is safe on any schedule — the tick obeys it, full stop. This test is the
+    /// anti-regression pin for BOTH failure modes.
+    @Test func tickProvesUnconditionally() {
         let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
         let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
 
-        #expect(MigrationStepPlan.action(for: transfer, phase: .tick, isWalletAtTip: true) == .prove(id: 1))
-        #expect(MigrationStepPlan.action(for: preparation, phase: .tick, isWalletAtTip: true) == .prove(id: 1))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(id: 1))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(id: 1))
     }
 
-    /// Off the tip the tick column is unchanged — proving against a stale tree stays the edge's
-    /// business, exactly as before.
-    @Test func tickStillDefersProveOffTheTip() {
+    /// The tick prove changes nothing about the other cells: `.beforeSync` keeps deferring the
+    /// prove (its own edge is moments away, and the open must stay free to broadcast instead),
+    /// and rebuild/attention keep their edge anchoring untouched.
+    @Test func tickProveLeavesEveryOtherCellAlone() {
         let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
 
-        #expect(MigrationStepPlan.action(for: transfer, phase: .tick, isWalletAtTip: false) == .nothing(.wrongPhase))
-    }
-
-    /// Being at the tip unlocks ONLY the tick prove: `.beforeSync` keeps deferring (its own edge
-    /// is moments away, and the open must stay free to broadcast instead), and rebuild/attention
-    /// keep their edge anchoring untouched.
-    @Test func atTipUnlocksOnlyTheTickProve() {
-        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
-
-        #expect(MigrationStepPlan.action(for: transfer, phase: .beforeSync, isWalletAtTip: true) == .nothing(.wrongPhase))
-        #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick, isWalletAtTip: true) == .nothing(.wrongPhase))
-        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick, isWalletAtTip: true) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .beforeSync) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
     }
 
     /// The two answers that never depended on a phase in the first place stay that way with a third
