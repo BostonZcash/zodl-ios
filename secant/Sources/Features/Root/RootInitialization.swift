@@ -651,8 +651,8 @@ extension Root {
                                 // the gate's false edge (the probe's work is moot once unblocked).
                                 for attempt in 0..<Root.Constants.migrationGateStopProbeAttempts {
                                     for accountUUID in stoppableCandidateUUIDs {
-                                        let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
-                                        if case .broadcast = step {
+                                        let advance = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+                                        if case .broadcast = advance?.step {
                                             // RACE GUARD: `.cancel(id:)` is cooperative — it cannot abort the
                                             // `migrationAdvanceStep` await already in flight above, and `try?`
                                             // swallows any cancellation error that call itself might throw. Without

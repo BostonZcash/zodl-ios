@@ -719,7 +719,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasInvalid = await hasInvalidTask
         let hasOverdue = await hasOverdueTask
         let clock = await clockTask
-        let advanceStep = await advanceStepTask
+        let advanceStep = (await advanceStepTask)?.step
 
         let state = rawState
 
@@ -2202,7 +2202,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // suppresses sync for the open.
         var visit = MigrationVisit.sync
         for accountUUID in accountUUIDs {
-            let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            let step = (try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))?.step
             // THE key driver, logged verbatim. Everything this lane does follows from the engine's
             // answer here, and until 07-31 it was the one thing never written down: a run sitting at
             // 0-of-12 looked identical whether the engine was saying `prove`, `waiting`, or
@@ -2350,7 +2350,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// warning naming the exact prover error — but that line goes to the Rust `tracing` → os_log
     /// bridge (subsystem `co.electriccoin.ios`, category `rust`), NOT through `LoggerProxy`, so it
     /// never reaches the stream anyone reads while testing. Field-caught 2026-08-01: a run sat at
-    /// 0-of-12 for a day with `prove sweep: proved 0` next to `advance step: prove(id: 0)` and
+    /// 0-of-12 for a day with `prove sweep: proved 0` next to `advance step: prove(transactions: …)` and
     /// nothing anywhere naming the reason.
     ///
     /// The three heights are the reading, and they separate the two candidate causes without
@@ -2531,7 +2531,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // estimate and answers `.nothingDue`/`.awaitingProof` honestly, so a false positive
             // here degrades to a held verdict, never a wrong send.
             let deliverableId: UInt32?
-            if case let MigrationAdvanceStep.broadcast(stepId)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) {
+            if case let MigrationAdvanceStep.broadcast(stepId)? = (try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))?.step {
                 deliverableId = stepId
             } else if (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
                 let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
@@ -3163,7 +3163,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// healthy account with no run reads a successful `nil` step and derives `.notStarted`.
     ///
     /// The `do`/`catch` is load-bearing and must not be "tidied" back into `try?`. `migrationAdvanceStep`
-    /// returns `MigrationAdvanceStep?`, and since SE-0230 `try?` FLATTENS a throwing optional call
+    /// returns `MigrationAdvance?`, and since SE-0230 `try?` FLATTENS a throwing optional call
     /// into a single optional — so `try? await …` collapses "threw" and "no run" into the same `nil`,
     /// and a `guard let … else { return nil }` on it treats a perfectly healthy no-run account as a
     /// failed read. That is exactly what happened: a freshly restored wallet has no run, so every
@@ -3172,9 +3172,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationState.derive`'s documented `advanceStep == nil` arm was live-unreachable; only tests
     /// (which pass the optional directly) ever exercised it, which is why 778 of them stayed green.
     private func migrationState(accountUUID: AccountUUID) async -> MigrationState? {
-        let advanceStep: MigrationAdvanceStep?
+        let advance: MigrationAdvance?
         do {
-            advanceStep = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            advance = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
         } catch {
             // The read itself failed. Degrade to no state so callers keep their previous value
             // rather than flipping to `.notStarted`.
@@ -3182,7 +3182,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return nil
         }
         return MigrationState.derive(
-            advanceStep: advanceStep,
+            advanceStep: advance?.step,
             progress: try? await sdkSynchronizer.getMigrationProgress(accountUUID),
             statuses: (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? [],
             hasInvalidTransfers: await hasInvalidMigrationTransfers(accountUUID: accountUUID)

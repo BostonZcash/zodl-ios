@@ -54,16 +54,20 @@ struct SDKSynchronizerClient: Sendable {
     // needs — Phase 1 the banner state read, Phase 2 the two propose lanes below.
 
     /// What this account's migration needs NEXT, decided by the engine from persisted state alone —
-    /// `nil` when no run is stored. The replacement for the retired 5-case `MigrationState`: that
-    /// enum conflated "what is true" with "what to do", and every app-side consumer actually wanted
-    /// the latter.
+    /// `nil` when no run is stored. The step (``MigrationAdvance/step``) is the replacement for the
+    /// retired 5-case `MigrationState`: that enum conflated "what is true" with "what to do", and
+    /// every app-side consumer actually wanted the latter. The wrapper also carries the engine's
+    /// advisory OUTLOOK (``MigrationAdvance/next``): when, and of what kind, the migration next has
+    /// serviceable work assuming this step is executed — `nil` when nothing is height-schedulable.
+    /// One step of lookahead, superseded by the next read; consumed by the driver's arming pass and
+    /// never cached across state changes.
     ///
     /// Priority is BROADCAST > PROVE > REBUILD, and that ordering is load-bearing: ZIP 318 wants a
     /// waking session used either to sync or to broadcast, never both, so surfacing every due
     /// broadcast first is what makes a sync-free broadcast session possible. The step is memoryless
     /// about sessions — it says WHAT, the app says WHEN (which visit type). See
     /// `MigrationManagerImpl` for the app's own session policy.
-    let migrationAdvanceStep: @Sendable (AccountUUID) async throws -> MigrationAdvanceStep?
+    let migrationAdvanceStep: @Sendable (AccountUUID) async throws -> MigrationAdvance?
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
     let proposeMigrationTransfers: @Sendable (AccountUUID) async throws -> MigrationSchedule
     /// Proposes the immediate (single-transaction) migration — an ordinary send-max proposal,
