@@ -539,6 +539,10 @@ struct MigrationTransferPlan {
                     MigrationTrace.event("CONFIRM tap ignored — a confirm leg is already in flight")
                     return .none
                 }
+                guard !state.hasConfirmed else {
+                    MigrationTrace.event("CONFIRM tap ignored — this plan is already committed")
+                    return .none
+                }
                 state.isFailurePresented = false
 
                 // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of

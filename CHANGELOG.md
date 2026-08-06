@@ -76,6 +76,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The Migration Progress screen and banner now always show the engine's live state — the stale-cache layer that could show an outdated transfer/split status (or a pre-commit empty screen) while proving ran has been removed.
 - [MOB-1466] Opening the migration from the banner no longer flashes or stacks the mode-picker screen beneath the migration progress screen.
 - [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
+- Confirming a migration transfer plan now lands on the scheduled screen immediately, and the Confirm button can no longer be tapped again after a successful commit.
 
 ## 3.7.3 build 1 (20026-07-12)
 

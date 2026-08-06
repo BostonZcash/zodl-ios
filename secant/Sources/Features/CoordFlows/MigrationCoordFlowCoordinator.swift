@@ -332,9 +332,10 @@ extension MigrationCoordFlow {
                             // app would keep showing the STALE pre-refresh schedule.
                             await migrationManager.recordCommittedSchedule(account.id, schedule)
                             await migrationManager.reconcile()
-                            await send(.pushHydratedPathState(.scheduled(
-                                await scheduledState(accountUUID: account.id, schedule: schedule)
-                            )))
+                            await send(.pushHydratedPathState(.scheduled(Self.scheduledStateNow(
+                                schedule: schedule,
+                                snapshot: migrationManager.currentMigrationSnapshot(account.id)
+                            ))))
                         } catch {
                             await send(.recoveryFailed)
                         }
@@ -969,6 +970,27 @@ extension MigrationCoordFlow {
 
     // MARK: - Post-confirm (#1930 :1689)
 
+    /// Post-commit hydration WITHOUT the engine: a just-committed schedule's numbers are known
+    /// by definition (nothing sent yet; the totals are the schedule's own), and prior rounds'
+    /// moved value comes from the PUBLISHED snapshot — a synchronous read of the channel's
+    /// last value, never actor-bound. The async summary this replaces crossed the DB write
+    /// actor twice (`migrationState`'s advance-step read, `residualAfterMigration`) and queued
+    /// behind the post-commit prove sweep — the first-tap "nothing happens" stall, which
+    /// survived the read-only-reads work precisely because those two hops are writers.
+    static func scheduledStateNow(
+        schedule: MigrationSchedule?,
+        snapshot: MigrationViewSnapshot?
+    ) -> MigrationScheduled.State {
+        let newScheduleAmount = schedule?.transfers.reduce(Zatoshi.zero) { $0 + $1.amount } ?? Zatoshi.zero
+        let priorMoved = snapshot?.movedByDoneTransfers ?? Zatoshi.zero
+        return MigrationScheduled.State(
+            totalAmount: priorMoved + newScheduleAmount,
+            sentCount: 0,
+            totalCount: schedule?.transfers.count ?? (snapshot?.totalTransfers ?? 0),
+            durationHours: schedule?.estimatedDurationHours ?? 0
+        )
+    }
+
     private func transferPlanPostConfirmChain(
         variant: MigrationTransferPlan.State.Variant,
         schedule: MigrationSchedule?,
@@ -977,13 +999,18 @@ extension MigrationCoordFlow {
         let accountUUID = state.selectedWalletAccount?.id
         switch variant {
         case .scheduled, .recreated:
-            // PHASE 4 lands the notification arm exactly where #1930 ran
-            // `migrationBGScheduler.scheduleFirstWindow()`. The BG half stays gone (D2): a window
-            // can be ANNOUNCED ahead of time, never acted on in the background.
-            return .run { [migrationManager] send in
-                let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
-                await send(.pushHydratedPathState(.scheduled(scheduled)))
+            // PUSH SYNCHRONOUSLY — the same shape the `.manual` arm below has always used.
+            // Everything the Scheduled screen shows is in hand (see `scheduledStateNow`);
+            // the engine work that remains (window arming, the snapshot rebuild) runs AFTER
+            // the screen is up, its latency off the navigation path — where a post-commit
+            // prove sweep can no longer hold the push hostage.
+            state.path.append(.scheduled(Self.scheduledStateNow(
+                schedule: schedule,
+                snapshot: migrationManager.currentMigrationSnapshot(accountUUID)
+            )))
+            return .run { [migrationManager] _ in
                 await migrationManager.armNextWindowNotifications(accountUUID)
+                migrationManager.refreshMigrationSnapshot(accountUUID)
             }
         case .manual:
             // The manual-delivery run's FIRST transfer — same "sent" wording as every subsequent
@@ -1244,20 +1271,6 @@ extension MigrationCoordFlow {
     }
 
     // MARK: - State hydration (#1930 :1777 / :2750 / :2837)
-
-    private func scheduledState(accountUUID: AccountUUID?, schedule: MigrationSchedule?) async -> MigrationScheduled.State {
-        let summary = await migrationManager.migrationSummary(accountUUID)
-        let newScheduleAmount = schedule?.transfers.reduce(Zatoshi.zero) { $0 + $1.amount } ?? Zatoshi.zero
-        return MigrationScheduled.State(
-            // `summary.transferred` is only nil on the no-committed-schedule fallback — impossible
-            // here, since this hydrates right after `recordCommittedSchedule` has run. `.zero` is
-            // the correct additive identity regardless.
-            totalAmount: (summary.transferred ?? Zatoshi.zero) + newScheduleAmount,
-            sentCount: summary.transfersSent,
-            totalCount: summary.transfersTotal,
-            durationHours: summary.estimatedDurationHours ?? 0
-        )
-    }
 
     /// R13 Brick 2: hydration is ONE read of ONE value. The pre-Brick-2 version fetched rows,
     /// summary and the snapshot as three separate calls at three moments — three clocks inside a
