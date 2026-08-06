@@ -790,9 +790,15 @@ struct MigrationTransferPlan {
 
             case .scheduleCommitted:
                 MigrationTrace.event("CONFIRM commit COMPLETE — signed + stored; driving the first step under the loader")
-                // The latch flips HERE — at commit success, BEFORE the drive — so `.confirmTapped`'s
-                // hasConfirmed guard kills a re-tap mid-wait and `.backTapped`'s carve-out passes a
-                // back-out through (the plan IS committed; leaving forfeits nothing).
+                // The latch flips HERE — at commit success, BEFORE the drive — not for re-tap
+                // safety (`.confirmTapped`/`.retryTapped`'s `isConfirming` guard already fires
+                // FIRST in that chain and alone kills a re-tap for this whole window, latch or no
+                // latch) but for `.backTapped`'s own guard: without moving it earlier, a back-tap
+                // during the drive wait would still read `hasConfirmed == false` and present the
+                // leave-guard sheet as though nothing were committed yet, when the plan already
+                // IS — flipping the latch here instead lets that back-out pass straight through
+                // honestly, exactly like `.backTapped`'s carve-out promises (leaving forfeits
+                // nothing).
                 state.hasConfirmed = true
                 return .run { send in
                     // Field 2026-08-06 (the "instant dismiss" regression): with the push synchronous,
@@ -870,12 +876,13 @@ struct MigrationTransferPlan {
         }
     }
 
-    /// The software commit — sign-only since MOB-1513 (B4): a success is `.scheduleSigned`, any
-    /// thrown error is the plain generic `.noteSplitFailed` (nothing was persisted — see
-    /// `MigrationCommitPipeline.commitSoftware`'s doc). No broadcast happens here any more, so
-    /// there is no failure to classify/route either. MOB-1458 (Task 3): `ZcashError
-    /// .migrationPlanStale` is caught SPECIFICALLY ahead of that generic catch — see
-    /// `refreshAfterPlanStale`'s doc.
+    /// The software commit — sign-only since MOB-1513 (B4): a success sends `.scheduleCommitted`,
+    /// which latches `hasConfirmed` and drives the newborn run's first step under the loader, then
+    /// itself sends `.scheduleSigned` once that settles. Any thrown error is the plain generic
+    /// `.noteSplitFailed` (nothing was persisted — see `MigrationCommitPipeline.commitSoftware`'s
+    /// doc). No broadcast happens here any more, so there is no failure to classify/route either.
+    /// MOB-1458 (Task 3): `ZcashError.migrationPlanStale` is caught SPECIFICALLY ahead of that
+    /// generic catch — see `refreshAfterPlanStale`'s doc.
     private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
         .run { send in
             do {
