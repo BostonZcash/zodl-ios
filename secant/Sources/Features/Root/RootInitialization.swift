@@ -1696,10 +1696,11 @@ extension Root {
 
     // MARK: - PHASE 7: opening the migration flow from OUTSIDE it
 
-    /// The single entry point for every Root-side site that opens (or re-opens) the migration flow:
-    /// the banner tap and the notification tap. Both replace `migrationCoordFlowState` wholesale, so
-    /// both must run the same defensive teardown first — hence one helper rather than two inline
-    /// resets that can drift.
+    /// The single entry point for opening (or re-opening) the migration flow. Currently reached
+    /// from one Root-side site — the banner tap (notification taps land on Home now, not here) —
+    /// but kept as its own helper rather than inlined at the call site: replacing
+    /// `migrationCoordFlowState` wholesale must always run the same defensive teardown first, and a
+    /// second call site would otherwise risk drifting from it.
     func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
         let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial

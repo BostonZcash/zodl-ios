@@ -74,6 +74,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Leaving the migration plan review screen via the back button, before you've started the plan, now asks you to confirm first — "Your migration hasn't started yet. Leaving now won't schedule any transfers." — so you can't accidentally back out thinking your migration is already underway.
 - [MOB-1466] A successful migration transfer no longer wedges the wallet: the sync gate's refusal to start (part of the migration privacy protection) is now handled as the broadcast session it actually signals, instead of showing a fatal, unrecoverable initialization error.
 - [MOB-1466] The Migration Progress screen and banner now always show the engine's live state — the stale-cache layer that could show an outdated transfer/split status (or a pre-commit empty screen) while proving ran has been removed.
+- [MOB-1466] Opening the migration from the banner no longer flashes or stacks the mode-picker screen beneath the migration progress screen.
+- [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
 
 ## 3.7.3 build 1 (20026-07-12)
 
