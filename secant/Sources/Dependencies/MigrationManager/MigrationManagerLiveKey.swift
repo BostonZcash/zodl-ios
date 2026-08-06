@@ -2162,10 +2162,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             Data(resolvedAccountUUID.id).hexEncodedString()
         )
 
-        // WHEN, and WHICH of the two candidates won. A poke is the one part of this lane the user
+        // WHEN, and WHICH of the four candidates won. A poke is the one part of this lane the user
         // meets while the app is closed, so "did it arm, and for when" cannot be answered by
-        // watching the app — and §7 of the scenario sheet is untestable without it. Both candidate
-        // dates are printed, not just the winner: a poke firing at the wrong moment is almost
+        // watching the app — and §7 of the scenario sheet is untestable without it. Every candidate
+        // date is printed, not just the winner: a poke firing at the wrong moment is almost
         // always the other candidate having been the one that mattered.
         // Authorization, every time. A denied/undetermined status makes every arm below a silent
         // no-op, and that is the first thing to check when a poke never arrives.
@@ -2194,6 +2194,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             "\(Self.logTag) notification ARMED for \(nextStepDate) (in \(inSeconds)s) — \(source)"
             + "; prove \(proveDate.map(String.init(describing:)) ?? "none")"
             + ", send \(sendDate.map(String.init(describing:)) ?? "none")"
+            + ", blocker \(blockerDate.map(String.init(describing:)) ?? "none")"
             + ", outlook \(outlookDate.map(String.init(describing:)) ?? "none")"
             + "; buffer \(Int(clock.notificationBuffer))s at \(Int(clock.secondsPerBlock))s/block"
         )

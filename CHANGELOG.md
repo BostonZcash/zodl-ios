@@ -20,6 +20,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
 - [MOB-1535] The "Total Balance Across Pools" breakdown now shows each pool's balance to its full precision (up to 8 decimal places) instead of flooring to 0.001 ZEC, so small amounts are no longer hidden, and the pools now appear in the order Ironwood, Orchard, Sapling, Transparent.
 - [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
+- [Ironwood] Migration plan previews now show sane value breakdowns: exact funding amounts are preserved, and a split that cannot be funded reports as deferred instead of complete.
+- [Ironwood] The migration reminder is now armed from the engine's own next-work answer as well as the schedule, so the "come back" notification lands at the earliest genuinely serviceable moment — and never inside the privacy buffer for send work.
 
 ### Fixed
 - [MOB-1466] A sent migration transfer's checkmark, amount and transaction id now always land on the transfer that was actually broadcast: the app previously assumed sends happen in the plan's original row order, so once the engine (correctly) sent the earliest-scheduled transfer instead, the wrong row could show as sent — and its later confirmation could be matched against the wrong transaction.
@@ -77,6 +79,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Opening the migration from the banner no longer flashes or stacks the mode-picker screen beneath the migration progress screen.
 - [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
 - The Confirm button on a migration transfer plan now keeps its loading indicator up until your transfers are prepared and presigned (the first delivery kicked off), then opens the Migration Scheduled screen — one tap, no dead first tap, and the Home banner reflects the committed run when you return. The Confirm button still can no longer be tapped again after a successful commit.
+- [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
 
 ## 3.7.3 build 1 (20026-07-12)
 
