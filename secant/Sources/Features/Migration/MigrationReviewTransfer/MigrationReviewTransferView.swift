@@ -53,7 +53,13 @@ struct MigrationReviewTransferView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if isIconHeaderVisible {
-                            MigrationPairedIcons()
+                            // FIGMA PARITY A1-C1 (2026-08-06): vendor-aware, same as
+                            // `MigrationEntryView`'s call site. MOB-1468 parameterized the leading
+                            // brandmark by account vendor but only updated Entry, so a Keystone
+                            // account saw the Keystone mark on Entry and the Zodl mark one screen
+                            // later on Review — a wallet-identity flicker mid-flow. Not visible in
+                            // the designs, which only draw the software account.
+                            MigrationPairedIcons(vendor: store.selectedWalletAccount?.vendor ?? .zcash)
                                 .padding(.bottom, 16)
                         }
 
