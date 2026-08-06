@@ -102,4 +102,57 @@ import Testing
         }
         await revealedPriorStore.send(.onAppear)
     }
+
+    /// FIELD BUG (2026-08-06, whole-branch review): with the reveal gated off, a pushed re-entry
+    /// stack is exactly one element over a permanently-hidden spinner root. An interactive
+    /// back-swipe (live in this app despite hidden back buttons — see
+    /// `MigrationTransferPlanStore.backTapped`'s own KNOWN LIMITATION, and the scan-ceremony
+    /// tombstones this same coordinator already carries for it) pops that element down to an
+    /// empty path with nothing to land on. Leaving the flow is what the gesture meant, so the
+    /// coordinator finishes it instead. The counterpart guards ordinary navigation: once the fork
+    /// IS the revealed root, popping back onto it is just an ordinary pop.
+    @Test func aBackSwipeThatEmptiesAnUnrevealedStackFinishesTheFlow() async {
+        // Re-entry push, reusing test 1's setup: the fork never reveals, so the pushed element is
+        // the whole stack.
+        let store = TestStore(initialState: MigrationCoordFlow.State.initial) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.sdkSynchronizer = .mock
+            var client = MigrationManagerClient.noOp
+            client.reentryRoute = { .statusProgress }
+            $0.migrationManager = client
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushHydratedPathState, timeout: .seconds(5))
+
+        guard let pushedId = store.state.path.ids.first else {
+            Issue.record("expected a pushed path element to pop")
+            return
+        }
+
+        await store.send(.path(.popFrom(id: pushedId)))
+        await store.receive(\.flowFinished, timeout: .seconds(5))
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+
+        // Counterpart guard: the fork IS the revealed root, with something pushed over it via
+        // ordinary navigation — popping back onto an already-revealed root must stay an ordinary
+        // pop. Exhaustive store: no `.flowFinished` may be produced, and the only expected state
+        // change is the pop itself.
+        var forkOriginState = MigrationCoordFlow.State.initial
+        forkOriginState.path.append(.status(MigrationStatus.State(presentation: .resume)))
+        forkOriginState.isReentryResolved = true
+        let poppedId = forkOriginState.path.ids[0]
+
+        let forkOriginStore = TestStore(initialState: forkOriginState) {
+            MigrationCoordFlow()
+        }
+        await forkOriginStore.send(.path(.popFrom(id: poppedId))) {
+            $0.path.removeAll()
+        }
+    }
 }

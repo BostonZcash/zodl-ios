@@ -846,6 +846,17 @@ extension MigrationCoordFlow {
                 // Closes the flow the same way; Root routes on to Activity.
                 return .send(.flowFinished)
 
+            case .path(.popFrom(id: let id)):
+                // An interactive back-swipe off the LAST element of a re-entry stack whose fork
+                // was never revealed would land on the permanently-hidden spinner root — a
+                // dead end with no toolbar and no gestures. Leaving the flow is what the
+                // gesture meant; finish it. (A pop deeper in the stack, or any pop when the
+                // fork IS the revealed root, keeps ordinary pop semantics.) Runs BEFORE
+                // `.forEach(\.path, action: \.path)` below removes the element, so `state.path`
+                // here is still the PRE-pop stack — see `MigrationCoordFlowStore.body`.
+                guard !state.isReentryResolved && state.path.ids == [id] else { return .none }
+                return .send(.flowFinished)
+
             case .path:
                 return .none
             }
