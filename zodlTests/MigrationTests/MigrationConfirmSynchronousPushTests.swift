@@ -66,13 +66,25 @@ import Testing
         )
     }
 
-    private static func snapshot(movedByDoneTransfers: Zatoshi, totalTransfers: Int) -> MigrationViewSnapshot {
+    /// Five transfers of 50_000_000 each — 250_000_000 total, over an estimated 3h. Shaped like
+    /// what the recovery refresh-stale lane re-serves: the run's STORED schedule, rebuilt in
+    /// place, which can include transfers a PRIOR round already broadcast.
+    private static func recoveryRebuiltSchedule() -> MigrationSchedule {
+        MigrationSchedule(
+            transfers: (0..<5).map { transfer(id: UInt32($0), zatoshi: 50_000_000) },
+            estimatedDurationHours: 3,
+            proposalHandle: 2,
+            preparations: []
+        )
+    }
+
+    private static func snapshot(movedByDoneTransfers: Zatoshi, doneTransfers: Int = 0, totalTransfers: Int) -> MigrationViewSnapshot {
         MigrationViewSnapshot(
             orchardRemaining: .zero,
             ironwoodHeld: .zero,
             poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
             movedByDoneTransfers: movedByDoneTransfers,
-            doneTransfers: 0,
+            doneTransfers: doneTransfers,
             totalTransfers: totalTransfers,
             transfers: [],
             summary: MigrationSummary.zero,
@@ -147,17 +159,34 @@ import Testing
         ))
     }
 
-    /// Multi-round: a snapshot carrying a prior round's moved value folds into `totalAmount`
-    /// alongside this round's fresh schedule sum.
-    @Test func theBuilderFoldsPriorRoundsMovedValueFromTheSnapshot() {
-        let priorRoundSnapshot = Self.snapshot(movedByDoneTransfers: Zatoshi(300_000), totalTransfers: 0)
+    /// Multi-round: a snapshot carrying a prior round's cumulative totals folds into BOTH
+    /// `totalAmount` (moved value) and `sentCount` (done transfers) alongside this round's fresh
+    /// schedule sum/count.
+    @Test func theBuilderFoldsPriorRoundsMovedValueAndSentCountFromTheSnapshot() {
+        let priorRoundSnapshot = Self.snapshot(movedByDoneTransfers: Zatoshi(300_000), doneTransfers: 4, totalTransfers: 0)
         let result = MigrationCoordFlow.scheduledStateNow(schedule: Self.schedule(), snapshot: priorRoundSnapshot)
 
         #expect(result == MigrationScheduled.State(
             totalAmount: Zatoshi(300_000) + Zatoshi(350_000_000),
-            sentCount: 0,
+            sentCount: 4,
             totalCount: 2,
             durationHours: 5
+        ))
+    }
+
+    /// The recovery refresh-stale lane's own shape: it re-serves the run's STORED schedule,
+    /// which can already include transfers a PRIOR round broadcast. `sentCount` must fold the
+    /// snapshot's cumulative `doneTransfers` here too — a hardcoded 0 would regress this lane's
+    /// success screen to "0 of 5" for a run that had already sent 3.
+    @Test func theBuilderCountsAlreadySentTransfersOnARecoveryRefresh() {
+        let recoverySnapshot = Self.snapshot(movedByDoneTransfers: Zatoshi(600_000_000), doneTransfers: 3, totalTransfers: 0)
+        let result = MigrationCoordFlow.scheduledStateNow(schedule: Self.recoveryRebuiltSchedule(), snapshot: recoverySnapshot)
+
+        #expect(result == MigrationScheduled.State(
+            totalAmount: Zatoshi(600_000_000) + Zatoshi(250_000_000),
+            sentCount: 3,
+            totalCount: 5,
+            durationHours: 3
         ))
     }
 

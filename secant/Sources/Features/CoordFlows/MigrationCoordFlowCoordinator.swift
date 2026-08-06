@@ -970,13 +970,24 @@ extension MigrationCoordFlow {
 
     // MARK: - Post-confirm (#1930 :1689)
 
-    /// Post-commit hydration WITHOUT the engine: a just-committed schedule's numbers are known
-    /// by definition (nothing sent yet; the totals are the schedule's own), and prior rounds'
-    /// moved value comes from the PUBLISHED snapshot — a synchronous read of the channel's
-    /// last value, never actor-bound. The async summary this replaces crossed the DB write
-    /// actor twice (`migrationState`'s advance-step read, `residualAfterMigration`) and queued
-    /// behind the post-commit prove sweep — the first-tap "nothing happens" stall, which
-    /// survived the read-only-reads work precisely because those two hops are writers.
+    /// Post-commit hydration WITHOUT the engine: a just-committed schedule's transfer count and
+    /// amount sum are known by definition (the schedule IS the plan), and both the moved value
+    /// AND the sent count fold in the PUBLISHED snapshot's cumulative totals — a synchronous read
+    /// of the channel's last value, never actor-bound.
+    ///
+    /// `sentCount` is not always 0: a fresh round-1 commit has nothing sent yet (a `nil`
+    /// snapshot folds in nothing), but the recovery refresh-stale lane re-serves the run's
+    /// STORED schedule, which can already carry transfers broadcast in an earlier round. The
+    /// snapshot's `doneTransfers`/`movedByDoneTransfers` re-materialize those via `leadingRows`
+    /// (prior `sentRecords` no longer in the current schedule) pre- or post-commit, so folding
+    /// `doneTransfers` here keeps the count on the SAME cumulative-confirmed basis `totalAmount`
+    /// already uses — a hardcoded 0 would have regressed the recovery lane's success screen to
+    /// "0 of N" for a run that had already sent several.
+    ///
+    /// The async summary this replaces crossed the DB write actor twice (`migrationState`'s
+    /// advance-step read, `residualAfterMigration`) and queued behind the post-commit prove
+    /// sweep — the first-tap "nothing happens" stall, which survived the read-only-reads work
+    /// precisely because those two hops are writers.
     static func scheduledStateNow(
         schedule: MigrationSchedule?,
         snapshot: MigrationViewSnapshot?
@@ -985,7 +996,7 @@ extension MigrationCoordFlow {
         let priorMoved = snapshot?.movedByDoneTransfers ?? Zatoshi.zero
         return MigrationScheduled.State(
             totalAmount: priorMoved + newScheduleAmount,
-            sentCount: 0,
+            sentCount: snapshot?.doneTransfers ?? 0,
             totalCount: schedule?.transfers.count ?? (snapshot?.totalTransfers ?? 0),
             durationHours: schedule?.estimatedDurationHours ?? 0
         )
@@ -1257,6 +1268,11 @@ extension MigrationCoordFlow {
     ) -> Effect<Action> {
         switch context {
         case .planCommit:
+            // The underlying `MigrationTransferPlan.State.hasConfirmed` is still `false` here —
+            // the Keystone lane deliberately never sets it (see the Store's own doc on that
+            // property) — but that's safe at this exact point: the push below covers this screen
+            // with `.scheduled`, which hides its back affordance, so the un-latched plan screen
+            // is never reachable again for `.backTapped`/`.confirmTapped` to act on.
             guard case let .transferPlan(planState) = state.path.last else { return .none }
             return transferPlanPostConfirmChain(variant: planState.variant, schedule: planState.schedule, state: &state)
 
