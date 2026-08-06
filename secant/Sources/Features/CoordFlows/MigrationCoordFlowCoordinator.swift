@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import SwiftUI
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -51,22 +52,20 @@ extension MigrationCoordFlow {
                 // Armed unconditionally: the flow is on screen whether this open is fresh or a
                 // re-entry mid-stack; disarmed at `flowFinished`/`switchServerRequested`.
                 migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, true)
-                // A screen is already on the stack, so nothing is about to be decided and the root
-                // must not stay hidden behind a resolution that will never run — see
-                // `State.isReentryResolved`.
-                guard state.path.isEmpty else {
-                    state.isReentryResolved = true
-                    return .none
-                }
+                // A screen is already on the stack: routing already ran (or the stack was
+                // hydrated) and the root's visibility is whatever that resolution chose. The
+                // old force-reveal here re-revealed the fork beneath a pushed re-entry stack.
+                guard state.path.isEmpty else { return .none }
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     let pathState = await reentryPathState(accountUUID: accountUUID)
-                    // PUSH first, reveal second — and the push does BOTH in one mutation. The
-                    // previous ordering (reveal, then push) was two separate sends, so SwiftUI could
-                    // render between them: root revealed, path still empty, fork on screen. Exactly
-                    // the flash this was meant to remove, just narrower. `nil` means the fork IS the
-                    // destination, and only then is a bare reveal correct.
+                    // The fork reveals ONLY when routing chose it (`nil` — the fork IS the
+                    // destination). A pushed destination leaves the root hidden forever, and
+                    // the push lands without an animation frame so the destination appears
+                    // directly instead of sliding over the hidden root.
                     if let pathState {
-                        await send(.pushHydratedPathState(pathState))
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        await send(.pushHydratedPathState(pathState), transaction: transaction)
                     } else {
                         await send(.reentryResolved)
                     }
@@ -99,10 +98,11 @@ extension MigrationCoordFlow {
                 return .none
 
             case .pushHydratedPathState(let pathState):
-                // Both in ONE mutation, so no render can catch the root revealed with an empty
-                // path — which is the state that shows the fork. See `State.isReentryResolved`.
+                // Append WITHOUT revealing the root: the fork renders only when routing chose
+                // it (`.reentryResolved`), so a pushed re-entry destination sits over the
+                // neutral, permanently-hidden spinner — never over a tappable fork offering a
+                // choice the committed run already made.
                 state.path.append(pathState)
-                state.isReentryResolved = true
                 return .none
 
             case .pushHydratedStatus(let statusState):
