@@ -4,7 +4,7 @@
 //
 //  M3 Part B (MOB-1466): the Home pool-balances sheet must render R11's standard — pools as if
 //  every migration transaction the wallet has NOT mined never happened. The SDK's per-pool
-//  figures count stored-unmined migration outputs (store-at-prove), so minutes after a plan
+//  figures count stored-unmined migration outputs from the broadcast seam, so minutes after a plan
 //  commits the Ironwood card claims value that has not crossed and the Orchard card has already
 //  shed it. The migration surfaces correct this via `inFlightPoolCorrection`; Home showing the
 //  UNcorrected numbers next to a Status screen showing corrected ones is the surfaces-disagree
@@ -62,9 +62,9 @@ import ComposableArchitecture
         #expect(sum == store.state.totalBalance)
     }
 
-    /// An overstatement larger than the SDK's ironwood figure clamps to zero — the sheet never
-    /// renders a negative pool. (The mirror of the migration header's own clamp.)
-    @MainActor @Test func ironwoodCorrectionClampsAtZero() async {
+    /// An overstatement larger than the SDK's ironwood figure is bounded symmetrically: the sheet
+    /// never renders a negative destination or invents value on the source side.
+    @MainActor @Test func ironwoodCorrectionClampPreservesPoolTotal() async {
         let store = makeStore(correction: MigrationDerivations.PoolTruthCorrection(
             ironwoodOverstatement: Zatoshi(1_000_000),
             orchardUnderstatement: Zatoshi(1_000_000)
@@ -74,7 +74,11 @@ import ComposableArchitecture
         await store.send(.balanceUpdated(balance))
 
         #expect(store.state.ironwoodPoolBalance == .zero)
-        #expect(store.state.orchardPoolBalance == balance.orchardBalance.total() + Zatoshi(1_000_000))
+        #expect(store.state.orchardPoolBalance == balance.orchardBalance.total() + balance.ironwoodBalance.total())
+        #expect(
+            store.state.orchardPoolBalance + store.state.ironwoodPoolBalance
+                == balance.orchardBalance.total() + balance.ironwoodBalance.total()
+        )
     }
 
     /// No snapshot (no active migration, or manager not asked yet) means raw SDK figures — the

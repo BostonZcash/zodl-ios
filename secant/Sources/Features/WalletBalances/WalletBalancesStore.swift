@@ -236,24 +236,28 @@ struct WalletBalances {
 
                 // M3 Part B (MOB-1466): the pool CARDS render R11's standard — as if every
                 // migration transaction the wallet has not mined never happened. The SDK's figures
-                // count stored-unmined migration outputs (store-at-prove), so without this the
+                // count a transaction once it reaches the broadcast seam, so without this the
                 // Ironwood card claims value that has not crossed while the migration header,
                 // corrected by the SAME figure from the SAME derivation pass, says otherwise.
                 // Spendability and both totals above stay raw: locked notes truly are unspendable,
                 // and the two deltas cancel inside the shielded total (Σpools == total holds).
                 let correction = migrationManager.currentMigrationSnapshot(state.selectedWalletAccount?.id)?.poolCorrection
                     ?? MigrationDerivations.PoolTruthCorrection.none
-                let sdkIronwood = accountBalance?.ironwoodBalance.total() ?? .zero
-                if sdkIronwood.amount < correction.ironwoodOverstatement.amount {
-                    // Impossible-state telemetry, mirroring the migration header's own clamp: the
-                    // SDK figure should always cover the in-flight sum it counted.
+                let correctedPools = MigrationDerivations.correctedPoolBalances(
+                    orchard: accountBalance?.orchardBalance.total() ?? .zero,
+                    ironwood: accountBalance?.ironwoodBalance.total() ?? .zero,
+                    correction: correction
+                )
+                if correctedPools.wasClamped {
+                    // Stale status and balance reads must never turn a clamp into a one-sided
+                    // add-back (which would make the pool cards sum above the wallet total).
                     MigrationTrace.event(
-                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(sdkIronwood.decimalString())"
+                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(correctedPools.rawIronwood.decimalString())"
                         + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
                     )
                 }
-                state.orchardPoolBalance = (accountBalance?.orchardBalance.total() ?? .zero) + correction.orchardUnderstatement
-                state.ironwoodPoolBalance = Zatoshi(max(0, sdkIronwood.amount - correction.ironwoodOverstatement.amount))
+                state.orchardPoolBalance = correctedPools.orchard
+                state.ironwoodPoolBalance = correctedPools.ironwood
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)

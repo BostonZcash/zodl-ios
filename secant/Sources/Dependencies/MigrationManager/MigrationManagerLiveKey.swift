@@ -796,31 +796,35 @@ final class MigrationManagerImpl: @unchecked Sendable {
             : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
 
         // R13 refinement 1 — the loader's first canonical query: pools render as if every
-        // migration transaction not wallet-mined never happened. The SDK's figures count
-        // stored-unmined migration outputs (store-at-prove, DB-autopsy-pinned); the bubbles must
-        // not, or the header claims "migrated" over checkmarks that say otherwise. Both bubbles
-        // move by the same figure, so the flip to green and the value move land in the SAME
-        // derivation — the contradiction is structurally impossible, not carefully avoided.
+        // migration transaction not wallet-mined never happened. The current SDK enters a
+        // transaction into the wallet at the broadcast seam; proving only advisory-locks its
+        // inputs. Consequently only broadcast/mined-but-wallet-unsynced rows need correction.
         let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: derivation.statuses)
-        let sdkIronwood = balances?[resolved]?.ironwoodBalance.total() ?? Zatoshi.zero
-        let honestIronwood = Zatoshi(max(0, sdkIronwood.amount - correction.ironwoodOverstatement.amount))
-        if sdkIronwood.amount < correction.ironwoodOverstatement.amount {
-            // Impossible-state telemetry: the SDK figure SHOULD always cover the in-flight sum it
-            // counted. A clamp firing means the storage semantics shifted under us — trace, never
-            // render negative.
+        let sdkBalance = balances?[resolved]
+        let correctedPools = MigrationDerivations.correctedPoolBalances(
+            orchard: sdkBalance?.orchardBalance.total() ?? .zero,
+            ironwood: sdkBalance?.ironwoodBalance.total() ?? .zero,
+            correction: correction
+        )
+        if correctedPools.wasClamped {
+            // A stale/mismatched status read must never create value. The correction is bounded
+            // symmetrically by the destination value that can actually be moved back.
             MigrationTrace.event(
-                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(sdkIronwood.decimalString())"
+                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(correctedPools.rawIronwood.decimalString())"
                 + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
             )
         }
 
         let snapshot = MigrationViewSnapshot(
-            orchardRemaining: reconcileOrchardBalance(from: balances, accountUUID: resolved) + correction.orchardUnderstatement,
+            // Use the complete pool balance here, including proposal-scoped advisory locks. The
+            // `unlockedForMigration` view remains correct for completion/gating, but using it for
+            // display made proved transactions disappear from every pool until broadcast.
+            orchardRemaining: correctedPools.orchard,
             // The wallet's OWN per-pool figure (B10), never inferred from the rows — corrected by
             // the in-flight sum above so it renders R11's standard: what has truly crossed. The
             // two agreeing with the greens is the claim; deriving one from the other would make it
             // vacuous, and rendering the raw figure would make it future-tense.
-            ironwoodHeld: honestIronwood,
+            ironwoodHeld: correctedPools.ironwood,
             // M3 Part B: the raw correction rides along so Home's pool sheet applies the SAME
             // figure to its own balance reads — same pass, same clock as the bubbles above.
             poolCorrection: correction,
@@ -3418,17 +3422,14 @@ enum MigrationDerivations {
     /// SDK's pool figures count that the wallet has NOT mined, so the header's bubbles can render
     /// R11's standard — as if every migration transaction not wallet-mined never happened.
     ///
-    /// THE LIE THIS CORRECTS, pinned by DB autopsy (2026-08-03, data34): the SDK stores a migration
-    /// transaction into the wallet's own `transactions` table at PROVE time, not at broadcast.
-    /// Storing it stores its decrypted outputs, and the wallet's balance then counts value that has
-    /// not crossed — the field wallet showed "3.02 in Ironwood" (exactly crossings 1+2+9) with ZERO
-    /// transfers broadcast. Store-at-broadcast (SP3 #3, Michal's lane) removes that cause at the
-    /// root; this correction is still needed AFTER it, for the broadcast→wallet-mined window every
-    /// transfer routinely sits in (R11's confirming span).
+    /// The current SDK stores the wallet-side transaction at the BROADCAST seam. Before that, a
+    /// proved row only has advisory input locks: its value remains in Orchard and no Ironwood
+    /// output is counted. The correction is therefore needed only for the broadcast→wallet-mined
+    /// window every transfer routinely sits in (R11's confirming span).
     ///
     /// ONE CLOCK: the correction derives from the SAME row set the checkmarks render — a transfer
     /// row that is not `.sent` contributes its amount when its ENGINE state says its transaction
-    /// exists (`.proved`/`.broadcast`/`.mined`; store-at-prove makes "proved" mean "stored"). Both
+    /// has entered the wallet (`.broadcast`/`.mined`). Both
     /// bubbles move by the same figure — the destination sheds what has not truly arrived, the
     /// source regains what has not truly left — so the header can never contradict the greens it
     /// sits above: they flip together, on the same `walletMinedTxIds` read.
@@ -3441,10 +3442,37 @@ enum MigrationDerivations {
         static let none = PoolTruthCorrection(ironwoodOverstatement: .zero, orchardUnderstatement: .zero)
     }
 
+    /// Corrected display balances plus the raw destination value used to bound the correction.
+    /// Bounding both sides by the same amount preserves `orchard + ironwood` even if the engine
+    /// status and wallet-summary reads briefly disagree.
+    struct CorrectedPoolBalances: Equatable {
+        let orchard: Zatoshi
+        let ironwood: Zatoshi
+        let rawIronwood: Zatoshi
+        let wasClamped: Bool
+    }
+
+    static func correctedPoolBalances(
+        orchard: Zatoshi,
+        ironwood: Zatoshi,
+        correction: PoolTruthCorrection
+    ) -> CorrectedPoolBalances {
+        let requested = min(
+            correction.ironwoodOverstatement.amount,
+            correction.orchardUnderstatement.amount
+        )
+        let applied = Zatoshi(min(ironwood.amount, requested))
+        return CorrectedPoolBalances(
+            orchard: orchard + applied,
+            ironwood: ironwood - applied,
+            rawIronwood: ironwood,
+            wasClamped: applied.amount != requested
+        )
+    }
+
     /// See `PoolTruthCorrection`. Precision bounds, deliberate and documented:
-    /// - FEES: the add-back excludes the in-flight transaction's fee, which is unknowable app-side
-    ///   before broadcast (`.proved` carries no txid to look one up by). The source bubble reads
-    ///   LOW by at most one fee per in-flight transfer (~10–20k zatoshi, transient) — conservative,
+    /// - FEES: the add-back excludes the in-flight transaction's fee. The source bubble reads LOW
+    ///   by at most one fee per in-flight transfer (~10–20k zatoshi, transient) — conservative,
     ///   never future-tense, exact at rest.
     /// - `statuses == nil` means the engine could not be read in the rows' own pass (a degraded
     ///   read, or the synthesized fallback): only `.confirming` rows contribute then — those are
@@ -3468,9 +3496,9 @@ enum MigrationDerivations {
             let isStoredUnmined: Bool
             if let stateById {
                 switch stateById[row.id] {
-                case .proved, .broadcast, .mined:
+                case .broadcast, .mined:
                     isStoredUnmined = true
-                case .awaitingSignature, .signed, .invalid, nil:
+                case .awaitingSignature, .signed, .proved, .invalid, nil:
                     isStoredUnmined = false
                 }
             } else {

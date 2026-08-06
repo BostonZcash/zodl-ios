@@ -44,7 +44,8 @@ import ZcashLightClientKit
 /// needs. Every field must come from the SAME derivation pass; adding one that is fetched
 /// separately would reintroduce the second clock this type exists to remove.
 struct MigrationViewSnapshot: Equatable, Sendable {
-    /// Orchard value still to migrate — the SOURCE bubble.
+    /// Orchard value still in the source pool — the SOURCE bubble. This includes advisory-locked
+    /// inputs of proved transactions; those funds remain in Orchard until the broadcast seam.
     let orchardRemaining: Zatoshi
 
     /// Ironwood value the wallet currently holds — the DESTINATION bubble.

@@ -6,12 +6,10 @@
 //  in-flight pool correction that makes the header's bubbles render R11's standard: as if every
 //  migration transaction not wallet-mined never happened.
 //
-//  THE FIXTURE THESE PIN IS A FIELD BUG, replayed from the DB autopsy of 2026-08-03 (data34): the
-//  SDK stores a migration transaction into the wallet's own `transactions` table at PROVE time.
-//  The 19:32 sweep proved crossings 1, 2 and 9; three unmined ironwood notes materialized summing
-//  EXACTLY 302,000,000 zatoshi, and the header said "3.02 in Ironwood" over a timeline with ZERO
-//  transfers broadcast — the flagship "future truth" violation of the evening R13 was ratified in.
-//  `data34Replay` below is that wallet, and the correction must cancel it to the zatoshi.
+//  MOB-1661 pins the current SDK's store-at-broadcast boundary. Proving only advisory-locks the
+//  Orchard inputs; it does not move wallet balance between pools. Treating `.proved` as stored made
+//  the app add every proved transfer to Orchard while clamping an empty Ironwood subtraction,
+//  producing the field report's 174.51665 pool subtotal over a 99.99665 wallet total.
 //
 //  The structural claim the rest pin: the correction derives from the SAME row set the checkmarks
 //  render, keyed by the engine's stable id, and both bubbles move by the same figure — so a green
@@ -60,25 +58,40 @@ import ZcashLightClientKit
 
     // MARK: - The field bug, replayed
 
-    /// data34, 2026-08-03 19:32Z: crossings 1, 2, 9 proved (stored, unmined, ZERO broadcast) —
-    /// the SDK's ironwood figure counted Σ = 302,000,000 that had not crossed. The correction must
-    /// return exactly that sum, on both sides.
-    @Test func data34Replay() {
+    /// MOB-1661 / build 3.9.0 (6): proved but unbroadcast transfers total 74.57 TAZ. The SDK still
+    /// reports all value in Orchard, so the correct adjustment is exactly zero.
+    @Test func provedButUnbroadcastTransactionsDoNotCreatePoolSurplus() {
         let rows = [
-            Self.row(id: "1", amount: Zatoshi(100_000_000), status: .pending),
-            Self.row(id: "2", amount: Zatoshi(100_000_000), status: .pending),
-            Self.row(id: "9", amount: Zatoshi(102_000_000), status: .pending)
+            Self.row(id: "1", amount: Zatoshi(5_000_000), status: .pending),
+            Self.row(id: "2", amount: Zatoshi(200_000_000), status: .pending),
+            Self.row(id: "3", amount: Zatoshi(2_000_000), status: .pending),
+            Self.row(id: "4", amount: Zatoshi(5_000_000_000), status: .pending),
+            Self.row(id: "5", amount: Zatoshi(200_000_000), status: .pending),
+            Self.row(id: "6", amount: Zatoshi(2_000_000_000), status: .pending),
+            Self.row(id: "7", amount: Zatoshi(50_000_000), status: .pending)
         ]
-        let statuses = [
-            Self.status(id: 1, state: .proved),
-            Self.status(id: 2, state: .proved),
-            Self.status(id: 9, state: .proved)
-        ]
+        let statuses = (1 ... 7).map { Self.status(id: UInt32($0), state: .proved) }
 
         let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: statuses)
 
-        #expect(correction.ironwoodOverstatement == Zatoshi(302_000_000))
-        #expect(correction.orchardUnderstatement == Zatoshi(302_000_000))
+        #expect(correction == .none)
+    }
+
+    /// Proving advisory-locks source notes. Locked value still belongs to Orchard and must remain
+    /// visible in the Migration Progress source bubble until the transaction reaches broadcast.
+    @Test func provedAdvisoryLocksRemainInDisplayedOrchardBalance() {
+        let unlocked = Zatoshi(2_542_665_000)
+        let advisoryLocked = Zatoshi(7_452_000_000)
+
+        let displayed = MigrationDerivations.correctedPoolBalances(
+            // Production passes `orchardBalance.total()`, which is unlocked + locked.
+            orchard: unlocked + advisoryLocked,
+            ironwood: .zero,
+            correction: .none
+        )
+
+        #expect(displayed.orchard == Zatoshi(9_994_665_000))
+        #expect(displayed.ironwood == .zero)
     }
 
     // MARK: - Per-state rules
@@ -111,9 +124,8 @@ import ZcashLightClientKit
         #expect(correction.ironwoodOverstatement == Zatoshi(100_000_000))
     }
 
-    /// Not yet proved means not yet stored (store-at-PROVE is the pinned storage timing): the SDK
-    /// figure never counted it, so correcting would understate. Nothing contributes.
-    @Test func unprovedContributesNothing() {
+    /// Before broadcast, neither signed nor proved transactions are in wallet pool balances.
+    @Test func preBroadcastContributesNothing() {
         let rows = [
             Self.row(id: "6", amount: Zatoshi(100_000_000), status: .pending),
             Self.row(id: "7", amount: Zatoshi(100_000_000), status: .active)
@@ -143,7 +155,7 @@ import ZcashLightClientKit
 
     // MARK: - Exemptions
 
-    /// Splits are intra-Orchard: nothing crosses, so nothing corrects — even proved-and-stored.
+    /// Splits are intra-Orchard: nothing crosses, so nothing corrects.
     @Test func splitRowsAreExempt() {
         let rows = [Self.row(id: "0", amount: Zatoshi(500_000_000), status: .pending, kind: .splitBalance)]
         let statuses = [Self.status(id: 0, state: .proved)]
@@ -179,7 +191,7 @@ import ZcashLightClientKit
         ]
         let statuses = [
             Self.status(id: 1, state: .broadcast(txid: Data(repeating: 0x01, count: 32))),
-            Self.status(id: 2, state: .proved)
+            Self.status(id: 2, state: .broadcast(txid: Data(repeating: 0x02, count: 32)))
         ]
 
         let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: statuses)
