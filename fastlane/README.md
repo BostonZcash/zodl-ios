@@ -33,7 +33,7 @@ Bump the marketing version + build (the deliberate version-change step, run in `
 
     ./Scripts/bump.sh --version 3.8.0 --build 1
 
-Other flags: `--yes` (skip confirmation), `--skip-tests`, `--help`.
+Other flags: `-y` / `--yes` (skip confirmation), `--skip-tests`, `--help`.
 
 ## What it checks before building
 

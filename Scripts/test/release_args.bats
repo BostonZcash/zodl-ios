@@ -17,6 +17,18 @@ setup() {
   [[ "$output" == *"dry_run:true"* ]]
 }
 
+@test "forwards --yes as yes:true" {
+  run "$RELEASE" --variant internal --ref main --version 3.8.0 --build 1 --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"yes:true"* ]]
+}
+
+@test "forwards -y as yes:true" {
+  run "$RELEASE" --variant internal --ref main --version 3.8.0 --build 1 -y
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"yes:true"* ]]
+}
+
 @test "missing --build exits 2" {
   run "$RELEASE" --variant appstore --ref main --version 3.8.0
   [ "$status" -eq 2 ]
