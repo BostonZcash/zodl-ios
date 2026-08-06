@@ -8,9 +8,9 @@
 //  `MigrationNetworkPrivacyView`.
 //
 //  MOB-1497 (T2): `store.isCustomServer` swaps the toggle card for the no-toggle "unavailable" body
-//  copy (R2/R12). The off-warning alert (R3/R11) is presented via the standard `.alert(store:)`
-//  binding — see the shared `AlertState.migrationTorOffWarning`
-//  (Features/Migration/MigrationOffWarningAlert.swift).
+//  copy (R2/R12). The R3/R11 off-warning alert this view used to present is GONE (Figma parity
+//  A1-2.4, 2026-08-06) — toggling Tor off and tapping "Got it" resolves the sheet directly, as the
+//  designs draw it. See `MigrationTorSheetStore`'s header for the decision and its evidence.
 //
 //  MOB-1497 (T3): the custom-server variant is redesigned per the refreshed canvas (4207:10692 / dark
 //  4207:10875) — it now gets its OWN title (`migrationTorSheetUnavailableTitle`, 20pt semibold, vs.
@@ -43,7 +43,6 @@ struct MigrationTorSheetView: View {
                     providerContent
                 }
             }
-            .alert($store.scope(state: \.alert, action: \.alert))
         }
     }
 

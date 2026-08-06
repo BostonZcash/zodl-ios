@@ -26,14 +26,19 @@
 //  - R13 (`broadcastHost`): the formed snapshot's broadcast endpoint host, shown under the toggle
 //    (provider) or folded into the unavailable-variant body (custom) — see T3 below, which removes
 //    this field from `State` entirely.
-//  - R3/R11 (the off-warning `alert`): a PROVIDER user's `gotItTapped` with the toggle OFF presents a
-//    confirmation alert (house `AlertState` idiom, mirroring `ServerSetup`'s migration-privacy
-//    warning / `MigrationComplete`'s failure alert) instead of proceeding directly. "Proceed without
-//    Tor" clears the alert and emits `.delegate(.gotIt)` with `isTorOn` still `false` — the
-//    coordinator reads it from there to persist the choice and call `confirmProvisionalTorChoice`.
-//    "Keep Tor on" (the alert's `.cancel`-role button, dispatched as the bare `.alert(.dismiss)`)
-//    clears the alert AND resets `isTorOn` back to `true` — the sheet stays up showing ON, and no
-//    delegate is emitted (nothing to resume). ON confirms proceed directly, unchanged.
+//  - R3/R11 (the off-warning `alert`): REMOVED 2026-08-06 — see the Figma-parity note below.
+//
+//  FIGMA PARITY A1-2.4 — the off-warning alert is DELETED from this sheet (Lukas's decision,
+//  2026-08-06). Toggle off + "Got it" now simply resolves the sheet and continues, which is what the
+//  designs draw: Figma has no warning anywhere in this flow. The requirement came from MOB-1497's
+//  attached "Tor and Broadcast Routing Requirements (R1–R17)" doc, but that same ticket's §J recorded
+//  that these dialogs "do not exist in Figma" and flagged them for a product/design pass that never
+//  happened — the copy was written to the doc, not by product. Lukas: "all strings there are fully AI
+//  artificial, no one from product ever saw it… keep it simple, no alert, no warning."
+//
+//  The shared `AlertState.migrationTorOffWarning` builder SURVIVES: the R14 broadcast-failure lane
+//  (`MigrationSendingStore`, `MigrationStatusStore`) still presents it at a different moment — after
+//  a broadcast has already failed over Tor — and that moment was not part of this decision.
 //
 //  MOB-1497 (T3): redesigns the custom-server ("identity-custom") variant per the refreshed canvas
 //  (4207:10692 / dark 4207:10875) — the no-toggle "unavailable" body is joined by a
@@ -75,7 +80,6 @@ struct MigrationTorSheet {
         /// presentation (T3: risks card + "Continue without Tor" / "Switch Server", replacing the old
         /// Got it + inline disclosure).
         var isCustomServer = false
-        @Presents var alert: AlertState<Action>?
 
         init(
             isTorOn: Bool = true,
@@ -89,16 +93,14 @@ struct MigrationTorSheet {
     }
 
     enum Action: BindableAction, Equatable {
-        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
         /// MOB-1497 (T3): the custom-server variant's destructive "Continue without Tor" button —
-        /// guarded to that variant only (`state.isCustomServer`); a provider tap is a no-op (its own
-        /// "continue without Tor" affordance is the off-warning alert's `offWarningProceedTapped`).
+        /// guarded to that variant only (`state.isCustomServer`); a provider tap is a no-op. The
+        /// provider variant's own way to proceed without Tor is simply toggling off and tapping
+        /// "Got it" — see `gotItTapped`.
         case continueWithoutTorTapped
         case delegate(Delegate)
         case gotItTapped
-        /// MOB-1497 (T2, R3/R11): the off-warning alert's "Proceed without Tor" button.
-        case offWarningProceedTapped
         /// MOB-1497 (T3): the custom-server variant's primary "Switch Server" button — guarded to
         /// that variant only (`state.isCustomServer`); the coordinator wiring for it lands in T4, so
         /// this commit only ever produces the delegate.
@@ -119,19 +121,6 @@ struct MigrationTorSheet {
 
         Reduce { state, action in
             switch action {
-            case .alert(.presented(let action)):
-                return .send(action)
-
-            case .alert(.dismiss):
-                // MOB-1497 (T2): "Keep Tor on" reaches here (the alert's cancel-role button carries no
-                // explicit action, relying on the alert's own native dismissal — see `AlertState
-                // .migrationTorOffWarning`) — force the toggle back ON so the sheet, which stays presented,
-                // reflects the choice the user just reaffirmed rather than the OFF position that
-                // triggered the warning. No delegate: the sheet isn't resolved, it's still showing.
-                state.alert = nil
-                state.isTorOn = true
-                return .none
-
             case .binding:
                 return .none
 
@@ -152,15 +141,10 @@ struct MigrationTorSheet {
                 // ever fires from the PROVIDER toggle sheet in practice. Sending it directly against
                 // an `isCustomServer == true` state (e.g. from a test) simply falls through the same
                 // ON/OFF logic below — there is no dedicated branch left to bypass it with.
-                guard !state.isTorOn else {
-                    return .send(.delegate(.gotIt))
-                }
-                // Provider + OFF: R3/R11 requires the explicit warning before this can take effect.
-                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: state.usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
-                return .none
-
-            case .offWarningProceedTapped:
-                state.alert = nil
+                //
+                // FIGMA PARITY A1-2.4 (Lukas, 2026-08-06): whatever the toggle shows, "Got it"
+                // resolves the sheet. The R3/R11 off-warning alert that used to intercept the OFF
+                // case is GONE — see this file's header for why.
                 return .send(.delegate(.gotIt))
 
             case .switchServerTapped:
