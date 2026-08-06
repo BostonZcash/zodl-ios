@@ -670,4 +670,174 @@ import ZcashLightClientKit
         #expect(MigrationDerivations.preparationRows(statuses: statuses, clock: Self.clock, isProvingStalled: false)?[0].isPreparing == true)
         #expect(MigrationDerivations.preparationRows(statuses: statuses, clock: Self.clock, isProvingStalled: true)?[0].isPreparing == false)
     }
+
+    /// THE SPINNER INVARIANT (Lukas, 2026-08-06): the Prepare Balance sheet takes the same
+    /// verdict — it was the one surface still spinning over a stalled sweep (a due step's badge
+    /// spinner keyed on schedule alone). Stalled, a due step reads as a quiet `.scheduled` with
+    /// no forward time.
+    @Test func aStalledSweepQuietsThePrepareSheet() {
+        let statuses = [
+            MigrationTransactionStatus(
+                id: 0,
+                kind: .preparation(layer: 0, index: 0),
+                state: .signed,
+                scheduledHeight: 2_999_000,
+                expiryHeight: nil,
+                isReady: true,
+                nextAction: .prove,
+                blockedOn: nil,
+                dependsOn: [],
+                anchorBoundaryHeight: nil
+            )
+        ]
+        let working = MigrationDerivations.prepareBalanceRows(statuses: statuses, clock: Self.clock, isProvingStalled: false)
+        let stalled = MigrationDerivations.prepareBalanceRows(statuses: statuses, clock: Self.clock, isProvingStalled: true)
+
+        #expect(working?[0].state == .preparing)
+        #expect(stalled?[0].state == .scheduled, "no badge spinner over a sweep that produces nothing")
+        #expect(stalled?[0].minutesFromNow == nil, "a stalled due step promises no time")
+    }
+}
+
+// MARK: - THE SPINNER INVARIANT (Lukas, 2026-08-06)
+
+/// *"Each banner that has ONGOING = PENDING state means there is really some work in progress —
+/// must be visible with a spinner. Terminated, idle, static banners have zero spinners anywhere;
+/// ongoing banners must have spinners somewhere."* — the cross-surface rule, executable.
+///
+/// All the spinner-bearing surfaces derive from the SAME statuses + clock + stall verdict: the
+/// banner (`bannerVariant`'s preparing/sending arms), the timeline rows (`isInFlight` drives the
+/// row spinner), and the Prepare Balance sheet (`.preparing` drives the badge spinner). Whatever
+/// the engine reports, they may only ever tell one story.
+@Suite struct MigrationSpinnerInvariantTests {
+    private static let clock = MigrationChainClock(tip: 3_000_000, secondsPerBlock: 75)
+
+    private static func status(
+        id: UInt32,
+        kind: MigrationTransactionStatus.Kind,
+        state: MigrationTransactionStatus.State = .signed,
+        scheduledHeight: BlockHeight = 2_999_000,
+        isReady: Bool = true,
+        nextAction: MigrationTransactionStatus.NextAction? = .prove
+    ) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: id,
+            kind: kind,
+            state: state,
+            scheduledHeight: scheduledHeight,
+            expiryHeight: nil,
+            isReady: isReady,
+            nextAction: nextAction,
+            blockedOn: nil,
+            dependsOn: [],
+            anchorBoundaryHeight: nil
+        )
+    }
+
+    private static func progress(total: Int) -> MigrationProgress {
+        MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: total,
+            remainingOrchard: Zatoshi(500_000_000),
+            nextTransferReadyAtHeight: 3_000_100,
+            isImmediate: false
+        )
+    }
+
+    /// The matrix: engine status combinations × the stall verdict. For every cell, the banner's
+    /// keep-open claim, the timeline's row spinners and the sheet's badge spinners must agree on
+    /// the one question "is app work running?" — a banner asking the user to stay over a
+    /// spinner-less list, or a spinner over a quiet banner, are both the contradiction this rule
+    /// bans.
+    @Test func theSurfacesAgreeOnWhetherWorkIsRunning() {
+        let combos: [(name: String, statuses: [MigrationTransactionStatus])] = [
+            ("provable transfer, due", [Self.status(id: 1, kind: .transfer(crossing: 0))]),
+            ("provable preparation, due", [Self.status(id: 1, kind: .preparation(layer: 0, index: 0))]),
+            ("future-scheduled transfer", [Self.status(id: 1, kind: .transfer(crossing: 0), scheduledHeight: 3_100_000, isReady: false, nextAction: nil)]),
+            ("broadcast preparation", [Self.status(id: 1, kind: .preparation(layer: 0, index: 0), state: .broadcast(txid: Data()), nextAction: nil)]),
+            (
+                "mixed: due prep + future transfer",
+                [
+                    Self.status(id: 1, kind: .preparation(layer: 0, index: 0)),
+                    Self.status(id: 2, kind: .transfer(crossing: 0), scheduledHeight: 3_100_000, isReady: false, nextAction: nil)
+                ]
+            )
+        ]
+
+        for stalled in [false, true] {
+            for combo in combos {
+                let transfers = MigrationDerivations.statusOnlyTransferRows(
+                    statuses: combo.statuses,
+                    clock: Self.clock,
+                    isProvingStalled: stalled
+                ) ?? []
+                let preparations = MigrationDerivations.preparationRows(
+                    statuses: combo.statuses,
+                    clock: Self.clock,
+                    isProvingStalled: stalled
+                ) ?? []
+                let sheet = MigrationDerivations.prepareBalanceRows(
+                    statuses: combo.statuses,
+                    clock: Self.clock,
+                    isProvingStalled: stalled
+                ) ?? []
+                let banner = MigrationDerivations.bannerVariant(
+                    isIronwoodActivated: true,
+                    state: .inProgress(Self.progress(total: combo.statuses.count)),
+                    isManualDelivery: false,
+                    isNextTransferDue: false,
+                    orchardBalance: Zatoshi(500_000_000),
+                    isCompleteAcknowledged: false,
+                    isMigrationRemainderPending: false,
+                    transferRows: transfers,
+                    preparationRows: preparations
+                )
+
+                let rowSpinners = (transfers + preparations).contains { $0.isInFlight }
+                let sheetSpinners = sheet.contains { if case .preparing = $0.state { return true } else { return false } }
+                let bannerOngoing = banner?.isPreparingVariant == true
+                let context = "combo=\(combo.name) stalled=\(stalled)"
+
+                #expect(bannerOngoing == rowSpinners, "banner keep-open and row spinners disagree: \(context)")
+                if sheetSpinners {
+                    #expect(bannerOngoing, "sheet badge spins under a quiet banner: \(context)")
+                }
+                if stalled {
+                    #expect(!bannerOngoing && !rowSpinners && !sheetSpinners, "a stalled sweep must quiet every surface: \(context)")
+                }
+            }
+        }
+    }
+
+    /// The sending direction: the submit-window flag raises the banner's keep-open ask, and the
+    /// stamped row (`isSubmitting`, keyed to the D6 id by `stampingActiveSubmit`) is what spins
+    /// the timeline for exactly that window — `isInFlight` is true for a submitting row
+    /// regardless of its schedule state.
+    @Test func aLiveSubmitSpinsTheBannerAndTheStampedRow() {
+        guard var row = MigrationDerivations.statusOnlyTransferRows(
+            statuses: [Self.status(id: 1, kind: .transfer(crossing: 0), isReady: true, nextAction: nil)],
+            clock: Self.clock,
+            isProvingStalled: false
+        )?.first else {
+            Issue.record("expected one derived row")
+            return
+        }
+        #expect(!row.isSubmitting)
+        row.isSubmitting = true
+        #expect(row.isInFlight, "the stamped row spins for the submit window")
+
+        let banner = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .inProgress(Self.progress(total: 1)),
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(500_000_000),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: [row],
+            isBroadcastInFlight: true,
+            activeBroadcastTxId: 1
+        )
+        #expect(banner == .transferSending(number: 1), "the flag window is the sending banner")
+    }
 }

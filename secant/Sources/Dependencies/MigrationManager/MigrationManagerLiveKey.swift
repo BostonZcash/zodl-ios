@@ -2860,7 +2860,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
         return MigrationDerivations.prepareBalanceRows(
             statuses: statuses,
-            clock: await chainClock(accountUUID: resolvedAccountUUID)
+            clock: await chainClock(accountUUID: resolvedAccountUUID),
+            // THE SPINNER INVARIANT: the sheet takes the same stall verdict as the timeline rows
+            // and the banner — one verdict, three quiet surfaces.
+            isProvingStalled: isProvingStalled
         )
     }
 
@@ -4647,9 +4650,17 @@ enum MigrationDerivations {
     ///   yet or not — a tick is seconds away, and there is nothing for the user to do, which is
     ///   exactly what that caption says. `.waitsOn([])` also lands here ("waits on nothing" is
     ///   not a state a user can act on).
+    ///
+    /// THE SPINNER INVARIANT (Lukas, 2026-08-06): `isProvingStalled` joins the signature — the
+    /// same verdict the sibling `preparationRows` already takes. A stall quiets the BANNER and the
+    /// timeline rows, and this sheet was the one surface still spinning over a sweep that provably
+    /// produces nothing (the overnight-stall class, relocated). Stalled ⇒ a due step renders
+    /// `.scheduled` with no forward time — static badge, honest words, zero spinners while the
+    /// banner is quiet.
     static func prepareBalanceRows(
         statuses: [MigrationTransactionStatus],
-        clock: MigrationChainClock
+        clock: MigrationChainClock,
+        isProvingStalled: Bool = false
     ) -> [MigrationPrepareBalanceRow]? {
         let ordered = statuses
             .compactMap { status -> (layer: Int, index: Int, status: MigrationTransactionStatus)? in
@@ -4691,17 +4702,26 @@ enum MigrationDerivations {
                 minutesFromNow = nil
 
             default:
+                // THE SPINNER INVARIANT: a due step spins only while proving can actually happen.
+                // Stalled, it reads as a quiet `.scheduled` with no time line — matching the
+                // banner and the timeline rows the same verdict already quiets.
+                let dueState: MigrationPrepareBalanceRow.State = isProvingStalled
+                    ? MigrationPrepareBalanceRow.State.scheduled
+                    : MigrationPrepareBalanceRow.State.preparing
+                if isProvingStalled, forwardMinutes <= 0 {
+                    minutesFromNow = nil
+                }
                 if status.blockedOn == MigrationTransactionStatus.Blocker.dependencies {
                     let waitsOn = status.dependsOn.compactMap { displayNumber[$0] }.sorted()
                     state = waitsOn.isEmpty
                         ? (forwardMinutes > 0
                             ? MigrationPrepareBalanceRow.State.scheduled
-                            : MigrationPrepareBalanceRow.State.preparing)
+                            : dueState)
                         : MigrationPrepareBalanceRow.State.waitsOn(waitsOn)
                 } else if forwardMinutes > 0 {
                     state = MigrationPrepareBalanceRow.State.scheduled
                 } else {
-                    state = MigrationPrepareBalanceRow.State.preparing
+                    state = dueState
                 }
             }
 

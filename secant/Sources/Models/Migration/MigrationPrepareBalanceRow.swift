@@ -52,7 +52,12 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
         /// from `.preparing` because Andrea's ladder reserves that word for work the app is doing
         /// NOW, and from `.readyToSend` because a future turn promises no action to anyone.
         case scheduled
-        /// In flight: broadcast, waiting to mine.
+        /// The app's OWN work is on this step right now — its turn has arrived and proving (or
+        /// the submit) is running or seconds away. The live-spinner state, and the only one:
+        /// Andrea's ladder reserves "Preparing" for app work, so a broadcast step reads `.sent`
+        /// (the chain's side), never this. THE SPINNER INVARIANT (Lukas, 2026-08-06): a stalled
+        /// sweep remaps due steps to `.scheduled` — the derivation never claims this state while
+        /// the banner is quiet.
         case preparing
         /// Blocked until the listed steps have mined. Values are the step numbers AS DISPLAYED
         /// (1-based), so the view never re-derives them; empty is treated as `.preparing` by the
