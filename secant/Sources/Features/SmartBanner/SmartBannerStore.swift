@@ -16,15 +16,18 @@ import MessageUI
 struct SmartBanner {
     enum Constants: Equatable {
         static let easeInOutDuration = 0.85
-        /// MOB-1466: the MINIMUM time `.checkingStatus` stays on screen once a foreground has
-        /// raised it — ABSORBED into the re-derivation, never added on top. A verdict at 2 s shows
-        /// checking for 2 s; a verdict at 0.1 s still shows it until 0.5 s.
+        /// MOB-1466: the MINIMUM time `.checkingStatus` stays on screen once raised — ABSORBED into
+        /// the re-derivation, never added on top. A verdict at 2 s shows checking for 2 s; a
+        /// verdict at 0.1 s still shows it until the floor.
         ///
-        /// MEASURED DOWN from 0.5 s (field, 2026-08-03). The real answer arrived in 130 ms on
-        /// broadcast opens — so a 0.5 s floor was showing a spinner for 500 ms to prevent 130 ms of
-        /// staleness, ADDING 370 ms of churn to remove less. 0.2 s still forbids a sub-frame flip
-        /// while costing almost nothing when the answer is quick; the slow cold-launch path, which
-        /// is what this state exists for, is unaffected.
+        /// 0.5 s — RATIFIED by Lukas 2026-08-06 (Figma-parity audit, flow SB): the floor is a
+        /// PRODUCT guarantee that the state is unmistakably seen, not a latency knob. An
+        /// engineering pass had measured it down to 0.2 s (field, 2026-08-03: the real answer
+        /// arrived in 130 ms on broadcast opens, so 0.5 s "added 370 ms of churn to remove less")
+        /// — that reasoning optimised spinner time, which was never the goal; the stated rule is
+        /// "at least 0.5 s so there is no 50 ms flicker".
+        /// `MigrationCheckingStatusTests.checkingFloorIsTheRatifiedHalfSecond` pins it, so the
+        /// next measure-down is a deliberate act with a failing test attached.
         ///
         /// NOT a delay-before-show. That variant (hold the stale label ~300 ms, show the spinner
         /// only if the answer is late) optimises for sub-300 ms resolution, and the field says that
@@ -32,7 +35,7 @@ struct SmartBanner {
         /// arrive in runs (A -> B -> A, A -> B -> C) rather than singly. Showing the truth
         /// immediately and forbidding a sub-half-second flip is the shape that matches what was
         /// actually observed.
-        static let migrationCheckingMinimumDwell = 0.2
+        static let migrationCheckingMinimumDwell = 0.5
         static let remindMe2days: TimeInterval = 86_400 * 2
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
@@ -548,6 +551,31 @@ struct SmartBanner {
                     state.hasHeldMigrationVariant = true
                     return .none
                 }
+                // GROUND_RULES R3, the CLAIM gate (SB-2, Lukas GO 2026-08-06): the hold above
+                // protects a slot migration already OWNS; this protects the CLAIM. Without it, a
+                // pre-verdict variant claiming the slot (warm foreground while another banner held
+                // it, or the cold walk-down) painted the DB-derived answer directly — the field
+                // "T3 ready" that flipped to "T3 sending" one advance later. Claiming WITH
+                // `.checkingStatus` is still a claim, so the ladder-stall concern that scoped the
+                // old gate to owned slots does not apply: the banner opens showing Checking, and
+                // the dwell re-poll releases it on the session verdict. A nil variant is a decline,
+                // not a claim, so TRAP 3 ("never manufacture a banner") holds — wallets with no
+                // migration to offer never see this state.
+                if let variant, state.priorityContent != .priorityMigration,
+                   !migrationManager.isMigrationSessionVerdictKnown() {
+                    MigrationTrace.event("banner → checkingStatus (claiming pre-verdict — R3)")
+                    state.migrationBannerVariant = .checkingStatus
+                    state.isMigrationCheckDwelling = true
+                    state.heldMigrationVariant = variant
+                    state.hasHeldMigrationVariant = true
+                    return .merge(
+                        .send(.triggerPriority(.priorityMigration)),
+                        .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            await send(.migrationCheckDwellElapsed)
+                        }
+                    )
+                }
                 if let variant {
                     state.migrationBannerVariant = variant
                     if state.priorityContent != .priorityMigration {
@@ -641,6 +669,26 @@ struct SmartBanner {
                     return .merge(
                         .send(.evaluatePriority3),
                         syncGateDeclineRepollEffect(state: state)
+                    )
+                }
+                // GROUND_RULES R3, the CLAIM gate — the walk-down twin of the block in
+                // `.migrationVariantUpdated` above (SB-2, Lukas GO 2026-08-06). The cold walk-down's
+                // first claim "must keep flowing" (the stall note above) — and it still does: it
+                // flows as `.checkingStatus`, which makes cold launch satisfy R3's letter ("cold
+                // launch and warm foreground alike") instead of painting the pre-verdict DB answer.
+                if state.priorityContent != .priorityMigration,
+                   !migrationManager.isMigrationSessionVerdictKnown() {
+                    MigrationTrace.event("banner → checkingStatus (claiming pre-verdict — R3)")
+                    state.migrationBannerVariant = .checkingStatus
+                    state.isMigrationCheckDwelling = true
+                    state.heldMigrationVariant = variant
+                    state.hasHeldMigrationVariant = true
+                    return .merge(
+                        .send(.triggerPriority(.priorityMigration)),
+                        .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            await send(.migrationCheckDwellElapsed)
+                        }
                     )
                 }
                 state.migrationBannerVariant = variant

@@ -40,6 +40,15 @@ import ZcashLightClientKit
         #expect(MigrationBannerVariant.checkingStatus.showsButton)
     }
 
+    /// The dwell FLOOR is the ratified half second (Lukas, 2026-08-06 — Figma-parity audit, flow
+    /// SB): "at least 0.5 s so there is no 50 ms flicker." An engineering pass measured it down to
+    /// 0.2 s once (2026-08-03), optimising spinner time — which was never the goal. This pin makes
+    /// the next measure-down a deliberate act with a failing test attached, exactly as
+    /// `MigrationTickIntervalLivePin` does for the tick interval.
+    @Test func checkingFloorIsTheRatifiedHalfSecond() {
+        #expect(SmartBanner.Constants.migrationCheckingMinimumDwell >= 0.5)
+    }
+
     /// Every variant offers its action. Written as an enumeration rather than a spot check so that
     /// hiding a button anywhere becomes a deliberate act with a failing test attached.
     @Test func everyVariantOffersItsAction() {

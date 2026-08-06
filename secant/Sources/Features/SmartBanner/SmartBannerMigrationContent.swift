@@ -294,7 +294,8 @@ struct MigrationBannerContentView: View {
 
             Spacer()
 
-            // Hidden only for `.checkingStatus`: no action is offered against an unknown state.
+            // `showsButton` is `true` for every variant today — the buttonless checking was
+            // reversed 2026-08-03 against Figma 5679-8225; see the property's own doc for the seam.
             if variant.showsButton {
                 ZashiButton(
                     variant.buttonLabel,
