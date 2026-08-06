@@ -193,9 +193,13 @@ import ZcashLightClientKit
             #expect(anyRowInFlight, "banner is .preparing with no row actually in flight: \(context)")
         }
         if !anyRowInFlight {
+            // Ratified idle (Lukas, 2026-08-06 — flow ID): the no-work branch of this matrix IS the
+            // engine's `.waiting`, and it renders the designed idle state, not the counts line. The
+            // counts-from-rows identity this branch used to double-check lives on at the arms that
+            // still render counts (`.preparing` with progress, the split-phase and stalled arms).
             #expect(
-                variant == .inProgress(done: sentCount, total: transferRows.count, round: nil, totalRounds: nil),
-                "expected the idle progress rendering, got \(String(describing: variant)): \(context)"
+                variant == .idle,
+                "expected the ratified idle, got \(String(describing: variant)): \(context)"
             )
             #expect(variant?.isPreparingVariant != true, "spinner with no counterpart: \(context)")
         }
@@ -354,15 +358,13 @@ import ZcashLightClientKit
 
     // MARK: - Invariant 4: the progress counts never drift from the rows
 
-    /// Guards the drift `MigrationBannerRowTruthTests` was written for: "transfer 1 has been done,
-    /// transfer 2 ready but smart widget still writes transfer 1" — the banner's `done`/`total` come
-    /// from `MigrationProgress` (a MINED count), the timeline's from row positions, and the two used
-    /// to disagree for the entire window between a transfer's broadcast and its mine. Fixed at the
-    /// source (the idle `.inProgress` case's counts ARE `progress.completedTransfers`/`totalTransfers`,
-    /// verbatim); this pins that identity, and — by constructing `progress` FROM the same rows a
-    /// timeline would render (completed = sent count, total = row count) — pins that the two
-    /// readings never disagree when they are built from the one set of facts a real run would have
-    /// produced them from.
+    /// REWRITTEN for the ratified idle (Lukas, 2026-08-06 — flow ID). This property used to pin the
+    /// counts-from-rows identity on the nothing-actionable arm; that arm now renders `.idle` by
+    /// rule (engine `.waiting` ⇒ the designed notify line), so the matrix pins THAT across every
+    /// count/sent combination instead — the whole nothing-in-flight family maps to one state, with
+    /// no counts to drift. The counts identity itself is not lost: `.preparing` with progress
+    /// derives `done` from the same sent-row filter (FIND-6's test compares the rendered lines),
+    /// and the split-phase arm counts the same rows.
     @Test func progressCountsEqualTheRowTruth() {
         for count in 0...6 {
             for sentCount in 0...count {
@@ -378,18 +380,13 @@ import ZcashLightClientKit
                     isBroadcastInFlight: false
                 )
 
-                guard let variant = maybeVariant, case let .inProgress(done, total, _, _) = variant else {
+                guard let variant = maybeVariant, variant == .idle else {
                     let maybeVariantDescription = String(describing: maybeVariant)
-                    Issue.record("expected .inProgress for count=\(count) sentCount=\(sentCount), got \(maybeVariantDescription)")
+                    Issue.record("expected the ratified idle for count=\(count) sentCount=\(sentCount), got \(maybeVariantDescription)")
                     continue
                 }
 
-                #expect(done == progress.completedTransfers)
-                #expect(total == progress.totalTransfers)
-
-                let sentRowCount = rows.filter { $0.status == .sent }.count
-                #expect(done == sentRowCount, "count=\(count) sentCount=\(sentCount)")
-                #expect(total == rows.count, "count=\(count) sentCount=\(sentCount)")
+                #expect(variant.percent == nil, "idle claims no fraction: count=\(count) sentCount=\(sentCount)")
             }
         }
     }

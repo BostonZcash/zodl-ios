@@ -49,6 +49,18 @@ import ZcashLightClientKit
         #expect(SmartBanner.Constants.migrationCheckingMinimumDwell >= 0.5)
     }
 
+    /// THE RATIFIED IDLE (Lukas, 2026-08-06 — flow ID): engine `.waiting` ⇒ `.idle` ⇒ the designed
+    /// notify line (Figma 35439/10639) under the standing progress title. The full-canvas walk had
+    /// left `migrationBanner.idleInfo` orphaned pending exactly this trigger rule; the rule now
+    /// exists, so this pin replaces the old "counts is the universal idle line" reading.
+    @Test func idleRendersTheRatifiedNotifyLine() {
+        #expect(MigrationBannerVariant.idle.title == String(localizable: .migrationBannerProgressTitle))
+        #expect(MigrationBannerVariant.idle.info == String(localizable: .migrationBannerIdleInfo))
+        #expect(MigrationBannerVariant.idle.showsButton)
+        #expect(MigrationBannerVariant.idle.percent == nil)
+        #expect(!MigrationBannerVariant.idle.isPreparingVariant)
+    }
+
     /// Every variant offers its action. Written as an enumeration rather than a spot check so that
     /// hiding a button anywhere becomes a deliberate act with a failing test attached.
     @Test func everyVariantOffersItsAction() {
@@ -63,6 +75,7 @@ import ZcashLightClientKit
             .transfersExpired(first: 1, last: 2),
             .transferReady(number: 1),
             .complete,
+            .idle,
             .checkingStatus
         ]
 

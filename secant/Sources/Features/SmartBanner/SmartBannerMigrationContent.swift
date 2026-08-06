@@ -101,6 +101,25 @@ enum MigrationBannerVariant: Equatable {
     case transfersExpired(first: Int, last: Int)
     case transferReady(number: Int)
     case complete
+    /// THE RATIFIED IDLE (Lukas, 2026-08-06 — Figma-parity audit, flow ID): the engine's
+    /// `MigrationAdvanceStep.waiting` made visible. "Nothing is actionable right now" (that case's
+    /// own SDK doc) ⇒ nothing to do ⇒ `We'll notify you when to send` — `migrationBanner.idleInfo`,
+    /// which sat orphaned in the catalog since SP1 waiting for exactly this trigger rule. Figma
+    /// `5139:35439` / `10639`: coins-swap glyph (the frame's own icon — GROUND_RULES §3's "alarm
+    /// clock" annotation was the looser reading), the standing "Migration Progress" title, the
+    /// ordinary More.
+    ///
+    /// HISTORY, because this copy has been wired once before and reversed: the full-canvas walk
+    /// found counts to be Figma's idle DEFAULT (33226/34962/24004) and un-wired the notify line
+    /// pending "a product rule for WHEN it replaces counts". That rule now exists — product ruled
+    /// `.waiting` has "no other choice" but this state — so the notify line takes the
+    /// nothing-actionable arm and the counts family keeps its ACTIVE homes (the split-phase
+    /// progress arm, the stalled-run arm, `.preparing` with progress per FIND-6).
+    ///
+    /// NOT a FIND-6 violation, read before reverting: FIND-6 forbids replacing numbers with a
+    /// numberless costume MID-WORK. This is the designed numberless state when nothing runs,
+    /// product-ratified, with the full numbers one tap away on C5.
+    case idle
     /// MOB-1466 (staleness pass): the banner does not KNOW yet. Every other case on this enum is an
     /// assertion about the world; this is the one that admits the app has not re-established the
     /// world yet, and it exists because iOS foregrounding renders the previous frame.
@@ -161,7 +180,7 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
-        case .inProgress, .preparing, .checkingStatus:
+        case .inProgress, .preparing, .checkingStatus, .idle:
             return String(localizable: .migrationBannerProgressTitle)
         case .transferWaiting(let number, _):
             return String(localizable: .migrationBannerWaitingTitle(number))
@@ -182,11 +201,12 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required:
             return String(localizable: .migrationBannerRequiredInfo)
-        // GROUND_RULES D2 (provisional): Figma's idle inProgress subtitle is the counts family
-        // (33226/34962/24004). The designed "We'll notify you when to send" state (35439, alarm
-        // icon) needs a product rule for WHEN it replaces counts — open with Andrea;
-        // migrationBanner.idleInfo stays in the catalog for that. Do not resurrect idleInfo here
-        // without that rule.
+        // RATIFIED 2026-08-06 (Lukas, flow ID) — the rule the old D2-provisional note demanded:
+        // engine `.waiting` ⇒ `.idle` ⇒ the designed notify line. Counts stay for the ACTIVE
+        // `.inProgress` arms (split-phase progress, stalled runs) and for `.preparing` with
+        // progress; the pure nothing-actionable slot belongs to `.idle` below.
+        case .idle:
+            return String(localizable: .migrationBannerIdleInfo)
         case let .inProgress(done, total, round, totalRounds):
             let percent = total > 0 ? (done * 100) / total : 0
             if let round {
@@ -311,7 +331,9 @@ struct MigrationBannerContentView: View {
 
     @ViewBuilder private func migrationIcon() -> some View {
         switch variant {
-        case .required, .nextRoundRequired:
+        case .required, .nextRoundRequired, .idle:
+            // `.idle` joins the coins-swap group per its Figma frames (35439/10639) — nothing is
+            // spinning, so the spinner rule below excludes it by construction.
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:

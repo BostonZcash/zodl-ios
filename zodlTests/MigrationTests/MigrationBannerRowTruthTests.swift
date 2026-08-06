@@ -144,7 +144,10 @@ import ZcashLightClientKit
             ]
         )
         #expect(variant != .transferSending(number: 1))
-        #expect(variant == .inProgress(done: 0, total: 6, round: nil, totalRounds: nil))
+        // Ratified idle (2026-08-06): a confirming broadcast leaves nothing actionable this
+        // session — the wire has the transaction, mining is the chain's job — so the run reads
+        // idle. The confirming-window nuance has its own note in FIGMA_PARITY flow ID.
+        #expect(variant == .idle)
     }
 
     /// Same rule in the split phase, where it actually bit: a broadcast Split Balance awaiting its
@@ -338,7 +341,10 @@ import ZcashLightClientKit
         )
 
         #expect(variant?.isPreparingVariant != true)
-        #expect(variant == .inProgress(done: 0, total: 6, round: nil, totalRounds: nil))
+        // Ratified idle (2026-08-06): dep-vetoed provable rows are exactly "nothing actionable
+        // this session", which is the idle state — the honest version of FIND-1's no-false-promise
+        // rule.
+        #expect(variant == .idle)
     }
 
     /// A note-split preparation is work exactly as much as a crossing transfer is, and the split
@@ -406,15 +412,16 @@ import ZcashLightClientKit
 
     // MARK: - Idle
 
-    /// Nothing in flight, nothing due: GROUND_RULES D2 — the idle subtitle is the COUNTS family the
-    /// design draws (Figma 33226 "0 of 6 transfers done · 0% complete", 34962 "1 of 6 ~ 16%"). The
-    /// earlier assertion pinned "We'll notify you when to send" — copy from ONE frame (35439) — as
-    /// the universal idle line; the full-canvas walk showed counts is the default and the notify
-    /// line is a distinct designed state whose trigger rule is open with Andrea
-    /// (`migrationBanner.idleInfo` stays in the catalog for it).
-    @Test func anIdleRunReadsAsProgressWithTheCountsLine() {
-        // R11 re-pin: full 6-row fixture — the banner's "1 of 6 · 16%" is now literally computed
-        // from the same six rows the screen draws (R5), not from a progress claim beside them.
+    /// THE PIN THAT HAS NOW FLIPPED TWICE, so carry the whole history. First wiring rendered
+    /// "We'll notify you when to send" as the universal idle line; the full-canvas walk reversed it
+    /// to counts (Figma 33226/34962 read as the idle default) and left the notify line orphaned
+    /// "pending a product rule for WHEN it replaces counts — open with Andrea". Lukas gave that
+    /// rule 2026-08-06 (flow ID): the engine's `.waiting` — nothing actionable, next window in the
+    /// future — has "no other choice" but the designed idle state. So idle renders the notify line
+    /// again, this time BY RULE, and the counts family keeps its active-work homes (split-phase
+    /// progress, stalled runs, `.preparing` with progress per FIND-6). The pure-idle counts frames
+    /// are recorded for Andrea as superseded in FIGMA_PARITY flow ID.
+    @Test func anIdleRunReadsAsTheRatifiedIdle() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 1, total: 6)),
             transferRows: [
@@ -426,8 +433,8 @@ import ZcashLightClientKit
                 Self.row(index: 5, status: .pending)
             ]
         )
-        #expect(variant == .inProgress(done: 1, total: 6, round: nil, totalRounds: nil))
-        #expect(variant?.info == String(localizable: .migrationBannerProgressCountsInfo(1, 6, 16)))
+        #expect(variant == .idle)
+        #expect(variant?.info == String(localizable: .migrationBannerIdleInfo))
     }
 
     /// Both work-in-flight states carry the same second line — WHILE the run has no numbers to

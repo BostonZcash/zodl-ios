@@ -201,9 +201,15 @@ import ZcashLightClientKit
 
     // MARK: - Running
 
-    @Test func provingATransferReadsAsProgress() {
+    /// RE-PINNED for the ratified idle (Lukas, 2026-08-06 — flow ID). The rows are the authority
+    /// on "is the app doing work right now" (the 08-02 `isInFlight` narrowing), and this fixture
+    /// carries NO in-flight rows — so even under a `.prove` step, nothing is actionable THIS
+    /// session (the privacy-gate-refused window FIND-1 documented) and the run reads as idle, not
+    /// as a numberless progress claim. The rows-vs-step seam is recorded in FIGMA_PARITY flow ID
+    /// for its own mapping row.
+    @Test func aProveStepWithoutInFlightRowsReadsAsIdle() {
         let variant = Self.banner(advanceStep: .prove(id: 1, kind: .transfer(crossing: 0)), progress: Self.progress())
-        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4, round: nil, totalRounds: nil))
+        #expect(variant == MigrationBannerVariant.idle)
     }
 
     /// A run whose preparations have not all mined is still SPLITTING — and that reads as progress,

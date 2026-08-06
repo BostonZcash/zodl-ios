@@ -147,7 +147,8 @@ import ZcashLightClientKit
         index: Int,
         status: MigrationTransferRow.Status,
         isBroadcasting: Bool = false,
-        kind: MigrationTransferRow.Kind = .transfer
+        kind: MigrationTransferRow.Kind = .transfer,
+        isPreparing: Bool = false
     ) -> MigrationTransferRow {
         MigrationTransferRow(
             id: "\(index)",
@@ -156,6 +157,7 @@ import ZcashLightClientKit
             status: status,
             hoursFromNow: 0,
             isBroadcasting: isBroadcasting,
+            isPreparing: isPreparing,
             kind: kind
         )
     }
@@ -386,6 +388,10 @@ import ZcashLightClientKit
     /// screen showing one green and one "Confirming…" is exactly the banner/screen split R11
     /// removes. The fixture's `progress` deliberately claims different counts (3 of 12) so this
     /// asserts provenance, not coincidence.
+    /// Re-anchored onto `.preparing` for the ratified idle (2026-08-06): the original fixture had
+    /// nothing in flight, which now renders `.idle` — a state with no counts to miscount — so the
+    /// R11 claim is asserted where counts still render. One in-flight row raises `.preparing`,
+    /// whose `done` comes from the same sent-row filter: the confirming row is in neither number.
     @Test func aConfirmingRowDoesNotCountAsDone() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 3, total: 12)),
@@ -395,10 +401,11 @@ import ZcashLightClientKit
                 Self.row(index: 2, status: .pending),
                 Self.row(index: 3, status: .pending),
                 Self.row(index: 4, status: .pending),
-                Self.row(index: 5, status: .pending)
+                Self.row(index: 5, status: .pending),
+                Self.row(index: 6, status: .active, isPreparing: true)
             ]
         )
-        #expect(variant == .inProgress(done: 1, total: 6, round: nil, totalRounds: nil))
+        #expect(variant == .preparing(done: 1, total: 7))
     }
 
     /// R4 at the finish line: the engine reaches its own `.complete` the moment the last transfer
@@ -470,12 +477,18 @@ import ZcashLightClientKit
         #expect(steps.filter { $0.state == .done }.count == sentCount)
 
         // The banner's count over the SAME array: done == the same filter, and the whole variant
-        // is exact — 2 of 4, with the confirming row in neither number's green column.
+        // is exact — 2 of 4, with the confirming row in neither number's green column. Re-anchored
+        // onto `.preparing` for the ratified idle (2026-08-06): the `.active` row is marked
+        // in-flight so the counts-rendering arm fires; a nothing-in-flight fixture now renders
+        // `.idle`, which carries no counts to agree or disagree.
+        let inFlightRows = rows.enumerated().map { index, row in
+            index == 3 ? Self.row(index: 3, status: .active, kind: .splitBalance, isPreparing: true) : row
+        }
         let variant = Self.variant(
-            state: .inProgress(Self.progress(completed: sentCount, total: rows.count)),
-            transferRows: rows
+            state: .inProgress(Self.progress(completed: sentCount, total: inFlightRows.count)),
+            transferRows: inFlightRows
         )
-        #expect(variant == .inProgress(done: sentCount, total: rows.count, round: nil, totalRounds: nil))
+        #expect(variant == .preparing(done: sentCount, total: inFlightRows.count))
         #expect(sentCount == 2)
     }
 

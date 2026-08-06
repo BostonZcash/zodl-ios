@@ -3779,22 +3779,21 @@ enum MigrationDerivations {
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: nextTransferNumber(transferRows: transferRows, progress: progress))
             }
-            // MOB-1511 (W2): the round label shows only for a genuinely multi-round migration —
-            // a later round in flight, or a known engine estimate above one.
-            let displayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
-            // R11: counts from the ROWS, not `progress` — R5 made executable at last. The engine's
-            // `completedTransfers` counts engine-mined; the rows' `.sent` counts WALLET-CONFIRMED,
-            // which is what the screen's checkmarks render. The two agree today only while nothing
-            // is in its confirming window; during one, "2 of 6 done" over a screen showing one
-            // green and one "Confirming…" is exactly the banner/screen split this file exists to
-            // remove. `progress` remains the fallback for a degenerate empty row read.
-            let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
-            return MigrationBannerVariant.inProgress(
-                done: transferRows.isEmpty ? progress.completedTransfers : doneRows,
-                total: transferRows.isEmpty ? progress.totalTransfers : transferRows.count,
-                round: displayRound,
-                totalRounds: displayRound != nil ? totalRounds : nil
-            )
+            // THE RATIFIED IDLE (Lukas, 2026-08-06 — flow ID). This arm is the rows-derived
+            // equivalent of the engine's `MigrationAdvanceStep.waiting` — nothing sending, nothing
+            // provable in flight, nothing overdue, nothing manually due, the next window in the
+            // future — and product ruled `.waiting` has "no other choice" but the designed idle
+            // state ("We'll notify you when to send"). Supersedes the full-canvas walk's
+            // counts-default HERE: the walk left the trigger question open ("when does the notify
+            // line replace counts"), and this is the answer. Counts keep their ACTIVE homes — the
+            // split-phase progress arm above, the stalled-run arm below, `.preparing` with
+            // progress (FIND-6) — so the monotone-information rule still governs work-in-flight.
+            // The R11 rows-not-progress counting this arm used to carry lives on at those sites;
+            // round-labelled idle (Figma 24004) retires with counts here — recorded for Andrea in
+            // FIGMA_PARITY flow ID. Two rows-vs-step seams are NOTED there rather than decided:
+            // a confirming-unmined window and a gate-refused prove both land here (both are
+            // "nothing actionable THIS session"), pending their own mapping rows.
+            return MigrationBannerVariant.idle
 
         case let MigrationState.requiresAttention(reason):
             switch reason {
