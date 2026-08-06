@@ -2048,11 +2048,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the app next. Heights become dates through the measured block rate (`MigrationChainClock`),
     /// not a 75 s assumption, and are re-drawn on every call: the engine re-jitters its wake-ups per
     /// read, so this must never cache a schedule.
-    func armNextWindowNotifications(accountUUID: AccountUUID?) async {
+    func armNextWindowNotifications(accountUUID: AccountUUID?, outlook: MigrationNextWork? = nil) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 
         let clock = await chainClock(accountUUID: resolvedAccountUUID)
         let now = Date()
+        let gate = await sendGate()
 
         // A SYNC step: the earliest height at which the engine wants the wallet woken and proved.
         // No privacy buffer applies — a sync visit is the thing THAT buffer separates a SEND from.
@@ -2110,7 +2111,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // The row carries MINUTES (its displayed ETA), not a height, so the two-block slack is
             // added here rather than through `notificationDate` — same number, same reason.
             var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60 + clock.notificationBuffer)
-            if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > date {
+            if case let MigrationSendGate.waitUntil(gateUntil) = gate, gateUntil > date {
                 date = gateUntil
             }
             sendDate = date
@@ -2127,7 +2128,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let blockerDate: Date? = stepBlockerAccounts.withLock { $0.contains(resolvedAccountUUID) }
             ? now.addingTimeInterval(60)
             : nil
-        guard let nextStepDate = [proveDate, sendDate, blockerDate].compactMap({ $0 }).min() else {
+
+        // P4 (outlook adoption, #2936): the engine's own "when is the next serviceable step"
+        // answer — one step of lookahead from the SAME advance read that drove this session's
+        // discharge (the driver passes it through; feature callers have no fresh read in hand and
+        // pass nothing — re-reading here is off the table, the advance read is a write-lane pass).
+        // Min-folded below: the outlook can only make the poke earlier, never later, and the
+        // authorities it augments — `migrationSyncWakeups`, the row windows — keep their say.
+        let outlookDate = MigrationDerivations.outlookCandidateDate(
+            outlook: outlook,
+            clock: clock,
+            now: now,
+            sendGate: gate
+        )
+        guard let nextStepDate = [proveDate, sendDate, blockerDate, outlookDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire THIS ACCOUNT's poke rather than leaving a stale one
             // armed. Scoped (audit 2026-08-03, P1): the wallet-wide sweep this used to be erased
             // the OTHER account's just-armed poke on every per-account arming pass — the
@@ -2168,6 +2182,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             source = "prove wake-up"
         } else if nextStepDate == sendDate {
             source = "send window"
+        } else if nextStepDate == outlookDate {
+            source = "engine outlook (\(outlook.map { String(describing: $0.kind) } ?? "?"))"
         } else {
             source = "attention blocker"
         }
@@ -2178,6 +2194,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             "\(Self.logTag) notification ARMED for \(nextStepDate) (in \(inSeconds)s) — \(source)"
             + "; prove \(proveDate.map(String.init(describing:)) ?? "none")"
             + ", send \(sendDate.map(String.init(describing:)) ?? "none")"
+            + ", outlook \(outlookDate.map(String.init(describing:)) ?? "none")"
             + "; buffer \(Int(clock.notificationBuffer))s at \(Int(clock.secondsPerBlock))s/block"
         )
     }
@@ -3485,6 +3502,30 @@ enum MigrationDerivations {
         }
 
         return accountUUIDs
+    }
+
+    /// P4 (outlook adoption, #2936): the engine outlook's arming candidate — the pure half.
+    ///
+    /// Height→date through the same measured clock every other candidate uses. The KIND is
+    /// consulted for exactly one thing: a `.broadcast` outlook takes the same privacy clamp the
+    /// row-derived send window does — a poke must not invite a send the gate would refuse. Every
+    /// other kind is a sync- or user-shaped visit, which is what the buffer separates sends FROM,
+    /// so it arms unclamped. The caller min-folds the result: an outlook can only make the poke
+    /// EARLIER, never later.
+    static func outlookCandidateDate(
+        outlook: MigrationNextWork?,
+        clock: MigrationChainClock,
+        now: Date,
+        sendGate: MigrationSendGate
+    ) -> Date? {
+        guard let outlook else { return nil }
+        var date = clock.notificationDate(atHeight: outlook.height, now: now)
+        if outlook.kind == MigrationStepKind.broadcast,
+            case let MigrationSendGate.waitUntil(gateUntil) = sendGate,
+            gateUntil > date {
+            date = gateUntil
+        }
+        return date
     }
 
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is

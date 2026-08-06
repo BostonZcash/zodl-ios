@@ -309,7 +309,10 @@ extension MigrationManagerImpl {
         // keeps arming, exactly like the two opens.
         if !isQuietTick {
             for accountUUID in accountUUIDs {
-                await armNextWindowNotifications(accountUUID: accountUUID)
+                // P4: the account's own outlook from THIS drive's read — the single engine read
+                // feeding the session decision, the discharge, the log, and now the arm.
+                let outlook = steps.first { $0.accountUUID == accountUUID }?.advance?.next
+                await armNextWindowNotifications(accountUUID: accountUUID, outlook: outlook)
             }
         }
 

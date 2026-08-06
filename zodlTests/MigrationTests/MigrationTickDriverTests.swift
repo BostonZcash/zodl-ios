@@ -1099,4 +1099,83 @@ import ComposableArchitecture
             cancellable.cancel()
         }
     }
+
+    // MARK: - P4: the engine outlook arms the poke (driver pass-through)
+
+    /// P4: the outlook is a real arming candidate — a `.waiting` run with no wake-up, no pending
+    /// row and no blocker would retire the poke today; the outlook arms it instead.
+    @Test func anOutlookArmsThePokeWhereTodayWouldRetireIt() async {
+        Self.installCandidateAccount()
+        let scheduled = LockIsolated<[(MigrationNotification, Date?)]>([])
+
+        _ = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .waiting,
+                        next: MigrationNextWork(height: Self.activationHeight + 200, kind: .prove)
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                migrationSyncWakeups: { _ in [] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { notification, date, _ in
+                    scheduled.withValue { $0.append((notification, date)) }
+                },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(!scheduled.value.isEmpty, "the outlook must arm the poke a candidate-less arm would retire")
+        #expect(scheduled.value.first?.1 != nil, "armed at a concrete date, not a placeholder")
+    }
+
+    /// P4: the outlook is advisory — it feeds arming only, never the verdict. Same drive as the
+    /// plain `.waiting` cases, now with an outlook riding along.
+    @Test func anOutlookPerturbsNoVerdict() async {
+        Self.installCandidateAccount()
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .waiting,
+                        next: MigrationNextWork(height: Self.activationHeight + 200, kind: .broadcast)
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                migrationSyncWakeups: { _ in [] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        // Pinned to the exact verdict `beforeSyncDuringAnInFlightAdvanceWaitsThenRuns` asserts for
+        // the identical step/phase pair (`.waiting` @ `.afterSync`): `MigrationStepAction.armWakeups`
+        // discharges to `.idle` unconditionally (`MigrationStepDriver.execute`) — the one-clock
+        // dispatch that could otherwise redirect `.waiting` only fires for `.beforeSync`/`.tick`, so
+        // `.afterSync` has no path off `.idle` for this step to begin with.
+        #expect(verdict == .idle, "an advisory outlook must not hold or otherwise change the verdict")
+    }
 }
