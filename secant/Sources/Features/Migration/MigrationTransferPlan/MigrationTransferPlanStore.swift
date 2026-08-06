@@ -26,14 +26,21 @@
 //  zero-transfer schedule regardless of why. The Keystone fork throws through instead of swallowing
 //  errors with `try?`, and an empty PCZT batch is also a failure (finding #4).
 //
-//  MOB-1513 (B4 — confirm redesign): the commit chain is SIGN-ONLY now. The MOB-1478 (W4) silent
-//  note-split broadcast that used to run under this screen's Confirm (`submitNoteSplit`: proving +
-//  inline Tor + broadcast — the multi-second confirm freeze QA hit) left the chain entirely, along
-//  with its whole R14-R17 broadcast-failure surface (`failureKind`, `broadcastFailureRouted`, the
-//  Tor off-warning alert, and the sync-server fallback actions this store carried in R9-T2) — a
+//  MOB-1513 (B4 — confirm redesign): the commit chain is SIGN-ONLY, plus (Field 2026-08-06) an
+//  AWAITED first drive under the same Confirm loader. The MOB-1478 (W4) silent note-split
+//  broadcast that used to run under this screen's Confirm (`submitNoteSplit`: proving + inline
+//  Tor + broadcast — the multi-second confirm freeze QA hit) left the chain entirely, along with
+//  its whole R14-R17 broadcast-failure surface (`failureKind`, `broadcastFailureRouted`, the Tor
+//  off-warning alert, and the sync-server fallback actions this store carried in R9-T2) — a
 //  commit failure is a plain thrown error now, presented on the existing generic Cancel/Retry
-//  sheet. The first prep broadcasts AFTER navigation, via `MigrationCoordFlowCoordinator`'s
-//  post-confirm first-delivery kick; broadcast failures surface (and retry) through the migration
+//  sheet. `commitSoftware` returning is no longer the end of the chain: `.scheduleCommitted`
+//  keeps the loader up through `migrationManager.advance(.afterSync)` (at tip; skipped mid-sync,
+//  deferring to the coming edge) before `.scheduleSigned` navigates — so the run's first
+//  preparation is prepared, presigned, and its split broadcast BEFORE this screen ever leaves,
+//  not only after, via `MigrationCoordFlowCoordinator`'s post-confirm first-delivery kick. That
+//  drive is the DRIVER's own lane (`MigrationManagerClient.advance`, the same call Root's G1 case
+//  makes) — NEVER reintroduce an inline SDK broadcast call here (no `submitNoteSplit`/
+//  `prepareNoteSplit`); broadcast failures still surface (and retry) through the migration
 //  progress machinery, never on this screen. Confirm shows a loader (`isConfirming`) and is
 //  single-flight. The Keystone fork's batch (`requestKeystoneSignature`) still proposes any
 //  preparation PCZTs first, so the whole batch (preps + all N transfers) signs in the same QR
@@ -181,28 +188,34 @@ struct MigrationTransferPlan {
         // expired-recovery lane commits one screen earlier and every `requiresSigning == false`
         // confirm routes to `.flowFinished`.)
         /// MOB-1513 (B4): true while an async confirm leg is in flight — the device-authentication
-        /// prompt itself (MOB-1458), the software commit, the Keystone PCZT-batch propose, or a
-        /// propose-failure Retry's re-propose. Drives the Confirm button's disabled+spinner state
-        /// AND the `.confirmTapped`/`.retryTapped` single-flight guard: a second tap while set is a
-        /// complete no-op, so concurrent commits (the plan-cache-overwrite race behind QA's
-        /// `MIGRATION_PLAN_STALE` error sheet) can't happen — and, MOB-1458, a second tap can't
-        /// open a second authentication prompt either, since this is set true BEFORE that prompt's
-        /// effect launches, not after.
+        /// prompt itself (MOB-1458), the software commit (through its `.scheduleCommitted` latch
+        /// and the awaited first-drive wait that follows — Field 2026-08-06), the Keystone
+        /// PCZT-batch propose, or a propose-failure Retry's re-propose. Drives the Confirm button's
+        /// disabled+spinner state AND the `.confirmTapped`/`.retryTapped` single-flight guard: a
+        /// second tap while set is a complete no-op, so concurrent commits (the plan-cache-overwrite
+        /// race behind QA's `MIGRATION_PLAN_STALE` error sheet) can't happen — and, MOB-1458, a
+        /// second tap can't open a second authentication prompt either, since this is set true
+        /// BEFORE that prompt's effect launches, not after.
         ///
         /// MOB-1458: cleared unconditionally at the top of `.confirmAuthenticated` — every intent
         /// branch that goes on to launch a further async leg (`.software`, `.keystone`) re-sets it
         /// `true` immediately after, so this is a real transition only for `.acknowledge`, which
         /// delegates `.confirmed` straight away — and by `.authenticationCancelled`. Also cleared
-        /// on every terminal outcome of those further legs: `.scheduleSigned`, `.noteSplitFailed`,
-        /// `.delegate(.keystoneSignRequested)` (so a pop-back after a rejected QR ceremony
-        /// re-enables Confirm), `.transfersProposed`, and `.transferProposalFailed`.
+        /// on every terminal outcome of those further legs: `.scheduleSigned` (Field 2026-08-06:
+        /// `.scheduleCommitted` deliberately does NOT clear it — the loader must stay up through
+        /// the first-drive wait in between), `.noteSplitFailed`, `.delegate(.keystoneSignRequested)`
+        /// (so a pop-back after a rejected QR ceremony re-enables Confirm), `.transfersProposed`,
+        /// and `.transferProposalFailed`.
         var isConfirming = false
         /// MOB-1466 (field finding O5): true once Confirm has genuinely done its job THIS visit —
-        /// the software lane's sign+store (`.scheduleSigned`) or the acknowledge-only lane's no-op
-        /// "got it" (`.confirmAuthenticated`'s `.acknowledge` branch). Deliberately NOT set by the
-        /// Keystone lane's `.delegate(.keystoneSignRequested)`: that only PROPOSES the batch (the
-        /// engine persists a run, but nothing is signed yet), and if the QR ceremony is later
-        /// rejected/abandoned the coordinator explicitly cancels that run
+        /// the software lane's sign+store, latched at `.scheduleCommitted` (Field 2026-08-06:
+        /// moved earlier, from `.scheduleSigned` — so a back-out during the first-drive wait that
+        /// follows passes the leave guard honestly, since the plan IS committed by then;
+        /// `.scheduleSigned` re-sets it to the same `true` as a belt once the drive also lands) —
+        /// or the acknowledge-only lane's no-op "got it" (`.confirmAuthenticated`'s `.acknowledge`
+        /// branch). Deliberately NOT set by the Keystone lane's `.delegate(.keystoneSignRequested)`:
+        /// that only PROPOSES the batch (the engine persists a run, but nothing is signed yet), and
+        /// if the QR ceremony is later rejected/abandoned the coordinator explicitly cancels that run
         /// (`restartCurrentMigrationStep`) — so a user who pops back down to this screen after an
         /// abandoned ceremony genuinely has nothing committed, and `.backTapped`'s guard should
         /// still apply. Read by `.backTapped` — see its doc for the full pass-through rule.
@@ -390,8 +403,9 @@ struct MigrationTransferPlan {
         case backTapped
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
-        /// Signs and stores the active schedule (sign-only — the first prep broadcasts later, via
-        /// the coordinator's post-confirm kick; MOB-1513 B4).
+        /// Signs and stores the active schedule — sign-only (MOB-1513 B4), then (Field 2026-08-06)
+        /// `.scheduleCommitted` keeps this same loader up while it awaits the run's first drive
+        /// (prove + first broadcast, `advance(.afterSync)` at tip) before navigating — see its doc.
         case confirmTapped
         /// MOB-1458: `confirmTapped`/`retryTapped`'s device-authentication gate
         /// (`State.confirmRequiresAuthentication`) refused — authentication failed, or the user
@@ -439,7 +453,16 @@ struct MigrationTransferPlan {
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
         /// proposal when `failureReason == .propose`.
         case retryTapped
-        /// `signAndStoreMigrationSchedule` completed.
+        /// Field 2026-08-06: `MigrationCommitPipeline.commitSoftware` returned — the run is
+        /// committed (signed + stored + recorded + reconciled). Latches `hasConfirmed`
+        /// IMMEDIATELY (before the first drive below), so a re-tap during the drive wait is dead
+        /// and a back-out passes the leave guard honestly, then keeps `isConfirming` up while the
+        /// newborn run's first drive (prove + first broadcast) runs — see the handler's own doc
+        /// for why the drive lives here and not only in Root's G1 case.
+        case scheduleCommitted
+        /// The whole confirm chain's terminal now: `signAndStoreMigrationSchedule` completed AND
+        /// the first drive `.scheduleCommitted`'s handler awaits has either run to completion (at
+        /// tip) or was skipped (mid-sync, deferring to the coming edge).
         case scheduleSigned
         /// MOB-1458 (Task 3): the software commit's or the Keystone propose's consent echo found
         /// the displayed schedule stale (`ZcashError.migrationPlanStale`) — `refreshAfterPlanStale`
@@ -537,6 +560,10 @@ struct MigrationTransferPlan {
                 // (disabled button, missed hit target), which is itself the diagnosis.
                 guard !state.isConfirming else {
                     MigrationTrace.event("CONFIRM tap ignored — a confirm leg is already in flight")
+                    return .none
+                }
+                guard !state.hasConfirmed else {
+                    MigrationTrace.event("CONFIRM tap ignored — this plan is already committed")
                     return .none
                 }
                 state.isFailurePresented = false
@@ -762,8 +789,49 @@ struct MigrationTransferPlan {
                 state.totalRounds = state.round != nil ? totalRounds : nil
                 return .none
 
+            case .scheduleCommitted:
+                MigrationTrace.event("CONFIRM commit COMPLETE — signed + stored; driving the first step under the loader")
+                // The latch flips HERE — at commit success, BEFORE the drive — not for re-tap
+                // safety (`.confirmTapped`/`.retryTapped`'s `isConfirming` guard already fires
+                // FIRST in that chain and alone kills a re-tap for this whole window, latch or no
+                // latch) but for `.backTapped`'s own guard: without moving it earlier, a back-tap
+                // during the drive wait would still read `hasConfirmed == false` and present the
+                // leave-guard sheet as though nothing were committed yet, when the plan already
+                // IS — flipping the latch here instead lets that back-out pass straight through
+                // honestly, exactly like `.backTapped`'s carve-out promises (leaving forfeits
+                // nothing).
+                state.hasConfirmed = true
+                return .run { send in
+                    // Field 2026-08-06 (the "instant dismiss" regression): with the push synchronous,
+                    // the loader dropped the moment the sign-only commit landed — and the homepage
+                    // then rendered the PRE-commit snapshot for the whole prove+broadcast window,
+                    // because the post-commit republish queues behind the G1 prove sweep (its summary
+                    // join crosses the DB write actor twice: `migrationState`'s advance-step read and
+                    // `residualAfterMigration`). The field contract: ONE tap, loader up while the
+                    // run's first step is prepared, presigned and its split broadcast, THEN navigate
+                    // — by which time the write actor is free, the republish lands, and the homepage
+                    // tells the truth. Same phase token and same at-tip guard as Root's G1 drive,
+                    // which still fires on `.confirmed` after this (idempotent backstop; the
+                    // tick-loop spawn lives there). Mid-sync the drive is skipped exactly like
+                    // Root's guard skips: the coming edge owns it, and the loader covers just the
+                    // commit.
+                    if case .upToDate = sdkSynchronizer.latestState().syncStatus {
+                        // Unstructured on purpose: a back-out mid-wait pops this element and TCA
+                        // cancels this effect — the drive must survive that cancellation or the
+                        // newborn run sits undriven until the next edge/app-open (the exact wedge
+                        // G1 closed). `.value` on a non-throwing Task does not return early on
+                        // cancellation, and a cancelled effect's trailing send is a no-op — which
+                        // is exactly right, the screen is gone.
+                        let drive = Task { [migrationManager] in
+                            await migrationManager.advance(.afterSync)
+                        }
+                        _ = await drive.value
+                    }
+                    await send(.scheduleSigned)
+                }
+
             case .scheduleSigned:
-                MigrationTrace.event("CONFIRM commit COMPLETE — schedule signed + stored, delegating .confirmed")
+                MigrationTrace.event("CONFIRM chain COMPLETE — first drive done, delegating .confirmed")
                 state.isConfirming = false
                 // MOB-1466: the software lane's genuine "Confirm has done its job" moment — signed
                 // AND stored. See `State.hasConfirmed`'s doc.
@@ -809,12 +877,13 @@ struct MigrationTransferPlan {
         }
     }
 
-    /// The software commit — sign-only since MOB-1513 (B4): a success is `.scheduleSigned`, any
-    /// thrown error is the plain generic `.noteSplitFailed` (nothing was persisted — see
-    /// `MigrationCommitPipeline.commitSoftware`'s doc). No broadcast happens here any more, so
-    /// there is no failure to classify/route either. MOB-1458 (Task 3): `ZcashError
-    /// .migrationPlanStale` is caught SPECIFICALLY ahead of that generic catch — see
-    /// `refreshAfterPlanStale`'s doc.
+    /// The software commit — sign-only since MOB-1513 (B4): a success sends `.scheduleCommitted`,
+    /// which latches `hasConfirmed` and drives the newborn run's first step under the loader, then
+    /// itself sends `.scheduleSigned` once that settles. Any thrown error is the plain generic
+    /// `.noteSplitFailed` (nothing was persisted — see `MigrationCommitPipeline.commitSoftware`'s
+    /// doc). No broadcast happens here any more, so there is no failure to classify/route either.
+    /// MOB-1458 (Task 3): `ZcashError.migrationPlanStale` is caught SPECIFICALLY ahead of that
+    /// generic catch — see `refreshAfterPlanStale`'s doc.
     private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
         .run { send in
             do {
@@ -829,7 +898,7 @@ struct MigrationTransferPlan {
                     derivationTool: derivationTool,
                     networkType: zcashSDKEnvironment.network().networkType
                 )
-                await send(.scheduleSigned)
+                await send(.scheduleCommitted)
             } catch ZcashError.migrationPlanStale {
                 await refreshAfterPlanStale(accountUUID: account.id, send: send)
             } catch {

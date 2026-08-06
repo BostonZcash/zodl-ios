@@ -49,9 +49,15 @@
 //  commit: signs EVERYTHING of the run — every transfer AND any note-split preparation layers it
 //  needs — straight from the plan cache `schedule`'s own propose call already wrote, with NO
 //  proving and NO broadcast) -> `recordCommittedSchedule` -> `reconcile`. The first prep's actual
-//  broadcast (prove-at-broadcast, Tor, privacy buffer) happens AFTER navigation, via
-//  `MigrationCoordFlowCoordinator`'s post-confirm first-delivery kick over the existing next-due
-//  lane — see `runFirstDeliveryKick`'s doc there. NEVER add a `submitNoteSplit` OR a
+//  broadcast (prove-at-broadcast, Tor, privacy buffer) happens via the DRIVER lane
+//  (`MigrationManagerClient.advance`), never inline in this pipeline. Field 2026-08-06: for the
+//  software SCHEDULED-PLAN commit — this function, called from `MigrationTransferPlanStore` — that
+//  drive now runs UNDER the Confirm loader: `MigrationTransferPlan`'s `.scheduleCommitted` awaits
+//  `advance(.afterSync)` at tip (mid-sync it defers to the coming sync edge instead), BEFORE
+//  navigation. Root's G1 `.confirmed` case still fires afterward too, now only as an idempotent
+//  backstop for that lane — and remains the ONLY drive for the `reviewTransfer` lane
+//  (`MigrationReviewTransferStore`'s immediate-sweep commit, which never calls this function and
+//  gained no loader-side drive of its own). NEVER add a `submitNoteSplit` OR a
 //  `prepareNoteSplit` call ahead of `signAndStoreMigrationSchedule` here (MOB-1513 F1-A1): the SDK
 //  holds ONE proposal-handle slot per account (`MigrationSchedule.proposalHandle`'s doc), and ANY
 //  propose/prepare call for that account — `prepareNoteSplit` included — supersedes whatever

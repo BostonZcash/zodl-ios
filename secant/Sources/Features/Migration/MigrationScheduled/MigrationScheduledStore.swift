@@ -4,12 +4,15 @@
 //
 //  "Migration Scheduled" screen (MOB-1463, Figma S9 · 2630:11282). Terminal success screen shown
 //  once a scheduled migration plan has been confirmed: a summary card of what's being transferred
-//  and over how long. The coordinator's one production call site (`MigrationCoordFlowCoordinator
-//  .transferPlanPostConfirmChain`'s `.scheduled`/`.recreated` case) hydrates `totalAmount`/
-//  `sentCount`/`totalCount`/`durationHours` from the just-committed schedule plus
-//  `migrationManager.migrationSummary(accountUUID)` (MOB-1458 W-E — closes the MOB-1466 gap this
-//  screen used to carry; see that method's doc for the exact source of each field). The coordinator
-//  does consume the `doneTapped` delegate (MigrationCoordFlowCoordinator, MOB-1466).
+//  and over how long. Hydrated by `MigrationCoordFlowCoordinator.scheduledStateNow(schedule:
+//  snapshot:)` — `totalAmount`/`sentCount`/`totalCount`/`durationHours` come from the
+//  just-committed (or recovery-rebuilt) schedule's own numbers plus a SYNCHRONOUS read of the
+//  published `MigrationViewSnapshot` for cumulative moved value and sent count; the engine is
+//  never consulted on this path. Two production call sites build `.scheduled` state this way —
+//  `transferPlanPostConfirmChain`'s `.scheduled`/`.recreated` case, and the recovery
+//  refresh-stale push (MOB-1466 — closes the async-hydration stall this screen used to carry; see
+//  `scheduledStateNow`'s own doc for the exact source of each field). The coordinator does
+//  consume the `doneTapped` delegate (MigrationCoordFlowCoordinator, MOB-1466).
 //
 //  The "Dust balance remaining" card MOB-1458 (W-E, Figma 3480:7631) put below the summary rows is
 //  GONE — the component is no longer valid for this screen. `MigrationComplete`'s own dust card

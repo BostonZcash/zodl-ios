@@ -111,29 +111,37 @@ struct MigrationTransferPlanView: View {
                 // migration"), not `general.confirm` — "Confirm" read as acknowledge-and-leave
                 // rather than as the tap that actually starts the migration. `general.confirm`
                 // itself is untouched; other screens (e.g. `MigrationReviewTransferView`) keep it.
-                if store.isConfirming {
-                    ZashiButton(
-                        String(localizable: .migrationPlanStartCta),
-                        accessoryView:
-                            ProgressView()
-                            .progressViewStyle(
-                                CircularProgressViewStyle(
-                                    tint: Asset.Colors.secondary.color
+                // MOB-1466 (field finding O5, code review): the disabled state has to govern
+                // BOTH branches, not just the spinner one — the plain button below sends
+                // `.confirmTapped` directly, and without this it looked tappable (no dimming)
+                // during the window between a successful commit and the push landing. Hoisted
+                // onto a `Group` wrapping the if/else rather than duplicated onto each branch,
+                // so the two conditions can never drift apart again.
+                Group {
+                    if store.isConfirming {
+                        ZashiButton(
+                            String(localizable: .migrationPlanStartCta),
+                            accessoryView:
+                                ProgressView()
+                                .progressViewStyle(
+                                    CircularProgressViewStyle(
+                                        tint: Asset.Colors.secondary.color
+                                    )
                                 )
-                            )
-                    ) { }
-                    .screenHorizontalPadding()
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
-                    .disabled(store.isConfirming)
-                } else {
-                    ZashiButton(String(localizable: .migrationPlanStartCta)) {
-                        store.send(.confirmTapped)
+                        ) { }
+                        .screenHorizontalPadding()
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
+                    } else {
+                        ZashiButton(String(localizable: .migrationPlanStartCta)) {
+                            store.send(.confirmTapped)
+                        }
+                        .screenHorizontalPadding()
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
                     }
-                    .screenHorizontalPadding()
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
                 }
+                .disabled(store.isConfirming || store.hasConfirmed)
             }
             // MOB-1466 (field finding O5): intercepted — an unconfirmed plan must not be left
             // silently. See `MigrationTransferPlanStore`'s `.backTapped` doc, including its known

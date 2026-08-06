@@ -307,6 +307,21 @@ extension Root {
             // is not the state the pre-commit pass drove). Mid-sync, the guard defers to the
             // coming edge, whose own drive now also holds a fresh credit. The tick loop stays the
             // belt for everything after.
+            // Field 2026-08-06: the scheduled-plan lane now front-runs this same drive UNDER THE
+            // CONFIRM LOADER, awaited, before `.transferPlan`'s `.delegate(.confirmed)` ever fires
+            // (`MigrationTransferPlan`'s `.scheduleCommitted` — see its doc). So for that lane this
+            // call is now an idempotent backstop, not the first driver — it still fires here every
+            // time, on the same phase token and the same at-tip guard, and the tick-loop spawn
+            // above still matters regardless of which lane fired it. NOT a backstop for a back-tap
+            // during the drive wait, though: that pops the path element before `.delegate(.confirmed)`
+            // can ever fire, so this case never matches on that path (TCA's `forEach` cancels the
+            // in-flight `.scheduleCommitted` effect on the pop, so its trailing
+            // `send(.scheduleSigned)` is a no-op) — that path is recovered by `flowFinished` below
+            // (fires when the coordinator closes) and, failing that, the next app-open's re-arm in
+            // `RootInitialization`, not by this case. The drive itself keeps running regardless —
+            // it's unstructured specifically so the pop's cancellation can't reach it (see
+            // `.scheduleCommitted`'s own doc). This case remains the ONLY drive for the
+            // `.reviewTransfer` lane below, which gained no loader-side drive of its own.
             case .migrationCoordFlow(.path(.element(id: _, action: .transferPlan(.delegate(.confirmed))))),
                 .migrationCoordFlow(.path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed))))):
                 return .merge(
