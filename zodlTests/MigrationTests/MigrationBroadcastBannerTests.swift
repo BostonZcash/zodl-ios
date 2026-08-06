@@ -5,13 +5,13 @@
 //  Covers A13's pure seam: `MigrationDerivations.bannerVariant`'s `isBroadcastInFlight` arm, which
 //  raises `.transferSending` while `MigrationManagerImpl.runBroadcastSession` is submitting.
 //
-//  The precedence is the whole point and is what these pin. During a headless broadcast, EVERY
-//  "something is due" signal is simultaneously true — `hasOverdue` (the transfer is due, that is
-//  why it is being sent) and, in a manual-delivery run, `isNextTransferDue` as well. Whichever arm
-//  is checked first wins, so the ordering is load-bearing, not incidental: a banner reading
-//  "Transfer 3 is waiting" while transfer 3 is going out over the wire is the wrong half of a true
-//  statement, and — worse — it asks the user for nothing, when the one thing this session actually
-//  needs is for them to keep the app open.
+//  The precedence is the whole point and is what these pin. During a headless broadcast, a
+//  manual-delivery run's `isNextTransferDue` is simultaneously true — whichever arm is checked
+//  first wins, so the ordering is load-bearing, not incidental: a banner offering "Review" while
+//  the transfer is going out over the wire invites a second tap, when the one thing this session
+//  actually needs is for the user to keep the app open. THE BANNER MAP (Lukas, 2026-08-06) adds
+//  the KIND fork: a note-PREPARATION submit wears keep-open (`.preparing`), never
+//  "Transfer N is sending".
 //
 
 import Testing
@@ -35,22 +35,22 @@ import ZcashLightClientKit
     /// signal that moved.
     private static func variant(
         state: MigrationState,
-        hasOverdue: Bool = false,
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false,
-        isBroadcastInFlight: Bool = false
+        isBroadcastInFlight: Bool = false,
+        isPreparationBroadcastInFlight: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            hasOverdue: hasOverdue,
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: [],
-            isBroadcastInFlight: isBroadcastInFlight
+            isBroadcastInFlight: isBroadcastInFlight,
+            isPreparationBroadcastInFlight: isPreparationBroadcastInFlight
         )
     }
 
@@ -63,16 +63,17 @@ import ZcashLightClientKit
         #expect(variant == .transferSending(number: 3))
     }
 
-    /// The precedence that matters most: `hasOverdue` is ALWAYS true during a broadcast (a due
-    /// transfer is exactly what is being sent), so "waiting" would otherwise win and describe the
-    /// state as its own opposite.
-    @Test func sendingBeatsWaiting() {
+    /// THE BANNER MAP's kind fork: a note-PREPARATION going out mid-`.inProgress` wears the
+    /// keep-open costume — splits have no banner copy of their own, and "Transfer N is sending"
+    /// over a split would name a transfer that is not moving.
+    @Test func aPreparationBroadcastWearsKeepOpenNotSending() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 3)),
-            hasOverdue: true,
-            isBroadcastInFlight: true
+            isBroadcastInFlight: true,
+            isPreparationBroadcastInFlight: true
         )
-        #expect(variant == .transferSending(number: 1))
+        #expect(variant == .preparing(done: 0, total: 0))
+        #expect(variant?.isPreparingVariant == true)
     }
 
     /// A manual-delivery run reaches a broadcast only because the user tapped Send. Once it is in
@@ -93,7 +94,6 @@ import ZcashLightClientKit
     @Test func theImmediateLaneStaysQuietEvenMidBroadcast() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 1, isImmediate: true)),
-            hasOverdue: true,
             isBroadcastInFlight: true
         )
         #expect(variant == nil)
@@ -101,9 +101,11 @@ import ZcashLightClientKit
 
     // MARK: - No regression when nothing is in flight
 
-    @Test func waitingIsUnchangedWhenNothingIsInFlight() {
-        let variant = Self.variant(state: .inProgress(Self.progress(completed: 2, total: 6)), hasOverdue: true)
-        #expect(variant == .transferWaiting(number: 3, torHold: false))
+    /// THE BANNER MAP (2026-08-06): with `.transferWaiting` removed, nothing-in-flight reads as
+    /// the at-open counts idle — overdue or not, the open auto-serves.
+    @Test func nothingInFlightReadsAsTheAtOpenCounts() {
+        let variant = Self.variant(state: .inProgress(Self.progress(completed: 2, total: 6)))
+        #expect(variant == .idleCounts(done: 0, total: 0))
     }
 
     @Test func readyIsUnchangedWhenNothingIsInFlight() {
@@ -121,7 +123,6 @@ import ZcashLightClientKit
         let omitted = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
-            hasOverdue: true,
             isManualDelivery: false,
             isNextTransferDue: false,
             orchardBalance: Zatoshi(500_000_000),
@@ -129,7 +130,7 @@ import ZcashLightClientKit
             isMigrationRemainderPending: false,
             transferRows: []
         )
-        #expect(omitted == Self.variant(state: .inProgress(Self.progress(completed: 2, total: 6)), hasOverdue: true))
+        #expect(omitted == Self.variant(state: .inProgress(Self.progress(completed: 2, total: 6))))
     }
 
     // MARK: - The flag is scoped to a run in progress

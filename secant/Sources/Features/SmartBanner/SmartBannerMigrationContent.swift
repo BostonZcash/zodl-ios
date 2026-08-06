@@ -13,16 +13,15 @@ import ComposableArchitecture
 
 enum MigrationBannerVariant: Equatable {
     case required
-    /// The run is committed and IDLE — nothing due, nothing in flight, the next transfer is waiting
-    /// for its window. Figma 5139:35439: "Migration Progress" / "We'll notify you when to send".
+    /// The ACTIVE-arms counts render — the split phase between work bursts and the engine-complete
+    /// window whose last rows are still confirming (R11). Renders the designed counts line
+    /// (`N of M transfers done ~ X% complete`, the `34962`-family string) under the progress ring.
     ///
-    /// MOB-1466 (smart-banner pass): the second line used to be a progress readout ("3 of 12
-    /// transfers done · 25% complete"), which appears in no frame and — worse — was wrong in the
-    /// window that matters most. `done` is the MINED count, so a transfer that has been broadcast
-    /// and is waiting to mine still reads as not done: "0 of 12 · 0% complete" for the whole of the
-    /// first transfer's life. The designed line makes a promise the app actually keeps (the window
-    /// notifications are armed at every reconcile) instead of a number that lags reality by a
-    /// confirmation. `done`/`total` stay on the case — they still drive the progress ring.
+    /// THE BANNER MAP (Lukas, 2026-08-06): the at-open "nothing to do" answer is NOT this case —
+    /// it is the distinct `.idleCounts` below (same rendering, different meaning), so the store
+    /// can tell "quiet run, status readout" from "split phase resting between bursts" when it
+    /// decides whether a pending state just TERMINATED (→ `.idle`). An earlier era rendered the
+    /// notify promise here instead of counts; the map ended that ambiguity by splitting the idles.
     ///
     /// MOB-1511 (W2): `round`/`totalRounds` carry the multi-round context — non-nil only when the
     /// display rule says a round label belongs on the banner (round ≥ 2, or a known total > 1);
@@ -81,17 +80,15 @@ enum MigrationBannerVariant: Equatable {
     /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
     /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
     case nextRoundRequired(round: Int, totalRounds: Int?)
-    /// R7 final review, Important-1 (spec §G): `torHold` is true iff the wait is Tor-caused — the
-    /// account's persisted Tor-hold indicator (`MigrationManagerClient.routeBroadcastFailure`
-    /// maintains it; `MigrationManagerImpl.bannerVariant` threads it through). Carries a
-    /// Tor-specific `info` line instead of the generic waiting copy. Defaults `false` so every
-    /// pre-existing call site (none of which know about the indicator) is unaffected.
-    case transferWaiting(number: Int, torHold: Bool = false)
     /// Figma 5139:34287 — a BROADCAST session in flight. The engine's `next_step` returned
     /// `Broadcast`, so this app-open spends its window on the submission and deliberately does NOT
     /// sync: ZIP 318 wants a wake window used either to sync or to broadcast, never both, so a
-    /// network observer cannot correlate the two. Distinct from `.transferWaiting`, which is the
-    /// opposite state (nothing in flight, the transfer is blocked on its schedule).
+    /// network observer cannot correlate the two.
+    ///
+    /// (`.transferWaiting` — the old "overdue, tap to reschedule or send now" counterpart — was
+    /// REMOVED by THE BANNER MAP, Lukas 2026-08-06: overdue is iOS reality awaiting the next open,
+    /// and the open auto-serves; nothing waits on a CTA, so the state had no trigger left. Frame
+    /// `5139:17202` retired with it.)
     ///
     /// The "keep the app open" line is not a nicety. With no background lane on iOS, backgrounding
     /// mid-broadcast is exactly what strands it — so the banner asks for the one thing that keeps
@@ -101,25 +98,40 @@ enum MigrationBannerVariant: Equatable {
     case transfersExpired(first: Int, last: Int)
     case transferReady(number: Int)
     case complete
-    /// THE RATIFIED IDLE (Lukas, 2026-08-06 — Figma-parity audit, flow ID): the engine's
-    /// `MigrationAdvanceStep.waiting` made visible. "Nothing is actionable right now" (that case's
-    /// own SDK doc) ⇒ nothing to do ⇒ `We'll notify you when to send` — `migrationBanner.idleInfo`,
-    /// which sat orphaned in the catalog since SP1 waiting for exactly this trigger rule. Figma
-    /// `5139:35439` / `10639`: coins-swap glyph (the frame's own icon — GROUND_RULES §3's "alarm
-    /// clock" annotation was the looser reading), the standing "Migration Progress" title, the
-    /// ordinary More.
+    /// IDLE 1 — TERMINATION (THE BANNER MAP, Lukas 2026-08-06). Figma `5139:35439` / `10639`:
+    /// coins-swap glyph, "Migration Progress" / `We'll notify you when to send`
+    /// (`migrationBanner.idleInfo`), the ordinary More.
     ///
-    /// HISTORY, because this copy has been wired once before and reversed: the full-canvas walk
-    /// found counts to be Figma's idle DEFAULT (33226/34962/24004) and un-wired the notify line
-    /// pending "a product rule for WHEN it replaces counts". That rule now exists — product ruled
-    /// `.waiting` has "no other choice" but this state — so the notify line takes the
-    /// nothing-actionable arm and the counts family keeps its ACTIVE homes (the split-phase
-    /// progress arm, the stalled-run arm, `.preparing` with progress per FIND-6).
+    /// The map's rule, verbatim: *"a special state for termination — NEVER rendered as a result of
+    /// any next_step calls or zodl open; always the transition from some ongoing state to idle:
+    /// pending state A → finished = IDLE 1. For example Tx SENDING when done flips to IDLE 1 —
+    /// 'ok, I finished, now you can leave zodl'."*
     ///
-    /// NOT a FIND-6 violation, read before reverting: FIND-6 forbids replacing numbers with a
-    /// numberless costume MID-WORK. This is the designed numberless state when nothing runs,
-    /// product-ratified, with the full numbers one tap away on C5.
+    /// So this case is STORE-ENTERED, never derivation-entered: `MigrationDerivations
+    /// .bannerVariant` never returns it (its nothing-actionable arm answers `.idleCounts` — the
+    /// AT-OPEN idle). `SmartBannerStore` presents `.idle` when a pending state
+    /// (`.transferSending`/`.preparing`) resolves to `.idleCounts` within one foreground session,
+    /// and holds it (sticky) until a non-idle variant or the next session's Evaluating resets it.
+    ///
+    /// HISTORY, third and final flip, each with its ruling: SP1 wired the notify line universally →
+    /// the full-canvas walk reversed to counts pending a trigger rule → flow ID ratified
+    /// `.waiting ⇒ notify` (every idle entry) → THE BANNER MAP split the idles by entry path,
+    /// scoping the notify line to termination only. The pin is the store-level termination test;
+    /// the split-phase is deliberately EXCLUDED from termination (its preparing↔counts alternation
+    /// is not "finished", and idle copy over the split was the field-caught false promise of
+    /// 2026-08-01 — twice).
     case idle
+    /// IDLE 2 — AT-OPEN (THE BANNER MAP, Lukas 2026-08-06). Figma `5139:34962`: progress ring,
+    /// "Migration Progress" / the counts line (`N of M transfers done ~ X% complete`). The map,
+    /// verbatim: *"playing the role of idle based on the `.waiting` next_step case — typically the
+    /// result of zodl open: I open zodl, call next_step, it says 'nothing to do', we render this."*
+    ///
+    /// A DISTINCT case rather than a reuse of `.inProgress`, deliberately: it renders identically
+    /// (counts + ring) but means "quiet run, status readout", which is the ONLY shape the store may
+    /// convert to `.idle` on a pending→finished transition. Folding it into `.inProgress` would
+    /// make the split phase's resting counts eligible for that conversion — reintroducing the
+    /// 08-01 false-promise churn the split arm's own doc records.
+    case idleCounts(done: Int, total: Int)
     /// MOB-1466 (staleness pass): the banner does not KNOW yet. Every other case on this enum is an
     /// assertion about the world; this is the one that admits the app has not re-established the
     /// world yet, and it exists because iOS foregrounding renders the previous frame.
@@ -180,10 +192,8 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
-        case .inProgress, .preparing, .checkingStatus, .idle:
+        case .inProgress, .preparing, .checkingStatus, .idle, .idleCounts:
             return String(localizable: .migrationBannerProgressTitle)
-        case .transferWaiting(let number, _):
-            return String(localizable: .migrationBannerWaitingTitle(number))
         case .transferSending(let number):
             return String(localizable: .migrationBannerSendingTitle(number))
         case .updatePlan:
@@ -201,12 +211,14 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required:
             return String(localizable: .migrationBannerRequiredInfo)
-        // RATIFIED 2026-08-06 (Lukas, flow ID) — the rule the old D2-provisional note demanded:
-        // engine `.waiting` ⇒ `.idle` ⇒ the designed notify line. Counts stay for the ACTIVE
-        // `.inProgress` arms (split-phase progress, stalled runs) and for `.preparing` with
-        // progress; the pure nothing-actionable slot belongs to `.idle` below.
+        // THE BANNER MAP (Lukas, 2026-08-06): `.idle` = the termination notify line (idle1);
+        // `.idleCounts` = the at-open status readout (idle2) — same counts string the active
+        // `.inProgress` arms render. See both cases' docs for the entry-path rule.
         case .idle:
             return String(localizable: .migrationBannerIdleInfo)
+        case let .idleCounts(done, total):
+            let percent = total > 0 ? (done * 100) / total : 0
+            return String(localizable: .migrationBannerProgressCountsInfo(done, total, percent))
         case let .inProgress(done, total, round, totalRounds):
             let percent = total > 0 ? (done * 100) / total : 0
             if let round {
@@ -231,10 +243,6 @@ enum MigrationBannerVariant: Equatable {
                 return String(localizable: .migrationBannerNextRoundInfoTotal(round, totalRounds))
             }
             return String(localizable: .migrationBannerNextRoundInfo(round))
-        case .transferWaiting(_, let torHold):
-            return torHold
-                ? String(localizable: .migrationFailureTorHoldBannerInfo)
-                : String(localizable: .migrationBannerWaitingInfo)
         case .transferSending:
             return String(localizable: .migrationBannerKeepOpenInfo)
         case .updatePlan:
@@ -263,10 +271,14 @@ enum MigrationBannerVariant: Equatable {
     }
 
     var percent: Int? {
-        guard case let .inProgress(done, total, _, _) = self else {
+        switch self {
+        case let .inProgress(done, total, _, _):
+            return Int((Double(done) / Double(max(total, 1)) * 100).rounded())
+        case let .idleCounts(done, total):
+            return Int((Double(done) / Double(max(total, 1)) * 100).rounded())
+        default:
             return nil
         }
-        return Int((Double(done) / Double(max(total, 1)) * 100).rounded())
     }
 }
 
@@ -336,13 +348,12 @@ struct MigrationBannerContentView: View {
             // spinning, so the spinner rule below excludes it by construction.
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle)
-        case .inProgress:
-            // DELIBERATE DEVIATION from Figma 5139:35439, which draws `coins-swap-02` here — the
-            // same glyph `.required` uses. A committed, idle run and a run that has not started
-            // would then be distinguishable only by their second line, and "in progress looks
-            // exactly like not started" is the confusion class MOB-1513 (B4) already fixed once (a
-            // `.splitting` variant that shared `.required`'s title). The ring says "started, this
-            // far in" in the same 20pt slot. One line to revert if design disagrees.
+        case .inProgress, .idleCounts:
+            // THE BANNER MAP (Lukas, 2026-08-06): the counts family draws the ring — and the
+            // at-open idle's own frame agrees (`5139:34962` shows the ring beside the counts
+            // line), so what began as a deliberate deviation (the old note argued a ring over
+            // coins-swap so "in progress" ≠ "not started", MOB-1513 B4's confusion class) is now
+            // simply the frame.
             migrationProgressRing()
         case .preparing, .transferSending, .checkingStatus:
             // `.checkingStatus` joins these two because it satisfies the same rule stated below —
@@ -360,7 +371,7 @@ struct MigrationBannerContentView: View {
             ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: titleStyle))
                 .frame(width: 20, height: 20)
-        case .transferWaiting, .updatePlan, .transfersExpired:
+        case .updatePlan, .transfersExpired:
             Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, color: titleStyle)
         case .transferReady, .complete:

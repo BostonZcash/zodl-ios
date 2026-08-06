@@ -577,7 +577,10 @@ struct SmartBanner {
                     )
                 }
                 if let variant {
-                    state.migrationBannerVariant = variant
+                    state.migrationBannerVariant = Self.resolvingIdleTermination(
+                        variant,
+                        previous: state.migrationBannerVariant
+                    )
                     if state.priorityContent != .priorityMigration {
                         return .send(.triggerPriority(.priorityMigration))
                     }
@@ -691,7 +694,10 @@ struct SmartBanner {
                         }
                     )
                 }
-                state.migrationBannerVariant = variant
+                state.migrationBannerVariant = Self.resolvingIdleTermination(
+                    variant,
+                    previous: state.migrationBannerVariant
+                )
                 return .send(.triggerPriority(.priorityMigration))
 
                 // restoring
@@ -1024,6 +1030,37 @@ struct SmartBanner {
                 await send(.migrationVariantUpdated(polledVariant))
                 return
             }
+        }
+    }
+
+    /// THE BANNER MAP (Lukas, 2026-08-06): IDLE 1 (`.idle`, the notify line) is TERMINATION —
+    /// entered only when a pending state (`.transferSending`/`.preparing`) resolves to the quiet
+    /// at-open answer (`.idleCounts`) within one foreground session, and sticky until a non-idle
+    /// variant (or the next session's Evaluating) replaces it. The map, verbatim: *"NEVER rendered
+    /// as a result of any next_step calls or zodl open — always the transition pending state A →
+    /// finished; 'ok, I finished, now you can leave zodl'."* The derivation never returns `.idle`;
+    /// this helper is its single production entry point, applied at both variant-apply sites.
+    ///
+    /// Only `.idleCounts` is convertible, deliberately: the split phase's resting counts arrive as
+    /// `.inProgress`, so its preparing↔counts alternation can never terminate into the notify
+    /// promise — idle copy over the split phase was the field-caught false promise of 2026-08-01,
+    /// twice (the split arm's own doc carries both logs). At-open renders stay counts by
+    /// construction: the claim gate paints `.checkingStatus` first, and checking is not a pending
+    /// state, so the session's first real answer passes through untouched.
+    static func resolvingIdleTermination(
+        _ variant: MigrationBannerVariant,
+        previous: MigrationBannerVariant?
+    ) -> MigrationBannerVariant {
+        guard case .idleCounts = variant else { return variant }
+        switch previous {
+        case .transferSending, .preparing:
+            return .idle
+        case .idle:
+            // Sticky: re-derivations keep answering `.idleCounts` for the rest of the session,
+            // and flipping back to counts would un-say "you can leave now" with no new fact.
+            return .idle
+        default:
+            return variant
         }
     }
 

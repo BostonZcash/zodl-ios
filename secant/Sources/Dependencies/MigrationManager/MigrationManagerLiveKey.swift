@@ -418,6 +418,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// re-guessing. Set/cleared around the submit, exactly like `broadcastsInFlight`.
     private let activeBroadcastTxIds = OSAllocatedUnfairLock<[AccountUUID: UInt32]>(initialState: [:])
 
+    /// THE BANNER MAP (Lukas, 2026-08-06): whether the account's in-flight broadcast is a note-
+    /// PREPARATION. Split/prep sends have no banner copy of their own — they wear the keep-open
+    /// costume (`.preparing`), never "Transfer N is sending" — and the `.inProgress` state's
+    /// sending arm needs the kind to honor that structurally rather than by unreachability.
+    /// Set/cleared around the submit, exactly like `broadcastsInFlight` above.
+    private let preparationBroadcastsInFlight = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
+
     /// GROUND_RULES R3: the session ordinal whose engine verdict has been heard. The banner may not
     /// publish any migration state before the CURRENT session's first verdict — until then it shows
     /// `.checkingStatus` (Figma 5679-8225). Ordinal-keyed so a new app-open invalidates it for free.
@@ -596,7 +603,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
-            hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(for: resolvedAccountUUID),
             isNextTransferDue: isNextTransferDue(progress: progress, clock: clock),
             orchardBalance: balance,
@@ -606,24 +612,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
             transferRows: transfers,
             preparationRows: preparations,
-            // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
-            // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
-            // .torHoldActive`'s doc. F#9: the pending first-run prompt joins it — both conditions
-            // want the banner's Tor line; the Status sheet distinguishes R14 from R15.
-            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
-                || failureRoutingStorage.pendingTorPrompt(for: resolvedAccountUUID),
             // A13: purely in-session — see `broadcastsInFlight`'s doc. Read last, after every async
             // read above has settled, so the answer is as close to "now" as this function gets.
             // MOB-1466: now only an ACCELERATOR — the durable `.broadcast` row is checked first.
             isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
+            // THE BANNER MAP: the in-flight broadcast's kind — a prep wears keep-open, never
+            // "Transfer N is sending".
+            isPreparationBroadcastInFlight: preparationBroadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) },
             activeBroadcastTxId: activeBroadcastTxIds.withLock { $0[resolvedAccountUUID] },
             round: roundContext.round,
-            totalRounds: roundContext.totalRounds,
-            // The same verdict the ROWS already consult to drop their "Preparing transaction…"
-            // caption. The banner needs it separately because that suppression is exactly what would
-            // otherwise let this arm fall through to "tap to reschedule or send now" — see the
-            // `hasOverdue` arm in `MigrationDerivations.bannerVariant`.
-            isProvingStalled: isProvingStalled
+            totalRounds: roundContext.totalRounds
         )
 
         // The decision, always, with the two inputs that explain a surprising one. "No banner" was
@@ -2567,6 +2565,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
             // D6: the id THIS session submits — the banner renders it, never a row-inferred guess.
             activeBroadcastTxIds.withLock { $0[accountUUID] = id }
+            if vettedPreparationDelivery {
+                // THE BANNER MAP: a prep submit wears keep-open, never "Transfer N is sending".
+                preparationBroadcastsInFlight.withLock { _ = $0.insert(accountUUID) }
+            }
 
             setMigrationWorkInFlight(true)
 
@@ -2577,6 +2579,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             setMigrationWorkInFlight(false)
             broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
             activeBroadcastTxIds.withLock { $0[accountUUID] = nil }
+            preparationBroadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
             pokeStateEvent(for: accountUUID)
 
             // ZIP 318: a session carries ONE broadcast ATTEMPT — the session touched the wire, so
@@ -3484,12 +3487,12 @@ enum MigrationDerivations {
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is
     /// checked first and gates the whole derivation — pre-activation there is no banner.
     ///
-    /// MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case (that was a
-    /// pre-real-SDK invention) — "stalled" is now derived, not carried by the state itself: an
-    /// `.inProgress` migration with `hasOverdue` true reads as `.transferWaiting`, checked BEFORE
-    /// the manual-ready check (mirrors `reentryRoute`'s existing `hasOverdue`-before-
-    /// `isManualDelivery && isNextTransferDue` precedence), transferNumber = `completedTransfers +
-    /// 1`.
+    /// THE BANNER MAP (Lukas, 2026-08-06): `.transferWaiting` and its whole `hasOverdue` arm are
+    /// REMOVED — overdue is iOS reality awaiting the next open, and the open auto-serves, so "tap
+    /// to reschedule or send now" had no trigger left (frame 5139:17202 retired with it, along
+    /// with the `isTorHoldActive`/`isProvingStalled` inputs that existed only for that arm). The
+    /// nothing-actionable fall-through is the AT-OPEN idle (`.idleCounts`, idle2); the notify idle
+    /// (`.idle`, idle1) is termination-only and STORE-entered — this derivation never returns it.
     ///
     /// R8-T3 (#23): dropped the `hasInvalid: Bool` parameter this function used to take — the
     /// `.invalidTransfer` case below is, and always was, decided purely by pattern-matching
@@ -3499,13 +3502,9 @@ enum MigrationDerivations {
     /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
     /// consulted (row 1, `.recovery`).
     ///
-    /// R7 final review, Important-1 (spec §G): `isTorHoldActive` carries into `.transferWaiting`'s
-    /// `torHold` flag (see that case's own doc) — defaults `false` so every pre-existing call site
-    /// (none of which know about the indicator) is unaffected.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
-        hasOverdue: Bool,
         isManualDelivery: Bool,
         isNextTransferDue: Bool,
         orchardBalance: Zatoshi,
@@ -3513,17 +3512,16 @@ enum MigrationDerivations {
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        isTorHoldActive: Bool = false,
         isBroadcastInFlight: Bool = false,
+        // THE BANNER MAP (Lukas, 2026-08-06): the in-flight broadcast's KIND — a note-PREPARATION
+        // wears keep-open (`.preparing`), never "Transfer N is sending". See the `.inProgress`
+        // arm's sending fork.
+        isPreparationBroadcastInFlight: Bool = false,
         // GROUND_RULES D6: the id the current broadcast session is ACTUALLY submitting, from the
         // manager's own record — the `.transferSending` number renders this, never a row guess.
         activeBroadcastTxId: UInt32? = nil,
         round: Int = 1,
-        totalRounds: Int? = nil,
-        // Defaulted `false` so every existing caller and test keeps its exact behaviour: the stall
-        // is an exceptional state, and the ordinary answer to "has proving stalled?" is no. See the
-        // `hasOverdue` arm below for what it suppresses and why.
-        isProvingStalled: Bool = false
+        totalRounds: Int? = nil
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
@@ -3728,6 +3726,17 @@ enum MigrationDerivations {
             // mid-broadcast. `isBroadcastInFlight` stays only as a same-session ACCELERATOR for the
             // seconds between "we started submitting" and the engine writing `.broadcast`.
             if isBroadcastInFlight {
+                // THE BANNER MAP (Lukas, 2026-08-06): the sending costume belongs to TRANSFERS
+                // alone. A note-PREPARATION going out in this state (a belt-exempt tick delivery)
+                // wears the keep-open costume instead, exactly as it does in the split arm —
+                // splits have no banner copy of their own, and "Transfer N is sending" over a
+                // split would name a transfer that is not moving.
+                if isPreparationBroadcastInFlight {
+                    return MigrationBannerVariant.preparing(
+                        done: transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count,
+                        total: transferRows.count
+                    )
+                }
                 // GROUND_RULES D6. The number is the id the session is ACTUALLY submitting — the
                 // manager records it the moment the submit starts. The previous source, `first {
                 // $0.isBroadcasting }`, named the WRONG transfer whenever an earlier one was still
@@ -3759,41 +3768,27 @@ enum MigrationDerivations {
                     total: transferRows.count
                 )
             }
-            // `hasOverdue` has exactly two causes (see the SDK's own doc): a PROVED due transaction,
-            // and a due, dependency-satisfied but still unproved one. The first makes the engine's
-            // step `.broadcast`, where Resume and its Send now are exactly right. The second makes
-            // it `.prove`, which `isPreparingRun` above already caught — EXCEPT when proving has
-            // stalled, which deliberately clears `isPreparing` on the rows to drop the keep-open ask.
-            //
-            // That exception is the overnight state: twelve transfers past their heights, proving
-            // impossible, `isPreparingRun` false, and this arm offering "tap to reschedule or send
-            // now" for a run where neither does anything. Rescheduling re-draws heights the engine
-            // cannot meet; Send now is answered `awaitingProof`. The honest banner is the progress
-            // one, and it is also what the route now opens.
-            if hasOverdue && !isProvingStalled {
-                return MigrationBannerVariant.transferWaiting(
-                    number: nextTransferNumber(transferRows: transferRows, progress: progress),
-                    torHold: isTorHoldActive
-                )
-            }
+            // (`.transferWaiting` — the overdue arm that lived here — was REMOVED by THE BANNER
+            // MAP, Lukas 2026-08-06: overdue auto-serves at the next open/tick, so "tap to
+            // reschedule or send now" had no trigger left. An overdue-but-unserved instant now
+            // reads as the at-open idle below; the trace's reason line still says "window
+            // passed".)
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: nextTransferNumber(transferRows: transferRows, progress: progress))
             }
-            // THE RATIFIED IDLE (Lukas, 2026-08-06 — flow ID). This arm is the rows-derived
-            // equivalent of the engine's `MigrationAdvanceStep.waiting` — nothing sending, nothing
-            // provable in flight, nothing overdue, nothing manually due, the next window in the
-            // future — and product ruled `.waiting` has "no other choice" but the designed idle
-            // state ("We'll notify you when to send"). Supersedes the full-canvas walk's
-            // counts-default HERE: the walk left the trigger question open ("when does the notify
-            // line replace counts"), and this is the answer. Counts keep their ACTIVE homes — the
-            // split-phase progress arm above, the stalled-run arm below, `.preparing` with
-            // progress (FIND-6) — so the monotone-information rule still governs work-in-flight.
-            // The R11 rows-not-progress counting this arm used to carry lives on at those sites;
-            // round-labelled idle (Figma 24004) retires with counts here — recorded for Andrea in
-            // FIGMA_PARITY flow ID. Two rows-vs-step seams are NOTED there rather than decided:
-            // a confirming-unmined window and a gate-refused prove both land here (both are
-            // "nothing actionable THIS session"), pending their own mapping rows.
-            return MigrationBannerVariant.idle
+            // IDLE 2 — THE BANNER MAP (Lukas, 2026-08-06): the nothing-actionable arm is the
+            // AT-OPEN idle, the engine's `.waiting` rendered as a status readout — counts + ring,
+            // Figma 5139:34962. The notify line (`.idle`, 35439) is TERMINATION-only and therefore
+            // STORE-entered: `SmartBannerStore` presents it when a pending state resolves to this
+            // answer mid-session; the derivation itself never returns `.idle`. R11's
+            // rows-not-progress counting rules the numbers, same as ever. The states that land
+            // here (true `.waiting`, the confirming-unmined window, a gate-refused/dep-vetoed/
+            // stalled prove, an overdue instant awaiting its auto-serve) all honestly read
+            // "quiet run, this far in".
+            return MigrationBannerVariant.idleCounts(
+                done: transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count,
+                total: transferRows.count
+            )
 
         case let MigrationState.requiresAttention(reason):
             switch reason {

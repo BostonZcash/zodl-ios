@@ -61,7 +61,6 @@ import ZcashLightClientKit
         progress: MigrationProgress? = nil,
         statuses: [MigrationTransactionStatus] = [],
         hasInvalid: Bool = false,
-        hasOverdue: Bool = false,
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
@@ -78,7 +77,6 @@ import ZcashLightClientKit
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            hasOverdue: hasOverdue,
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,
             orchardBalance: orchardBalance,
@@ -201,15 +199,15 @@ import ZcashLightClientKit
 
     // MARK: - Running
 
-    /// RE-PINNED for the ratified idle (Lukas, 2026-08-06 — flow ID). The rows are the authority
-    /// on "is the app doing work right now" (the 08-02 `isInFlight` narrowing), and this fixture
-    /// carries NO in-flight rows — so even under a `.prove` step, nothing is actionable THIS
-    /// session (the privacy-gate-refused window FIND-1 documented) and the run reads as idle, not
-    /// as a numberless progress claim. The rows-vs-step seam is recorded in FIGMA_PARITY flow ID
-    /// for its own mapping row.
+    /// RE-PINNED twice, each on a ruling. The rows are the authority on "is the app doing work
+    /// right now" (the 08-02 `isInFlight` narrowing), and this fixture carries NO in-flight rows —
+    /// so even under a `.prove` step, nothing is actionable THIS session (the gate-refused window
+    /// FIND-1 documented). THE BANNER MAP (Lukas, 2026-08-06) names that render: the AT-OPEN
+    /// counts idle (`.idleCounts`), never the notify line (`.idle` is termination-only,
+    /// store-entered) and never a numberless progress claim.
     @Test func aProveStepWithoutInFlightRowsReadsAsIdle() {
         let variant = Self.banner(advanceStep: .prove(id: 1, kind: .transfer(crossing: 0)), progress: Self.progress())
-        #expect(variant == MigrationBannerVariant.idle)
+        #expect(variant == .idleCounts(done: 0, total: 0))
     }
 
     /// A run whose preparations have not all mined is still SPLITTING — and that reads as progress,
@@ -238,9 +236,12 @@ import ZcashLightClientKit
         #expect(variant?.title != MigrationBannerVariant.required.title, "never a fresh offer mid-split")
     }
 
-    @Test func waitingWithAnOverdueTransferAsksTheUserToOpenTheApp() {
-        let variant = Self.banner(advanceStep: .waiting, progress: Self.progress(), hasOverdue: true)
-        #expect(variant == .transferWaiting(number: 2, torHold: false))
+    /// THE BANNER MAP (Lukas, 2026-08-06): engine `.waiting` is the AT-OPEN idle — the counts
+    /// status readout (`.idleCounts`, Figma 5139:34962), never a CTA. Overdue-ness changes
+    /// nothing here: the open auto-serves it, so there is no "waiting" state left to ask with.
+    @Test func waitingReadsAsTheAtOpenCounts() {
+        let variant = Self.banner(advanceStep: .waiting, progress: Self.progress())
+        #expect(variant == .idleCounts(done: 0, total: 0))
     }
 
     // MARK: - Broadcast
@@ -250,7 +251,6 @@ import ZcashLightClientKit
         let variant = Self.banner(
             advanceStep: .broadcast(id: 1),
             progress: Self.progress(),
-            hasOverdue: true,
             isBroadcastInFlight: true
         )
         #expect(variant == .transferSending(number: 2))

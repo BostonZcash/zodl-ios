@@ -166,14 +166,14 @@ import ZcashLightClientKit
         state: MigrationState,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        hasOverdue: Bool = false
+        isManualDelivery: Bool = false,
+        isNextTransferDue: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            hasOverdue: hasOverdue,
-            isManualDelivery: false,
-            isNextTransferDue: false,
+            isManualDelivery: isManualDelivery,
+            isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -437,10 +437,10 @@ import ZcashLightClientKit
     }
 
     /// A confirming row is on the chain's side — nothing the user does applies to it — so it can
-    /// never be the "Transfer N" a waiting banner names. Adapting the transferWaiting fixture from
-    /// MigrationBannerRowTruthTests: sent, then confirming, then the genuinely actionable overdue
-    /// row — the banner must name Transfer 3, not the confirming Transfer 2.
-    @Test func theWaitingNumberSkipsConfirmingRows() {
+    /// never be the "Transfer N" a per-transfer banner names. Re-anchored onto the READY arm when
+    /// THE BANNER MAP retired `.transferWaiting` (2026-08-06): same fixture, same property — the
+    /// named transfer must be 3, the actionable row, never the confirming Transfer 2.
+    @Test func thePerTransferNumberSkipsConfirmingRows() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 3)),
             transferRows: [
@@ -448,9 +448,10 @@ import ZcashLightClientKit
                 Self.row(index: 1, status: .confirming),
                 Self.row(index: 2, status: .overdue)
             ],
-            hasOverdue: true
+            isManualDelivery: true,
+            isNextTransferDue: true
         )
-        #expect(variant == .transferWaiting(number: 3, torHold: false))
+        #expect(variant == .transferReady(number: 3))
     }
 
     // MARK: - E. Cross-surface: one count, printed twice (R5)

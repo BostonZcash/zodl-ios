@@ -61,6 +61,46 @@ import ZcashLightClientKit
         #expect(!MigrationBannerVariant.idle.isPreparingVariant)
     }
 
+    /// THE BANNER MAP (Lukas, 2026-08-06): idle2 — the at-open counts idle — renders EXACTLY the
+    /// counts line the `.inProgress` family renders (`5139:34962`'s own copy), under the standing
+    /// progress title, with the ring fraction the rows imply. Distinct case, identical costume.
+    @Test func idleCountsRendersTheCountsLine() {
+        let idle2 = MigrationBannerVariant.idleCounts(done: 1, total: 6)
+        #expect(idle2.title == String(localizable: .migrationBannerProgressTitle))
+        #expect(idle2.info == MigrationBannerVariant.inProgress(done: 1, total: 6, round: nil, totalRounds: nil).info)
+        #expect(idle2.percent == 17)
+        #expect(!idle2.isPreparingVariant)
+    }
+
+    /// THE BANNER MAP's idle1 rule, pinned on the store's single entry point: `.idle` (the notify
+    /// line) is TERMINATION — only a pending state resolving to the quiet at-open answer converts,
+    /// it is sticky across re-derivations, and nothing else (checking, counts, required, a fresh
+    /// open) can produce it. The split phase's resting counts arrive as `.inProgress`, which is
+    /// deliberately NOT convertible — idle copy over the split was the 08-01 false promise.
+    @Test func idleTerminationEntersOnlyFromPendingStates() {
+        let quiet = MigrationBannerVariant.idleCounts(done: 2, total: 6)
+
+        // Pending → finished ⇒ idle1.
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .transferSending(number: 2)) == .idle)
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .preparing(done: 1, total: 6)) == .idle)
+        // Sticky for the rest of the session.
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .idle) == .idle)
+        // At-open and non-pending predecessors pass the counts through untouched.
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .checkingStatus) == quiet)
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: nil) == quiet)
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .inProgress(done: 2, total: 6, round: nil, totalRounds: nil)) == quiet)
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .required) == quiet)
+        // Only the quiet answer converts — a pending or counts variant is never rewritten.
+        #expect(
+            SmartBanner.resolvingIdleTermination(.preparing(done: 1, total: 6), previous: .transferSending(number: 2))
+                == .preparing(done: 1, total: 6)
+        )
+        #expect(
+            SmartBanner.resolvingIdleTermination(.inProgress(done: 2, total: 6, round: nil, totalRounds: nil), previous: .preparing(done: 1, total: 6))
+                == .inProgress(done: 2, total: 6, round: nil, totalRounds: nil)
+        )
+    }
+
     /// Every variant offers its action. Written as an enumeration rather than a spot check so that
     /// hiding a button anywhere becomes a deliberate act with a failing test attached.
     @Test func everyVariantOffersItsAction() {
@@ -69,8 +109,8 @@ import ZcashLightClientKit
             .inProgress(done: 1, total: 4, round: nil, totalRounds: nil),
             .preparing(done: 0, total: 4),
             .nextRoundRequired(round: 2, totalRounds: 3),
-            .transferWaiting(number: 1, torHold: false),
             .transferSending(number: 1),
+            .idleCounts(done: 1, total: 4),
             .updatePlan,
             .transfersExpired(first: 1, last: 2),
             .transferReady(number: 1),

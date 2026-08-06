@@ -73,7 +73,6 @@ import ZcashLightClientKit
         state: MigrationState,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        hasOverdue: Bool = false,
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
@@ -84,7 +83,6 @@ import ZcashLightClientKit
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            hasOverdue: hasOverdue,
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
@@ -144,10 +142,10 @@ import ZcashLightClientKit
             ]
         )
         #expect(variant != .transferSending(number: 1))
-        // Ratified idle (2026-08-06): a confirming broadcast leaves nothing actionable this
+        // THE BANNER MAP (2026-08-06): a confirming broadcast leaves nothing actionable this
         // session — the wire has the transaction, mining is the chain's job — so the run reads
-        // idle. The confirming-window nuance has its own note in FIGMA_PARITY flow ID.
-        #expect(variant == .idle)
+        // as the at-open counts idle (idle2). The notify idle is termination-only, store-entered.
+        #expect(variant == .idleCounts(done: 0, total: 6))
     }
 
     /// Same rule in the split phase, where it actually bit: a broadcast Split Balance awaiting its
@@ -206,18 +204,19 @@ import ZcashLightClientKit
         #expect(variant == .transferSending(number: 9), "must name T9 (the session's id), not the unmined T8")
     }
 
-    /// Same lag, the waiting arm. A run whose first transfer has landed but whose progress read has
-    /// not caught up must still call the pending one Transfer 2 — the number the timeline shows.
-    @Test func theWaitingNumberFollowsTheRowsNotTheMinedCount() {
+    /// THE BANNER MAP (2026-08-06): an overdue row no longer raises a waiting banner — overdue is
+    /// iOS reality awaiting the next open/tick, and the open auto-serves. Until that serve fires,
+    /// the honest render is the at-open counts (rows-truth done count, not the lagging mined
+    /// count).
+    @Test func anOverdueRowReadsAsTheAtOpenCountsAwaitingItsAutoServe() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
             transferRows: [
                 Self.row(index: 0, status: .sent),
                 Self.row(index: 1, status: .overdue)
-            ],
-            hasOverdue: true
+            ]
         )
-        #expect(variant == .transferWaiting(number: 2, torHold: false))
+        #expect(variant == .idleCounts(done: 1, total: 2))
     }
 
     @Test func theReadyNumberFollowsTheRowsNotTheMinedCount() {
@@ -233,16 +232,9 @@ import ZcashLightClientKit
         #expect(variant == .transferReady(number: 2))
     }
 
-    /// With no rows to read — a run with no persisted schedule and no live statuses — the mined
-    /// count is still the best available answer, and the pre-existing behaviour stands.
-    @Test func withoutRowsTheMinedCountStillDrivesTheNumber() {
-        let variant = Self.variant(
-            state: .inProgress(Self.progress(completed: 2, total: 6)),
-            transferRows: [],
-            hasOverdue: true
-        )
-        #expect(variant == .transferWaiting(number: 3, torHold: false))
-    }
+    // (`withoutRowsTheMinedCountStillDrivesTheNumber` retired with `.transferWaiting` — THE
+    // BANNER MAP, 2026-08-06. The mined-count fallback for per-transfer numbering survives in the
+    // sending arm and is pinned by the sending tests above.)
 
     // MARK: - Preparing
 
@@ -256,14 +248,12 @@ import ZcashLightClientKit
         #expect(variant?.isPreparingVariant == true)
     }
 
-    /// THE field ordering. A transfer whose window passed while its proof was outstanding is both
-    /// overdue and un-sendable; the old ranking advertised "Tap to reschedule or send now" and
-    /// tapping Send now answered "due but awaiting proof — deferring to the next sync visit".
-    @Test func preparingBeatsWaiting() {
+    /// A transfer whose window passed while its proof is outstanding is un-sendable but genuinely
+    /// being worked — the keep-open ask is the true state, not a status readout.
+    @Test func anOverdueUnprovedRowStillReadsAsPreparing() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
-            transferRows: [Self.row(index: 0, status: .overdue, isPreparing: true)],
-            hasOverdue: true
+            transferRows: [Self.row(index: 0, status: .overdue, isPreparing: true)]
         )
         #expect(variant?.isPreparingVariant == true)
     }
@@ -341,10 +331,9 @@ import ZcashLightClientKit
         )
 
         #expect(variant?.isPreparingVariant != true)
-        // Ratified idle (2026-08-06): dep-vetoed provable rows are exactly "nothing actionable
-        // this session", which is the idle state — the honest version of FIND-1's no-false-promise
-        // rule.
-        #expect(variant == .idle)
+        // THE BANNER MAP (2026-08-06): dep-vetoed provable rows are "nothing actionable this
+        // session" — the at-open counts idle, FIND-1's no-false-promise rule in its current form.
+        #expect(variant == .idleCounts(done: 0, total: 6))
     }
 
     /// A note-split preparation is work exactly as much as a crossing transfer is, and the split
@@ -412,16 +401,16 @@ import ZcashLightClientKit
 
     // MARK: - Idle
 
-    /// THE PIN THAT HAS NOW FLIPPED TWICE, so carry the whole history. First wiring rendered
-    /// "We'll notify you when to send" as the universal idle line; the full-canvas walk reversed it
-    /// to counts (Figma 33226/34962 read as the idle default) and left the notify line orphaned
-    /// "pending a product rule for WHEN it replaces counts — open with Andrea". Lukas gave that
-    /// rule 2026-08-06 (flow ID): the engine's `.waiting` — nothing actionable, next window in the
-    /// future — has "no other choice" but the designed idle state. So idle renders the notify line
-    /// again, this time BY RULE, and the counts family keeps its active-work homes (split-phase
-    /// progress, stalled runs, `.preparing` with progress per FIND-6). The pure-idle counts frames
-    /// are recorded for Andrea as superseded in FIGMA_PARITY flow ID.
-    @Test func anIdleRunReadsAsTheRatifiedIdle() {
+    /// THE PIN THAT HAS NOW FLIPPED THREE TIMES, each on a product ruling — carry the whole
+    /// history. (1) First wiring rendered "We'll notify you when to send" as the universal idle
+    /// line; (2) the full-canvas walk reversed it to counts and left the notify line orphaned
+    /// pending a trigger rule; (3) flow ID ratified `.waiting ⇒ notify` for every idle entry;
+    /// (4) THE BANNER MAP (Lukas, 2026-08-06) split the idles by ENTRY PATH: the derivation's
+    /// nothing-actionable answer is the AT-OPEN counts idle (`.idleCounts`, Figma 5139:34962),
+    /// and the notify line (`.idle`, 35439) is TERMINATION-only — store-entered when a pending
+    /// state finishes (see `SmartBanner.resolvingIdleTermination` and its test). Do not flip this
+    /// again without a new map.
+    @Test func anIdleRunReadsAsTheAtOpenCounts() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 1, total: 6)),
             transferRows: [
@@ -433,8 +422,8 @@ import ZcashLightClientKit
                 Self.row(index: 5, status: .pending)
             ]
         )
-        #expect(variant == .idle)
-        #expect(variant?.info == String(localizable: .migrationBannerIdleInfo))
+        #expect(variant == .idleCounts(done: 1, total: 6))
+        #expect(variant?.info == MigrationBannerVariant.inProgress(done: 1, total: 6, round: nil, totalRounds: nil).info)
     }
 
     /// Both work-in-flight states carry the same second line — WHILE the run has no numbers to
@@ -555,13 +544,12 @@ import ZcashLightClientKit
         #expect(flagged?.isPreparingVariant != true)
     }
 
-    /// The two new parameters default, so every pre-existing call site — none of which know they
-    /// exist — derives what it always did.
+    /// The defaulted parameters default, so a call site that knows none of them derives the
+    /// quiet answer.
     @Test func omittingTheNewParametersMatchesTheOldSignature() {
         let omitted = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
-            hasOverdue: true,
             isManualDelivery: false,
             isNextTransferDue: false,
             orchardBalance: Zatoshi(500_000_000),
@@ -569,7 +557,7 @@ import ZcashLightClientKit
             isMigrationRemainderPending: false,
             transferRows: []
         )
-        #expect(omitted == .transferWaiting(number: 3, torHold: false))
+        #expect(omitted == .idleCounts(done: 0, total: 0))
     }
 }
 
@@ -647,7 +635,6 @@ import ZcashLightClientKit
                     isImmediate: false
                 )
             ),
-            hasOverdue: true,
             isManualDelivery: false,
             isNextTransferDue: false,
             orchardBalance: Zatoshi(9_999_760_000),
@@ -657,7 +644,10 @@ import ZcashLightClientKit
         )
 
         #expect(variant?.isPreparingVariant != true, "never ask the user to stay for a sweep that produces nothing")
-        #expect(variant == .transferWaiting(number: 1, torHold: false))
+        // THE BANNER MAP (2026-08-06): with `.transferWaiting` removed, a stalled overdue run
+        // reads as the at-open counts — no dead CTA, no keep-open ask. Counts come from the ROWS
+        // (one status-derived row here), never the progress claim of twelve — R11's identity.
+        #expect(variant == .idleCounts(done: 0, total: 1))
     }
 
     /// The preparation rows take the same verdict — the split phase is where the first overnight

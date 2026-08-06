@@ -2,7 +2,9 @@
 //  MigrationBannerNamesTests.swift
 //  zodlTests
 //
-//  WHICH transfer the banner names — "Transfer N is waiting", "Transfer N is ready" (MOB-1466).
+//  WHICH transfer the banner names — "Transfer N is ready" / "Transfer N is sending" (MOB-1466;
+//  the waiting flavor retired with THE BANNER MAP, 2026-08-06 — the naming judgment these pin
+//  survives on the remaining per-transfer arms).
 //
 //  WHY THIS SUITE EXISTS, and why it is a different bug class from every other two-surface
 //  disagreement in this pass. From ONE field log line:
@@ -60,14 +62,12 @@ import Testing
         completed: Int,
         total: Int,
         rows: [MigrationTransferRow],
-        hasOverdue: Bool = false,
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(progress(completed: completed, total: total)),
-            hasOverdue: hasOverdue,
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
@@ -78,6 +78,8 @@ import Testing
     }
 
     /// THE FIELD CASE. T4 is on the wire; T5 is the first transfer actually waiting on the user.
+    /// (Re-anchored onto the READY arm when the waiting flavor retired — same `nextTransferNumber`
+    /// judgment, same skip.)
     @Test func aBroadcastTransferIsNeverTheOneTheBannerNames() {
         let variant = Self.variant(
             completed: 3,
@@ -90,10 +92,11 @@ import Testing
                 Self.row(index: 4, status: .active),
                 Self.row(index: 5, status: .pending)
             ],
-            hasOverdue: true
+            isManualDelivery: true,
+            isNextTransferDue: true
         )
 
-        #expect(variant == .transferWaiting(number: 5, torHold: false))
+        #expect(variant == .transferReady(number: 5))
     }
 
     /// The same rule for the manual-delivery prompt: never offer to send what has already gone out.
@@ -125,10 +128,11 @@ import Testing
                 Self.row(index: 1, status: .sent),
                 Self.row(index: 2, status: .active, isBroadcasting: true)
             ],
-            hasOverdue: true
+            isManualDelivery: true,
+            isNextTransferDue: true
         )
 
-        #expect(variant == .transferWaiting(number: 3, torHold: false))
+        #expect(variant == .transferReady(number: 3))
     }
 
     /// The ordinary case still names the first unsent row — this must not have been broken by the
@@ -143,9 +147,10 @@ import Testing
                 Self.row(index: 2, status: .pending),
                 Self.row(index: 3, status: .pending)
             ],
-            hasOverdue: true
+            isManualDelivery: true,
+            isNextTransferDue: true
         )
 
-        #expect(variant == .transferWaiting(number: 2, torHold: false))
+        #expect(variant == .transferReady(number: 2))
     }
 }

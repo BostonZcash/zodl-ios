@@ -58,7 +58,6 @@ import ZcashLightClientKit
         state: MigrationState,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        hasOverdue: Bool = false,
         isManualDelivery: Bool = false,
         isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false
@@ -66,7 +65,6 @@ import ZcashLightClientKit
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            hasOverdue: hasOverdue,
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
@@ -78,13 +76,11 @@ import ZcashLightClientKit
         )
     }
 
-    /// Extracts the transfer number out of whichever of the two per-transfer "actionable" variants
-    /// carries one — the two cases invariant 1 polices — or `nil` for every other variant.
+    /// Extracts the transfer number out of the per-transfer "actionable" variant that carries one
+    /// (`.transferReady` — the waiting flavor retired with THE BANNER MAP, 2026-08-06), or `nil`
+    /// for every other variant.
     private static func actionableNumber(_ variant: MigrationBannerVariant?) -> Int? {
         guard let variant else { return nil }
-        if case let .transferWaiting(number, _) = variant {
-            return number
-        }
         if case let .transferReady(number) = variant {
             return number
         }
@@ -176,7 +172,6 @@ import ZcashLightClientKit
             state: .inProgress(Self.progress(completed: sentCount, total: transferRows.count)),
             transferRows: transferRows,
             preparationRows: preparationRows,
-            hasOverdue: false,
             isManualDelivery: false,
             isNextTransferDue: false,
             isBroadcastInFlight: false
@@ -193,13 +188,12 @@ import ZcashLightClientKit
             #expect(anyRowInFlight, "banner is .preparing with no row actually in flight: \(context)")
         }
         if !anyRowInFlight {
-            // Ratified idle (Lukas, 2026-08-06 — flow ID): the no-work branch of this matrix IS the
-            // engine's `.waiting`, and it renders the designed idle state, not the counts line. The
-            // counts-from-rows identity this branch used to double-check lives on at the arms that
-            // still render counts (`.preparing` with progress, the split-phase and stalled arms).
+            // THE BANNER MAP (Lukas, 2026-08-06): the no-work branch of this matrix is the AT-OPEN
+            // idle — counts from the rows themselves (`.idleCounts`). The notify idle is
+            // termination-only and store-entered, so the derivation never produces it here.
             #expect(
-                variant == .idle,
-                "expected the ratified idle, got \(String(describing: variant)): \(context)"
+                variant == .idleCounts(done: sentCount, total: transferRows.count),
+                "expected the at-open counts idle, got \(String(describing: variant)): \(context)"
             )
             #expect(variant?.isPreparingVariant != true, "spinner with no counterpart: \(context)")
         }
@@ -230,10 +224,12 @@ import ZcashLightClientKit
                             broadcasting: broadcasting
                         )
 
+                        // (The overdue flag retired with `.transferWaiting` — THE BANNER MAP,
+                        // 2026-08-06. Named variants now come only from the sending/ready arms,
+                        // so most matrix cells answer the counts idle and assert nothing.)
                         let variant = Self.variant(
                             state: .inProgress(Self.progress(completed: sentPrefix, total: count)),
-                            transferRows: rows,
-                            hasOverdue: true
+                            transferRows: rows
                         )
 
                         if let number = Self.actionableNumber(variant) {
@@ -283,10 +279,9 @@ import ZcashLightClientKit
                 Self.row(index: 2, status: .active, isBroadcasting: true)
             ]
         ]
-        let flagCombos: [(hasOverdue: Bool, isManualDelivery: Bool, isNextTransferDue: Bool)] = [
-            (false, false, false),
-            (true, false, false),
-            (false, true, true)
+        let flagCombos: [(isManualDelivery: Bool, isNextTransferDue: Bool)] = [
+            (false, false),
+            (true, true)
         ]
 
         for state in states {
@@ -295,7 +290,6 @@ import ZcashLightClientKit
                     let variant = Self.variant(
                         state: state,
                         transferRows: rows,
-                        hasOverdue: flags.hasOverdue,
                         isManualDelivery: flags.isManualDelivery,
                         isNextTransferDue: flags.isNextTransferDue,
                         isBroadcastInFlight: false
@@ -320,7 +314,7 @@ import ZcashLightClientKit
     /// mirror, the merely-provable-but-not-due rows that flipped a whole run's banner to
     /// `.preparing` although nothing the user was waiting on was actually blocked (see
     /// `MigrationBannerRowTruthTests.aPendingRowThatIsMerelyProvableDoesNotClaimTheRunIsPreparing`).
-    /// Scoped to `.inProgress` with `hasOverdue`/`isManualDelivery`/`isBroadcastInFlight` held
+    /// Scoped to `.inProgress` with `isManualDelivery`/`isBroadcastInFlight` held
     /// false throughout, so the production branch has exactly two possible answers and the row
     /// predicate below is the exact mirror of `MigrationTransferRow.isInFlight` under that
     /// restriction: `.preparing` if and only if some row (transfer OR preparation) is `isPreparing`
@@ -358,13 +352,14 @@ import ZcashLightClientKit
 
     // MARK: - Invariant 4: the progress counts never drift from the rows
 
-    /// REWRITTEN for the ratified idle (Lukas, 2026-08-06 — flow ID). This property used to pin the
-    /// counts-from-rows identity on the nothing-actionable arm; that arm now renders `.idle` by
-    /// rule (engine `.waiting` ⇒ the designed notify line), so the matrix pins THAT across every
-    /// count/sent combination instead — the whole nothing-in-flight family maps to one state, with
-    /// no counts to drift. The counts identity itself is not lost: `.preparing` with progress
-    /// derives `done` from the same sent-row filter (FIND-6's test compares the rendered lines),
-    /// and the split-phase arm counts the same rows.
+    /// RESTORED by THE BANNER MAP (Lukas, 2026-08-06) — and this property has travelled a full
+    /// circle worth recording: it began as the counts-from-rows identity on the nothing-actionable
+    /// arm, the flow-ID ratification replaced that arm's counts with the notify line (the matrix
+    /// pinned `.idle` and a nil percent), and the map then split the idles by ENTRY PATH — the
+    /// derivation's nothing-actionable answer is the AT-OPEN counts idle again (`.idleCounts`,
+    /// Figma 5139:34962), so the original identity is back, on the new case: the rendered counts
+    /// equal the sent-row truth for every count/sent combination, never the engine's lagging
+    /// mined figure.
     @Test func progressCountsEqualTheRowTruth() {
         for count in 0...6 {
             for sentCount in 0...count {
@@ -374,19 +369,19 @@ import ZcashLightClientKit
                 let maybeVariant = Self.variant(
                     state: .inProgress(progress),
                     transferRows: rows,
-                    hasOverdue: false,
                     isManualDelivery: false,
                     isNextTransferDue: false,
                     isBroadcastInFlight: false
                 )
 
-                guard let variant = maybeVariant, variant == .idle else {
+                guard let variant = maybeVariant, variant == .idleCounts(done: sentCount, total: count) else {
                     let maybeVariantDescription = String(describing: maybeVariant)
-                    Issue.record("expected the ratified idle for count=\(count) sentCount=\(sentCount), got \(maybeVariantDescription)")
+                    Issue.record("expected .idleCounts(\(sentCount)/\(count)), got \(maybeVariantDescription)")
                     continue
                 }
 
-                #expect(variant.percent == nil, "idle claims no fraction: count=\(count) sentCount=\(sentCount)")
+                let expectedPercent = Int((Double(sentCount) / Double(max(count, 1)) * 100).rounded())
+                #expect(variant.percent == expectedPercent, "ring fraction drifts from the rows: count=\(count) sentCount=\(sentCount)")
             }
         }
     }

@@ -10167,13 +10167,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$lld of %2$lld transfers done · %3$lld%% complete"
+            "value": "%1$lld of %2$lld transfers done ~ %3$lld%% complete"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$lld de %2$lld transferencias realizadas · %3$lld%% completado"
+            "value": "%1$lld de %2$lld transferencias realizadas ~ %3$lld%% completado"
           }
         }
       }
@@ -10344,40 +10344,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Actualizar plan de migración"
-          }
-        }
-      }
-    },
-    "migrationBanner.waitingInfo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tap to send now"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Toca para enviar ahora"
-          }
-        }
-      }
-    },
-    "migrationBanner.waitingTitle": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Transfer %1$lld waiting"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Transferencia %1$lld en espera"
           }
         }
       }
@@ -10973,23 +10939,6 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Tor no disponible"
-          }
-        }
-      }
-    },
-    "migrationFailure.torHold.bannerInfo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Waiting for a Tor connection"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Esperando una conexión Tor"
           }
         }
       }
