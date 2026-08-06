@@ -2015,7 +2015,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// height-based due-ness at open (`executeNextPendingMigrationTransfer`'s nil return is the
     /// sole authority — matrix D7). An early poke therefore causes no broadcast, only a calm
     /// "not yet".
-    /// Arms THE notification — exactly one, wallet-wide, always.
+    /// Arms THE notification — exactly one per account, always.
     ///
     /// The migration has no background lane. Nothing happens unless the user opens Zodl, and each
     /// open is one opportunity to take ONE step: sync, or send, or split, or re-plan. Which one
@@ -2035,9 +2035,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// scheduled local notification cannot be conditionally withdrawn at delivery time. With one
     /// poke, armed fresh on every open, there is nothing to suppress.
     ///
-    /// Wallet-wide rather than per-account on purpose: two accounts migrating at once still means
-    /// one app to open, and a poke that named an account would have to promise which one still
-    /// needs attention by the time it fires. It cannot.
+    /// Content-generic rather than account-specific on purpose: two accounts migrating at once
+    /// still means one app to open, and a poke that named an account would have to promise which
+    /// one still needs attention by the time it fires. It cannot.
     ///
     /// P3: the poke is armed at the earliest moment the run has ANY step to take, which is not
     /// always the next transfer's window. The engine schedules its own sync/proving wake-ups
@@ -2146,7 +2146,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // armed. Scoped (audit 2026-08-03, P1): the wallet-wide sweep this used to be erased
             // the OTHER account's just-armed poke on every per-account arming pass — the
             // account with nothing pending wiped everything and armed nothing.
-            MigrationTrace.notificationCancelled("no prove wake-up and no unsent row")
+            MigrationTrace.notificationCancelled("no prove wake-up, no unsent row, no blocker and no outlook")
             await userNotifications.cancelMigrationNotifications(accountHex)
             return
         }
@@ -2166,7 +2166,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // meets while the app is closed, so "did it arm, and for when" cannot be answered by
         // watching the app — and §7 of the scenario sheet is untestable without it. Every candidate
         // date is printed, not just the winner: a poke firing at the wrong moment is almost
-        // always the other candidate having been the one that mattered.
+        // always another candidate having been the one that mattered.
         // Authorization, every time. A denied/undetermined status makes every arm below a silent
         // no-op, and that is the first thing to check when a poke never arrives.
         let authorization = await userNotifications.authorizationStatus()

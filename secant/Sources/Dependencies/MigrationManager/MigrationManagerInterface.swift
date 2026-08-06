@@ -414,14 +414,18 @@ struct MigrationManagerClient: Sendable {
     // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in
     // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
     // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).
-    /// PHASE 4 (plan D9): arms the NEXT window's two local notifications for `accountUUID` — a
-    /// `timeToSync` at (window - lead) and a `manualTransferReady` at the window itself — and
-    /// cancels them once nothing is pending. Called at COMMIT and on every reconcile, which is
-    /// what replaces #1930's background-session arming: plan D2 removed the BG lane, so a window
-    /// can only ever be announced ahead of time, never acted on in the background.
+    /// P4: arms exactly ONE generic poke for `accountUUID`, at the EARLIEST of four candidates —
+    /// the engine's own sync/prove wake-ups, the earliest still-unsent row's window (preparation
+    /// and transfer rows both), a near-term attention blocker, and the engine's own advance
+    /// outlook (one step of lookahead from the same read that drove the session) — and cancels
+    /// the account's poke once none of the four resolves to a date. Called on every driver pass
+    /// (`.beforeSync`/`.afterSync`, and a substantive `.tick`) plus COMMIT and reconcile.
     ///
-    /// Re-arming is idempotent by construction: the ids are stable per (case, account), so a
-    /// re-arm REPLACES the account's own prior pending request rather than stacking a second one.
+    /// The copy names neither an account nor a specific action: by the time the user opens, state
+    /// may have moved, so naming one would be a promise the app might not keep.
+    ///
+    /// Re-arming is idempotent by construction: the id is stable per account, so a re-arm REPLACES
+    /// the account's own prior pending request rather than stacking a second one.
     var armNextWindowNotifications: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     var reconcile: @Sendable () async -> Void = { }
     // R8-T3 (#9): clears `accountUUID`'s (`nil` resolves the selected account) network snapshot iff

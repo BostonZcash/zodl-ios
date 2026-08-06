@@ -224,7 +224,12 @@ import ZcashLightClientKit
     /// `nil` entries (an account with no run, or a read that failed) do not vote.
     @Test func accountsWithNoRunDoNotVote() {
         #expect(!MigrationStepPlan.isBroadcastSession(steps: [nil, nil]))
-        #expect(!MigrationStepPlan.isBroadcastSession(steps: [nil, .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))])]))
+        #expect(!MigrationStepPlan.isBroadcastSession(
+            steps: [
+                nil,
+                .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))])
+            ]
+        ))
     }
 
     /// The session decision must agree with `MigrationVisit`, which Root still asks separately
