@@ -719,7 +719,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasInvalid = await hasInvalidTask
         let hasOverdue = await hasOverdueTask
         let clock = await clockTask
-        let advanceStep = await advanceStepTask
+        let advanceStep = (await advanceStepTask)?.step
 
         let state = rawState
 
@@ -2015,7 +2015,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// height-based due-ness at open (`executeNextPendingMigrationTransfer`'s nil return is the
     /// sole authority — matrix D7). An early poke therefore causes no broadcast, only a calm
     /// "not yet".
-    /// Arms THE notification — exactly one, wallet-wide, always.
+    /// Arms THE notification — exactly one per account, always.
     ///
     /// The migration has no background lane. Nothing happens unless the user opens Zodl, and each
     /// open is one opportunity to take ONE step: sync, or send, or split, or re-plan. Which one
@@ -2035,9 +2035,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// scheduled local notification cannot be conditionally withdrawn at delivery time. With one
     /// poke, armed fresh on every open, there is nothing to suppress.
     ///
-    /// Wallet-wide rather than per-account on purpose: two accounts migrating at once still means
-    /// one app to open, and a poke that named an account would have to promise which one still
-    /// needs attention by the time it fires. It cannot.
+    /// Content-generic rather than account-specific on purpose: two accounts migrating at once
+    /// still means one app to open, and a poke that named an account would have to promise which
+    /// one still needs attention by the time it fires. It cannot.
     ///
     /// P3: the poke is armed at the earliest moment the run has ANY step to take, which is not
     /// always the next transfer's window. The engine schedules its own sync/proving wake-ups
@@ -2048,11 +2048,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the app next. Heights become dates through the measured block rate (`MigrationChainClock`),
     /// not a 75 s assumption, and are re-drawn on every call: the engine re-jitters its wake-ups per
     /// read, so this must never cache a schedule.
-    func armNextWindowNotifications(accountUUID: AccountUUID?) async {
+    func armNextWindowNotifications(accountUUID: AccountUUID?, outlook: MigrationNextWork? = nil) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 
         let clock = await chainClock(accountUUID: resolvedAccountUUID)
         let now = Date()
+        let gate = await sendGate()
 
         // A SYNC step: the earliest height at which the engine wants the wallet woken and proved.
         // No privacy buffer applies — a sync visit is the thing THAT buffer separates a SEND from.
@@ -2110,7 +2111,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // The row carries MINUTES (its displayed ETA), not a height, so the two-block slack is
             // added here rather than through `notificationDate` — same number, same reason.
             var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60 + clock.notificationBuffer)
-            if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate(), gateUntil > date {
+            if case let MigrationSendGate.waitUntil(gateUntil) = gate, gateUntil > date {
                 date = gateUntil
             }
             sendDate = date
@@ -2127,12 +2128,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let blockerDate: Date? = stepBlockerAccounts.withLock { $0.contains(resolvedAccountUUID) }
             ? now.addingTimeInterval(60)
             : nil
-        guard let nextStepDate = [proveDate, sendDate, blockerDate].compactMap({ $0 }).min() else {
+
+        // P4 (outlook adoption, #2936): the engine's own "when is the next serviceable step"
+        // answer — one step of lookahead from the SAME advance read that drove this session's
+        // discharge (the driver passes it through; feature callers have no fresh read in hand and
+        // pass nothing — re-reading here is off the table, the advance read is a write-lane pass).
+        // Min-folded below: the outlook can only make the poke earlier, never later, and the
+        // authorities it augments — `migrationSyncWakeups`, the row windows — keep their say.
+        let outlookDate = MigrationDerivations.outlookCandidateDate(
+            outlook: outlook,
+            clock: clock,
+            now: now,
+            sendGate: gate
+        )
+        guard let nextStepDate = [proveDate, sendDate, blockerDate, outlookDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire THIS ACCOUNT's poke rather than leaving a stale one
             // armed. Scoped (audit 2026-08-03, P1): the wallet-wide sweep this used to be erased
             // the OTHER account's just-armed poke on every per-account arming pass — the
             // account with nothing pending wiped everything and armed nothing.
-            MigrationTrace.notificationCancelled("no prove wake-up and no unsent row")
+            MigrationTrace.notificationCancelled("no prove wake-up, no unsent row, no blocker and no outlook")
             await userNotifications.cancelMigrationNotifications(accountHex)
             return
         }
@@ -2148,11 +2162,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             Data(resolvedAccountUUID.id).hexEncodedString()
         )
 
-        // WHEN, and WHICH of the two candidates won. A poke is the one part of this lane the user
+        // WHEN, and WHICH of the four candidates won. A poke is the one part of this lane the user
         // meets while the app is closed, so "did it arm, and for when" cannot be answered by
-        // watching the app — and §7 of the scenario sheet is untestable without it. Both candidate
-        // dates are printed, not just the winner: a poke firing at the wrong moment is almost
-        // always the other candidate having been the one that mattered.
+        // watching the app — and §7 of the scenario sheet is untestable without it. Every candidate
+        // date is printed, not just the winner: a poke firing at the wrong moment is almost
+        // always another candidate having been the one that mattered.
         // Authorization, every time. A denied/undetermined status makes every arm below a silent
         // no-op, and that is the first thing to check when a poke never arrives.
         let authorization = await userNotifications.authorizationStatus()
@@ -2168,6 +2182,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             source = "prove wake-up"
         } else if nextStepDate == sendDate {
             source = "send window"
+        } else if nextStepDate == outlookDate {
+            source = "engine outlook (\(outlook.map { String(describing: $0.kind) } ?? "?"))"
         } else {
             source = "attention blocker"
         }
@@ -2178,6 +2194,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             "\(Self.logTag) notification ARMED for \(nextStepDate) (in \(inSeconds)s) — \(source)"
             + "; prove \(proveDate.map(String.init(describing:)) ?? "none")"
             + ", send \(sendDate.map(String.init(describing:)) ?? "none")"
+            + ", blocker \(blockerDate.map(String.init(describing:)) ?? "none")"
+            + ", outlook \(outlookDate.map(String.init(describing:)) ?? "none")"
             + "; buffer \(Int(clock.notificationBuffer))s at \(Int(clock.secondsPerBlock))s/block"
         )
     }
@@ -2202,7 +2220,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // suppresses sync for the open.
         var visit = MigrationVisit.sync
         for accountUUID in accountUUIDs {
-            let step = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            let step = (try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))?.step
             // THE key driver, logged verbatim. Everything this lane does follows from the engine's
             // answer here, and until 07-31 it was the one thing never written down: a run sitting at
             // 0-of-12 looked identical whether the engine was saying `prove`, `waiting`, or
@@ -2350,7 +2368,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// warning naming the exact prover error — but that line goes to the Rust `tracing` → os_log
     /// bridge (subsystem `co.electriccoin.ios`, category `rust`), NOT through `LoggerProxy`, so it
     /// never reaches the stream anyone reads while testing. Field-caught 2026-08-01: a run sat at
-    /// 0-of-12 for a day with `prove sweep: proved 0` next to `advance step: prove(id: 0)` and
+    /// 0-of-12 for a day with `prove sweep: proved 0` next to `advance step: prove(transactions: …)` and
     /// nothing anywhere naming the reason.
     ///
     /// The three heights are the reading, and they separate the two candidate causes without
@@ -2531,7 +2549,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // estimate and answers `.nothingDue`/`.awaitingProof` honestly, so a false positive
             // here degrades to a held verdict, never a wrong send.
             let deliverableId: UInt32?
-            if case let MigrationAdvanceStep.broadcast(stepId)? = try? await sdkSynchronizer.migrationAdvanceStep(accountUUID) {
+            if case let MigrationAdvanceStep.broadcast(stepId)? = (try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))?.step {
                 deliverableId = stepId
             } else if (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
                 let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
@@ -3163,7 +3181,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// healthy account with no run reads a successful `nil` step and derives `.notStarted`.
     ///
     /// The `do`/`catch` is load-bearing and must not be "tidied" back into `try?`. `migrationAdvanceStep`
-    /// returns `MigrationAdvanceStep?`, and since SE-0230 `try?` FLATTENS a throwing optional call
+    /// returns `MigrationAdvance?`, and since SE-0230 `try?` FLATTENS a throwing optional call
     /// into a single optional — so `try? await …` collapses "threw" and "no run" into the same `nil`,
     /// and a `guard let … else { return nil }` on it treats a perfectly healthy no-run account as a
     /// failed read. That is exactly what happened: a freshly restored wallet has no run, so every
@@ -3172,9 +3190,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationState.derive`'s documented `advanceStep == nil` arm was live-unreachable; only tests
     /// (which pass the optional directly) ever exercised it, which is why 778 of them stayed green.
     private func migrationState(accountUUID: AccountUUID) async -> MigrationState? {
-        let advanceStep: MigrationAdvanceStep?
+        let advance: MigrationAdvance?
         do {
-            advanceStep = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+            advance = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
         } catch {
             // The read itself failed. Degrade to no state so callers keep their previous value
             // rather than flipping to `.notStarted`.
@@ -3182,7 +3200,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return nil
         }
         return MigrationState.derive(
-            advanceStep: advanceStep,
+            advanceStep: advance?.step,
             progress: try? await sdkSynchronizer.getMigrationProgress(accountUUID),
             statuses: (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? [],
             hasInvalidTransfers: await hasInvalidMigrationTransfers(accountUUID: accountUUID)
@@ -3485,6 +3503,30 @@ enum MigrationDerivations {
         }
 
         return accountUUIDs
+    }
+
+    /// P4 (outlook adoption, #2936): the engine outlook's arming candidate — the pure half.
+    ///
+    /// Height→date through the same measured clock every other candidate uses. The KIND is
+    /// consulted for exactly one thing: a `.broadcast` outlook takes the same privacy clamp the
+    /// row-derived send window does — a poke must not invite a send the gate would refuse. Every
+    /// other kind is a sync- or user-shaped visit, which is what the buffer separates sends FROM,
+    /// so it arms unclamped. The caller min-folds the result: an outlook can only make the poke
+    /// EARLIER, never later.
+    static func outlookCandidateDate(
+        outlook: MigrationNextWork?,
+        clock: MigrationChainClock,
+        now: Date,
+        sendGate: MigrationSendGate
+    ) -> Date? {
+        guard let outlook else { return nil }
+        var date = clock.notificationDate(atHeight: outlook.height, now: now)
+        if outlook.kind == MigrationStepKind.broadcast,
+            case let MigrationSendGate.waitUntil(gateUntil) = sendGate,
+            gateUntil > date {
+            date = gateUntil
+        }
+        return date
     }
 
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is

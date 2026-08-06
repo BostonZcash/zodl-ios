@@ -77,7 +77,7 @@ import ComposableArchitecture
     /// `advanceStep` says otherwise, no migration run at all.
     private static func bannerVariant(
         balance: Zatoshi,
-        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep? = { _ in nil },
+        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance? = { _ in nil },
         state: @escaping @Sendable () -> SynchronizerState = { syncedState() }
     ) async -> MigrationBannerVariant? {
         await withDependencies {

@@ -81,6 +81,38 @@ import ComposableArchitecture
         $walletAccounts.withLock { $0 = [Self.account()] }
     }
 
+    /// A single pending `.transfer` row at `scheduledHeight` — proved, not yet on the wire — the
+    /// minimal fixture `armNextWindowNotifications`'s row-derived send-window candidate needs.
+    /// Mirrors `MigrationSendGateAndArmingTests.status(...)`'s shape; this suite only ever needs
+    /// this one kind/state combination, so the fuller helper's extra parameters are inlined away.
+    private static func pendingTransferStatus(scheduledHeight: BlockHeight) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: 1,
+            kind: .transfer(crossing: 0),
+            state: .proved,
+            scheduledHeight: scheduledHeight,
+            expiryHeight: nil,
+            isReady: false,
+            nextAction: nil,
+            blockedOn: nil,
+            dependsOn: [],
+            anchorBoundaryHeight: nil
+        )
+    }
+
+    /// A freshly-scoped, isolated schedule storage (own `UserDefaults` suite, never `.standard`) —
+    /// `MigrationManagerImpl`'s own default (`MigrationScheduleStorage()`) falls back to `.standard`,
+    /// which PERSISTS on a simulator across separate `xcodebuild test` invocations. The P4 fold
+    /// tests below need `committedSchedule(for: accountUUID) == nil` (so `migrationTransfers`' W1
+    /// statuses-only fallback derives the fabricated row) — a fact `.standard` cannot guarantee once
+    /// any other suite has ever committed a schedule for this file's hardcoded `accountUUID` on this
+    /// same simulator. Mirrors `freshGateStorage` right below.
+    private static func freshScheduleStorage() -> MigrationScheduleStorage {
+        let suiteName = "MigrationTickDriverTests.\(UUID().uuidString)"
+        // swiftlint:disable:next force_unwrapping
+        return MigrationScheduleStorage(userDefaults: UserDefaults(suiteName: suiteName)!)
+    }
+
     /// A freshly-scoped, isolated gate storage (own `UserDefaults` suite, never `.standard`) with
     /// `accountUUID`'s mode pre-set — mirrors `MigrationSendGateAndArmingTests`'s `storage()` helper.
     private static func freshGateStorage(mode: MigrationMode) -> MigrationGateStorage {
@@ -139,7 +171,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "should-never-run"))
@@ -165,7 +197,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "abcd"))
@@ -199,7 +231,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
                     submissionCalls.withValue { $0 += 1 }
                     estFlagsSeen.withValue { $0.append(useEstimatedTip) }
@@ -249,7 +281,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "must-not-run"))
@@ -301,7 +333,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -332,7 +364,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -364,7 +396,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -394,7 +426,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -428,7 +460,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -471,9 +503,14 @@ import ComposableArchitecture
                 // no read of its own beyond the first; the statuses-empty pin below is what
                 // catches a smuggled-back decision re-ask.)
                 migrationAdvanceStep: { _ in
-                    if submissionCalls.value > 0 { return .waiting }
+                    if submissionCalls.value > 0 { return MigrationAdvance(step: .waiting, next: nil) }
                     let read = stepReads.withValue { $0 += 1; return $0 }
-                    return read == 1 ? .prove(id: 2, kind: .preparation(layer: 1, index: 0)) : .broadcast(id: 2)
+                    return read == 1
+                        ? MigrationAdvance(
+                            step: .prove(transactions: [MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0))]),
+                            next: nil
+                        )
+                        : MigrationAdvance(step: .broadcast(id: 2), next: nil)
                 },
                 // EMPTY on purpose — the old chain's `preparationTransactionIds.contains(id)`
                 // cross-check would break here; the step's kind must be the only authority.
@@ -514,7 +551,9 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in
                     let read = stepReads.withValue { $0 += 1; return $0 }
-                    return read == 1 ? .prove(id: 4, kind: .transfer(crossing: 0)) : .broadcast(id: 4)
+                    return read == 1
+                        ? MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                        : MigrationAdvance(step: .broadcast(id: 4), next: nil)
                 },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
@@ -554,7 +593,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                },
                 finalizeReadyMigrationTransfers: { _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
@@ -582,7 +623,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                },
                 finalizeReadyMigrationTransfers: { _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
@@ -614,7 +657,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
                     submissionCalls.withValue { $0 += 1 }
                     #expect(useEstimatedTip, "the submit stays the est-aware single authority")
@@ -653,7 +696,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "must-not-run"))
@@ -717,7 +760,9 @@ import ComposableArchitecture
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
                 migrationAdvanceStep: { accountUUID in
-                    accountUUID == Self.secondAccountUUID ? .broadcast(id: 7) : .broadcast(id: 1)
+                    accountUUID == Self.secondAccountUUID
+                        ? MigrationAdvance(step: .broadcast(id: 7), next: nil)
+                        : MigrationAdvance(step: .broadcast(id: 1), next: nil)
                 },
                 executeNextPendingMigrationTransfer: { accountUUID, _, _ in
                     submittedFor.withValue { $0.append(accountUUID) }
@@ -747,7 +792,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -776,7 +821,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .requiresAttention(id: 2) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .requiresAttention(id: 2), next: nil) },
                 migrationTransactionStatuses: { _ in [] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -854,7 +899,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 migrationTransactionStatuses: { _ in [] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -896,7 +941,7 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in
                     engineReadCount.withValue { $0 += 1 }
-                    return .broadcast(id: 1)
+                    return MigrationAdvance(step: .broadcast(id: 1), next: nil)
                 },
                 migrationPrivacySyncBufferDuration: { 600 }
             )
@@ -934,7 +979,7 @@ import ComposableArchitecture
                     while !releaseFirstRead.value {
                         try? await Task.sleep(nanoseconds: 5_000_000)
                     }
-                    return .waiting
+                    return MigrationAdvance(step: .waiting, next: nil)
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -981,7 +1026,7 @@ import ComposableArchitecture
                             try? await Task.sleep(nanoseconds: 5_000_000)
                         }
                     }
-                    return .waiting
+                    return MigrationAdvance(step: .waiting, next: nil)
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -1036,7 +1081,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 migrationSyncWakeups: { _ in
                     armingProbeCalls.withValue { $0 += 1 }
                     return []
@@ -1070,7 +1115,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 3) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 3), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in .executed(.success(txId: "abcd")) }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -1087,6 +1132,244 @@ import ComposableArchitecture
 
             #expect(!received.value.isEmpty, "a subscriber must see at least one emission during/after the tick broadcast")
             cancellable.cancel()
+        }
+    }
+
+    // MARK: - P4: the engine outlook arms the poke (driver pass-through)
+
+    /// P4: the outlook is a real arming candidate — a `.waiting` run with no wake-up, no pending
+    /// row and no blocker would retire the poke today; the outlook arms it instead.
+    ///
+    /// Pinned to the outlook's OWN window, not merely "some concrete date": `.mocked`'s default
+    /// `estimatedMigrationChainTip` is `{ 0 }`, which makes `MigrationChainClock.secondsUntil`
+    /// degenerate to 0 for EVERY height (`tip > 0` fails), so an unstubbed clock would arm at
+    /// `now + notificationBuffer` regardless of the outlook height — a tautology this test used to
+    /// pass by accident. Stubbing the tip to `Self.tip` (the same fixture `atTipState()` already
+    /// reports) makes the clock real, so the assertion below can only pass if the height is honored.
+    @Test func anOutlookArmsThePokeWhereTodayWouldRetireIt() async {
+        Self.installCandidateAccount()
+        let scheduled = LockIsolated<[(MigrationNotification, Date?)]>([])
+        let secondsPerBlock = MigrationChainClock.targetSecondsPerBlock
+        let notificationBuffer = max(2 * secondsPerBlock, 150)
+        let outlookHeight = Self.tip + 200
+        let beforeDrive = Date()
+
+        _ = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .waiting,
+                        next: MigrationNextWork(height: outlookHeight, kind: .prove)
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                migrationSyncWakeups: { _ in [] },
+                estimatedMigrationChainTip: { Self.tip },
+                estimatedMigrationSecondsPerBlock: { secondsPerBlock }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { notification, date, _ in
+                    scheduled.withValue { $0.append((notification, date)) }
+                },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(!scheduled.value.isEmpty, "the outlook must arm the poke a candidate-less arm would retire")
+        let armedDate = scheduled.value.first?.1
+        #expect(armedDate != nil, "armed at a concrete date, not a placeholder")
+
+        // 200 blocks out at the measured rate, plus the two-block notification slack — the
+        // outlook's own window (`MigrationChainClock.notificationDate`), not the buffer-only floor
+        // a degenerate clock would produce. `beforeDrive` predates the arm's own `Date()`, so the
+        // true offset from it is always >= `expectedOffset`; the ±60s band absorbs execution slack.
+        let expectedOffset = 200 * secondsPerBlock + notificationBuffer
+        let lowerBound = beforeDrive.addingTimeInterval(expectedOffset - 60)
+        let upperBound = beforeDrive.addingTimeInterval(expectedOffset + 60)
+        if let armedDate {
+            #expect(armedDate >= lowerBound, "armed date must not be earlier than the outlook's window")
+            #expect(armedDate <= upperBound, "armed date must not default to the notificationBuffer-only floor")
+        }
+    }
+
+    /// P4: the outlook is advisory — it feeds arming only, never the verdict. Same drive as the
+    /// plain `.waiting` cases, now with an outlook riding along.
+    @Test func anOutlookPerturbsNoVerdict() async {
+        Self.installCandidateAccount()
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .waiting,
+                        next: MigrationNextWork(height: Self.activationHeight + 200, kind: .broadcast)
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                migrationSyncWakeups: { _ in [] },
+                // Height-blindness is harmless here — this test pins the VERDICT, not the armed
+                // date — but stubbed anyway for consistency with the sibling test above, which
+                // does depend on it (see that test's doc for why `.mocked`'s default degrades it).
+                estimatedMigrationChainTip: { Self.tip }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        // Pinned to the exact verdict `beforeSyncDuringAnInFlightAdvanceWaitsThenRuns` asserts for
+        // the identical step/phase pair (`.waiting` @ `.afterSync`): `MigrationStepAction.armWakeups`
+        // discharges to `.idle` unconditionally (`MigrationStepDriver.execute`) — the one-clock
+        // dispatch that could otherwise redirect `.waiting` only fires for `.beforeSync`/`.tick`, so
+        // `.afterSync` has no path off `.idle` for this step to begin with.
+        #expect(verdict == .idle, "an advisory outlook must not hold or otherwise change the verdict")
+    }
+
+    // MARK: - P4: the outlook joins the min-fold, in both directions
+
+    /// P4: the fold's other half — finding-1's sibling test above only pins the outlook WINNING
+    /// (no row, no wake-up, nothing else armed). That leaves the min-fold itself unpinned: a row
+    /// already gives the arm a real send window, and a far-future outlook must not override it.
+    @Test func anOutlookLaterThanTheRowWindowLeavesTheArmedDateAlone() async {
+        Self.installCandidateAccount()
+        let scheduled = LockIsolated<[(MigrationNotification, Date?)]>([])
+        let secondsPerBlock = MigrationChainClock.targetSecondsPerBlock
+        let notificationBuffer = max(2 * secondsPerBlock, 150)
+        let rowHeight = Self.tip + 400
+        let outlookHeight = Self.tip + 100_000
+        let beforeDrive = Date()
+
+        _ = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .waiting, next: MigrationNextWork(height: outlookHeight, kind: .prove))
+                },
+                migrationTransactionStatuses: { _ in [Self.pendingTransferStatus(scheduledHeight: rowHeight)] },
+                migrationSyncWakeups: { _ in [] },
+                estimatedMigrationChainTip: { Self.tip },
+                estimatedMigrationSecondsPerBlock: { secondsPerBlock }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { notification, date, _ in
+                    scheduled.withValue { $0.append((notification, date)) }
+                },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        let armedDate = scheduled.value.first?.1
+        #expect(armedDate != nil, "the row's own send window must still arm a poke")
+
+        // The row's window: 400 blocks out at the measured rate, run through the row derivation's
+        // MINUTES rounding (`MigrationETA.minutesFromNow`) then back to seconds by the arm — a
+        // clean 400 * 75s = 30000s = 500 minutes, so no rounding slop enters — plus the two-block
+        // notification slack. The outlook sits ~86 days further out (100,000 blocks) and, if the
+        // fold were broken (e.g. folding on the OUTLOOK unconditionally), would pull the armed
+        // date out to roughly `beforeDrive + 7,500,150s` — far outside this band.
+        let rowExpectedOffset = 500.0 * 60 + notificationBuffer
+        let lowerBound = beforeDrive.addingTimeInterval(rowExpectedOffset - 60)
+        let upperBound = beforeDrive.addingTimeInterval(rowExpectedOffset + 60)
+        if let armedDate {
+            #expect(armedDate >= lowerBound, "armed date must not be earlier than the row's own window")
+            #expect(armedDate <= upperBound, "a later outlook must not pull the armed date away from the row")
+        }
+    }
+
+    /// P4: the fold's WINNING direction for a row-bearing run — `outlookCandidateDate`'s own doc
+    /// promises the outlook "can only make the poke EARLIER, never later"; this is that promise
+    /// exercised through the full arm, not just the pure helper `MigrationSendGateAndArmingTests`
+    /// already pins.
+    @Test func anOutlookEarlierThanTheRowWindowWins() async {
+        Self.installCandidateAccount()
+        let scheduled = LockIsolated<[(MigrationNotification, Date?)]>([])
+        let secondsPerBlock = MigrationChainClock.targetSecondsPerBlock
+        let notificationBuffer = max(2 * secondsPerBlock, 150)
+        let rowHeight = Self.tip + 400
+        let outlookHeight = Self.tip + 10
+        let beforeDrive = Date()
+
+        _ = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .waiting, next: MigrationNextWork(height: outlookHeight, kind: .prove))
+                },
+                migrationTransactionStatuses: { _ in [Self.pendingTransferStatus(scheduledHeight: rowHeight)] },
+                migrationSyncWakeups: { _ in [] },
+                estimatedMigrationChainTip: { Self.tip },
+                estimatedMigrationSecondsPerBlock: { secondsPerBlock }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { notification, date, _ in
+                    scheduled.withValue { $0.append((notification, date)) }
+                },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        let armedDate = scheduled.value.first?.1
+        #expect(armedDate != nil, "the outlook must still arm a poke")
+
+        // The outlook's window: 10 blocks out — far sooner than the row's 400-block window. Two
+        // independent checks: the armed date lands in the OUTLOOK's own band, and it is strictly
+        // below the ROW window's band floor — the fold picked the earlier candidate, not merely
+        // "a" concrete date that happens to be less than the row's (which a bug clamping to some
+        // other unrelated earlier value could also satisfy).
+        let outlookExpectedOffset = 10 * secondsPerBlock + notificationBuffer
+        let outlookLowerBound = beforeDrive.addingTimeInterval(outlookExpectedOffset - 60)
+        let outlookUpperBound = beforeDrive.addingTimeInterval(outlookExpectedOffset + 60)
+        let rowExpectedOffset = 500.0 * 60 + notificationBuffer
+        let rowLowerBound = beforeDrive.addingTimeInterval(rowExpectedOffset - 60)
+
+        if let armedDate {
+            #expect(armedDate >= outlookLowerBound, "armed date must not be earlier than the outlook's own window")
+            #expect(armedDate <= outlookUpperBound, "armed date must land at the outlook's window, not the row's")
+            #expect(armedDate < rowLowerBound, "the earlier outlook must win the fold over the later row window")
         }
     }
 }

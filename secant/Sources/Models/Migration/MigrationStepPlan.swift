@@ -207,18 +207,22 @@ enum MigrationStepPlan {
                 return MigrationStepAction.broadcast(id: id)
             }
 
-        case let MigrationAdvanceStep.prove(id, kind):
-            // The kind (`.transfer` vs `.preparation`) changes what happens AFTER the proof — a
-            // preparation broadcasts at the SAME wake-up, a transfer waits for its own session —
-            // so it rides the action into the driver's prove discharge. D2 (nuttycom, 2026-08-05):
-            // "there should be no second call needed — inspect the kind attribute of
-            // `Prove { id, kind }`, and if it matches Preparation then prove and broadcast." The
-            // step itself is the sanction; nothing re-asks the engine. (An earlier draft chained a
-            // `next_step` re-ask after the sweep and delivered only what it offered — one call too
-            // many, by the author's own word.)
+        case let MigrationAdvanceStep.prove(transactions):
+            // The engine offers the WHOLE provable set (#2939) — earliest-ready first, never empty
+            // (SDK contract; `transactions[0]` below leans on it, and a breached contract must
+            // crash here rather than read as "no run"). The action still carries ONE id: the HEAD,
+            // exactly the entry the old single-id step named. The discharge's sweep proves every
+            // ready row in one pass regardless; the head's id/kind only route what happens AFTER
+            // the proof — a preparation broadcasts at the SAME wake-up, a transfer waits for its
+            // own session. D2 (nuttycom, 2026-08-05): "there should be no second call needed —
+            // inspect the kind attribute of `Prove { id, kind }`, and if it matches Preparation
+            // then prove and broadcast." The step itself is the sanction; nothing re-asks the
+            // engine. (A preparation elsewhere in the batch behind a transfer head still gets
+            // PROVED by the whole-queue sweep; its broadcast follows at the edge whose step names
+            // it — nothing new to handle.)
             switch phase {
             case MigrationOpenPhase.afterSync:
-                return MigrationStepAction.prove(id: id, isPreparation: kind.isPreparation)
+                return MigrationStepAction.prove(id: transactions[0].id, isPreparation: transactions[0].kind.isPreparation)
             case MigrationOpenPhase.tick:
                 // A tick proves UNCONDITIONALLY (FIND-5, 2026-08-05). Two prior versions of this
                 // cell each starved a real session: full deferral (pre-2026-08-02) starved
@@ -232,7 +236,7 @@ enum MigrationStepPlan {
                 // mid-sync. Proving is local computation, so ZIP 318's broadcast-session
                 // separation is untouched. The one tick-side refinement lives in the driver: a
                 // sweep already adjudicated STALLED is not re-run every 30s.
-                return MigrationStepAction.prove(id: id, isPreparation: kind.isPreparation)
+                return MigrationStepAction.prove(id: transactions[0].id, isPreparation: transactions[0].kind.isPreparation)
             case MigrationOpenPhase.beforeSync:
                 // The open's own edge is moments away and must stay free to broadcast instead —
                 // deferring here is unchanged even at the tip.

@@ -108,7 +108,7 @@ import Testing
         syncStatus: SyncStatus,
         mode: MigrationMode?,
         isManualDelivery: Bool,
-        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep?,
+        advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance?,
         tickInterval: Swift.Duration = .seconds(30),
         lastMigrationSyncGateBlocked: Bool = false,
         testClock: TestClock<Swift.Duration>? = nil,
@@ -227,7 +227,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
             // A stop-eligible candidate now also merges in `migrationTickLoopEffect`'s re-spawn
             // (Fix 1a), which reaches for `continuousClock` the instant it spawns — a `TestClock`
@@ -269,7 +269,9 @@ import Testing
                     value += 1
                     return value
                 }
-                return callNumber == 1 ? MigrationAdvanceStep.waiting : MigrationAdvanceStep.broadcast(id: 9)
+                return callNumber == 1
+                    ? MigrationAdvance(step: .waiting, next: nil)
+                    : MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
             testClock: testClock
         )
@@ -305,7 +307,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.waiting
+                return MigrationAdvance(step: .waiting, next: nil)
             },
             testClock: testClock
         )
@@ -334,7 +336,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.waiting
+                return MigrationAdvance(step: .waiting, next: nil)
             },
             testClock: testClock
         )
@@ -373,7 +375,7 @@ import Testing
         resetSharedResumeFlag()
         let stopCalls = LockIsolated(0)
         let testClock = TestClock()
-        let stepContinuation = LockIsolated<CheckedContinuation<MigrationAdvanceStep?, Never>?>(nil)
+        let stepContinuation = LockIsolated<CheckedContinuation<MigrationAdvance?, Never>?>(nil)
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -396,7 +398,7 @@ import Testing
 
         // Release the "late" read now — it resumes with a genuine `.broadcast`, same as if the
         // engine had proved the transfer moments after the edge had already cleared.
-        stepContinuation.value?.resume(returning: MigrationAdvanceStep.broadcast(id: 9))
+        stepContinuation.value?.resume(returning: MigrationAdvance(step: .broadcast(id: 9), next: nil))
 
         try? await Task.sleep(nanoseconds: 150_000_000)
 
@@ -425,7 +427,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { accountUUID in
                 queriedAccountUUIDs.withValue { $0.append(accountUUID) }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
             testClock: TestClock(),
             secondCandidateMode: MigrationMode.privateScheduled
@@ -458,7 +460,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             }
         )
 
@@ -484,7 +486,7 @@ import Testing
             isManualDelivery: true,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             }
         )
 
@@ -509,7 +511,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.broadcast(id: 9) },
+            advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — a
             // stop-eligible candidate merges in the tick-loop re-spawn, which needs a `TestClock`.
             testClock: TestClock()
@@ -534,7 +536,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.broadcast(id: 9) },
+            advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
             lastMigrationSyncGateBlocked: true
         )
 
@@ -562,7 +564,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — the
             // candidate is eligible (mode/delivery, not syncStatus, gates the tick-loop merge), so
@@ -600,7 +602,7 @@ import Testing
             isManualDelivery: false,
             advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvanceStep.broadcast(id: 9)
+                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
             tickInterval: Swift.Duration.zero
         )
@@ -629,7 +631,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
@@ -659,7 +661,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
@@ -689,7 +691,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
         store.dependencies.migrationManager.clearProvisionalNetworkSnapshot = { accountUUID in
@@ -721,7 +723,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
@@ -753,7 +755,7 @@ import Testing
             syncStatus: SyncStatus.syncing(0.5, false),
             mode: MigrationMode.privateScheduled,
             isManualDelivery: false,
-            advanceStep: { _ in MigrationAdvanceStep.waiting },
+            advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in

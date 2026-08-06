@@ -249,16 +249,16 @@ extension MigrationManagerImpl {
         // the exact flattening `MigrationManagerLiveKey`'s own state-read doc forbids. A throw is
         // recorded per-account; accounts that read cleanly still discharge, and an all-throw pass
         // surfaces as `.failed` below — substantive, event-logged, loop-surviving.
-        var steps: [(accountUUID: AccountUUID, step: MigrationAdvanceStep?)] = []
+        var steps: [(accountUUID: AccountUUID, advance: MigrationAdvance?)] = []
         // MOB-1466: buffered, not logged immediately — a `.tick`'s log LEVEL depends on the verdict
         // these reads feed into, which isn't known until `discharge` below returns. See the emission
         // loop after it.
         var stepLogLines: [String] = []
         var stepReadFailure: String?
         for accountUUID in accountUUIDs {
-            let step: MigrationAdvanceStep?
+            let advance: MigrationAdvance?
             do {
-                step = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
+                advance = try await sdkSynchronizer.migrationAdvanceStep(accountUUID)
             } catch {
                 stepReadFailure = "\(error.toZcashError())"
                 stepLogLines.append("\(Self.logTag) advance step (\(phase)): READ FAILED — \(error.toZcashError())")
@@ -267,10 +267,12 @@ extension MigrationManagerImpl {
             // THE key driver line, logged verbatim at both phases. A run sitting at 0-of-12 looks
             // identical whether the engine is saying `prove`, `waiting` or `broadcast` — this is the
             // line that tells those apart, and until 07-31 it was the one thing never written down.
-            stepLogLines.append(
-                "\(Self.logTag) advance step (\(phase)): \(step.map { String(describing: $0) } ?? "none (no run)")"
-            )
-            steps.append((accountUUID, step))
+            // The step keeps its verbatim print (grep-stable); the engine's outlook (#2936) rides as
+            // a suffix when present — advisory, consumed by the arming pass below.
+            let stepDescription = advance.map { String(describing: $0.step) } ?? "none (no run)"
+            let outlookSuffix = advance?.next.map { " — next: \($0.kind) @ \($0.height)" } ?? ""
+            stepLogLines.append("\(Self.logTag) advance step (\(phase)): \(stepDescription)\(outlookSuffix)")
+            steps.append((accountUUID, advance))
         }
 
         var verdict = await discharge(steps: steps, phase: phase)
@@ -307,7 +309,10 @@ extension MigrationManagerImpl {
         // keeps arming, exactly like the two opens.
         if !isQuietTick {
             for accountUUID in accountUUIDs {
-                await armNextWindowNotifications(accountUUID: accountUUID)
+                // P4: the account's own outlook from THIS drive's read — the single engine read
+                // feeding the session decision, the discharge, the log, and now the arm.
+                let outlook = steps.first { $0.accountUUID == accountUUID }?.advance?.next
+                await armNextWindowNotifications(accountUUID: accountUUID, outlook: outlook)
             }
         }
 
@@ -368,13 +373,14 @@ extension MigrationManagerImpl {
     /// already priority-ordered, and ZIP 318 caps a session at one broadcast, so "first substantive"
     /// is the honest summary of what this open accomplished.
     private func discharge(
-        steps: [(accountUUID: AccountUUID, step: MigrationAdvanceStep?)],
+        steps: [(accountUUID: AccountUUID, advance: MigrationAdvance?)],
         phase: MigrationOpenPhase
     ) async -> MigrationStepVerdict {
         var fallback = MigrationStepVerdict.noRun
         var firstHeld: MigrationStepVerdict?
 
-        for (accountUUID, step) in steps {
+        for (accountUUID, advance) in steps {
+            let step = advance?.step
             // AUD-3: kind-awareness for the broadcast cells. A note-PREPARATION is ZIP-exempt from
             // the transfer-only throttles (session separation, buffer, mode belt, manual hold),
             // and the plan's `.afterSync` broadcast cell forks on it — so the kind is derived

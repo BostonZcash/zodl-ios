@@ -233,7 +233,7 @@ extension SDKSynchronizerClient {
         isInitialized: @escaping @Sendable () -> Bool = { false },
     importAccount: @escaping @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID? = { _, _, _, _, _, _, _ in nil },
         deleteAccount: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in },
-        migrationAdvanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvanceStep? = { _ in nil },
+        migrationAdvanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance? = { _ in nil },
         proposeMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> MigrationSchedule = { _ in throw ZcashError.synchronizerNotPrepared },
         proposeImmediateMigration: @escaping @Sendable (AccountUUID) async throws -> ImmediateMigrationProposal = { _ in throw ZcashError.synchronizerNotPrepared },
         recordImmediateMigration: @escaping @Sendable (AccountUUID, Data) async throws -> Void = { _, _ in },

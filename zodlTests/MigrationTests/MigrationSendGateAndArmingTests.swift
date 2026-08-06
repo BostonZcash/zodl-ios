@@ -201,4 +201,85 @@ import ZcashLightClientKit
 
         #expect(Self.nextBroadcast(preparations: preparations, transfers: transfers) == nil)
     }
+
+    // MARK: - P4: the engine outlook's arming candidate (pure half)
+
+    /// A `.prove` outlook is a sync visit — the buffer separates sends FROM syncs, so no clamp
+    /// applies even while the gate is closed.
+    @Test func aProveOutlookArmsUnclampedInsideTheBuffer() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let date = MigrationDerivations.outlookCandidateDate(
+            outlook: MigrationNextWork(height: 3_000_010, kind: .prove),
+            clock: Self.clock,
+            now: now,
+            sendGate: .waitUntil(now.addingTimeInterval(100_000))
+        )
+        #expect(date == Self.clock.notificationDate(atHeight: 3_000_010, now: now))
+    }
+
+    /// A `.broadcast` outlook inside the buffer is clamped to the gate's expiry — the poke must
+    /// not invite a send the gate would refuse.
+    @Test func aBroadcastOutlookInsideTheBufferClampsToTheGate() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let unclamped = Self.clock.notificationDate(atHeight: 3_000_001, now: now)
+        let gateUntil = unclamped.addingTimeInterval(500)
+        let date = MigrationDerivations.outlookCandidateDate(
+            outlook: MigrationNextWork(height: 3_000_001, kind: .broadcast),
+            clock: Self.clock,
+            now: now,
+            sendGate: .waitUntil(gateUntil)
+        )
+        #expect(date == gateUntil)
+    }
+
+    /// A gate that expires before the window changes nothing — the clamp is a max, not an add.
+    @Test func aBroadcastOutlookPastTheGatesExpiryIsUnclamped() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let window = Self.clock.notificationDate(atHeight: 3_000_100, now: now)
+        let date = MigrationDerivations.outlookCandidateDate(
+            outlook: MigrationNextWork(height: 3_000_100, kind: .broadcast),
+            clock: Self.clock,
+            now: now,
+            sendGate: .waitUntil(now.addingTimeInterval(1))
+        )
+        #expect(date == window)
+    }
+
+    /// An open gate arms the broadcast outlook at its own window.
+    @Test func aBroadcastOutlookWithAnOpenGateArmsAtItsWindow() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let date = MigrationDerivations.outlookCandidateDate(
+            outlook: MigrationNextWork(height: 3_000_050, kind: .broadcast),
+            clock: Self.clock,
+            now: now,
+            sendGate: .allowed
+        )
+        #expect(date == Self.clock.notificationDate(atHeight: 3_000_050, now: now))
+    }
+
+    /// `.rebuild`/`.replan` are user-shaped visits: plain candidates, no clamp.
+    @Test func userShapedOutlookKindsArmUnclamped() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        for kind in [MigrationStepKind.rebuild, MigrationStepKind.replan] {
+            let date = MigrationDerivations.outlookCandidateDate(
+                outlook: MigrationNextWork(height: 3_000_020, kind: kind),
+                clock: Self.clock,
+                now: now,
+                sendGate: .waitUntil(now.addingTimeInterval(100_000))
+            )
+            #expect(date == Self.clock.notificationDate(atHeight: 3_000_020, now: now))
+        }
+    }
+
+    /// No outlook, no candidate — the arm's other three candidates decide alone.
+    @Test func aNilOutlookContributesNoCandidate() {
+        #expect(
+            MigrationDerivations.outlookCandidateDate(
+                outlook: nil,
+                clock: Self.clock,
+                now: Date(timeIntervalSince1970: 1_000_000),
+                sendGate: .allowed
+            ) == nil
+        )
+    }
 }
