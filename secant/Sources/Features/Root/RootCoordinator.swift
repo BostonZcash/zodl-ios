@@ -307,6 +307,13 @@ extension Root {
             // is not the state the pre-commit pass drove). Mid-sync, the guard defers to the
             // coming edge, whose own drive now also holds a fresh credit. The tick loop stays the
             // belt for everything after.
+            // Field 2026-08-06: the scheduled-plan lane now front-runs this same drive UNDER THE
+            // CONFIRM LOADER, awaited, before `.transferPlan`'s `.delegate(.confirmed)` ever fires
+            // (`MigrationTransferPlan`'s `.scheduleCommitted` — see its doc). So for that lane this
+            // call is an idempotent backstop, not the first driver — it still fires here every
+            // time, on the same phase token and the same at-tip guard, and still matters (a
+            // pop-back that raced the commit, an app relaunch mid-wait). It remains the ONLY drive
+            // for the `.reviewTransfer` lane below, which gained no loader-side drive of its own.
             case .migrationCoordFlow(.path(.element(id: _, action: .transferPlan(.delegate(.confirmed))))),
                 .migrationCoordFlow(.path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed))))):
                 return .merge(

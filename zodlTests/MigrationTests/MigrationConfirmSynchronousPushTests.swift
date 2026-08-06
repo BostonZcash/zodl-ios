@@ -17,6 +17,15 @@
 //  closes the re-tap window the stall used to invite: once `hasConfirmed` is set, a further
 //  `.confirmTapped`/`.retryTapped` is a traced no-op — no auth prompt, no second commit leg.
 //
+//  Field 2026-08-06: the chain in front of that synchronous push grew one more link. Commit
+//  success now latches `hasConfirmed` immediately, then KEEPS the Confirm loader up while the
+//  newborn run's first drive (prove + first broadcast, at tip) runs to completion — only once
+//  that drive lands (or is skipped mid-sync, deferring to the coming edge) does the chain reach
+//  `.scheduleSigned` and fire the same synchronous push above. So: commit → latch → awaited first
+//  drive under the loader → synchronous push. A back-out mid-wait passes the leave guard, same as
+//  any other already-committed visit — the plan IS committed by the time the drive starts, so
+//  leaving forfeits nothing.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -97,6 +106,13 @@ import Testing
             sessionOrdinal: 1,
             asOfSyncedAt: nil
         )
+    }
+
+    private static func upToDateState() -> SynchronizerState {
+        var state = SynchronizerState.zero
+        state.syncStatus = .upToDate
+        state.latestBlockHeight = 4_200_000
+        return state
     }
 
     // MARK: - The fix
@@ -225,5 +241,87 @@ import Testing
         await store.send(.confirmTapped)
 
         await store.finish()
+    }
+
+    // MARK: - The drive under the loader
+
+    /// Field 2026-08-06: commit success latches `hasConfirmed` and KEEPS the loader up while the
+    /// newborn run's first drive (prove + first broadcast) runs to completion — only then does
+    /// `.scheduleSigned` clear the loader and delegate `.confirmed`. The advance must land at
+    /// `.afterSync`, once, before `.scheduleSigned` arrives.
+    @Test func aCommittedScheduleDrivesTheFirstStepUnderTheLoaderAtTip() async {
+        let phases = LockIsolated<[MigrationOpenPhase]>([])
+        var state = MigrationTransferPlan.State(variant: .scheduled, requiresSigning: true)
+        state.schedule = Self.schedule()
+        state.isConfirming = true
+
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            var manager = MigrationManagerClient.noOp
+            manager.advance = { phase in
+                phases.withValue { $0.append(phase) }
+                return .proved(count: 0)
+            }
+            $0.migrationManager = manager
+            $0.sdkSynchronizer = .mocked(latestState: { Self.upToDateState() })
+        }
+
+        await store.send(.scheduleCommitted) {
+            $0.hasConfirmed = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
+        #expect(phases.value == [MigrationOpenPhase.afterSync])
+        await store.receive(.delegate(.confirmed))
+    }
+
+    /// Mid-sync the drive is SKIPPED — same guard as Root's G1 case: the coming sync edge owns the
+    /// drive, and the loader covers just the commit. `.mocked()`'s default `latestState` is
+    /// `SynchronizerState.zero`, which is not `.upToDate`.
+    @Test func aCommittedScheduleSkipsTheDriveMidSync() async {
+        let phases = LockIsolated<[MigrationOpenPhase]>([])
+        var state = MigrationTransferPlan.State(variant: .scheduled, requiresSigning: true)
+        state.schedule = Self.schedule()
+        state.isConfirming = true
+
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            var manager = MigrationManagerClient.noOp
+            manager.advance = { phase in
+                phases.withValue { $0.append(phase) }
+                return .proved(count: 0)
+            }
+            $0.migrationManager = manager
+            $0.sdkSynchronizer = .mocked()
+        }
+
+        await store.send(.scheduleCommitted) {
+            $0.hasConfirmed = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
+        #expect(phases.value.isEmpty)
+        await store.receive(.delegate(.confirmed))
+    }
+
+    /// A back-tap DURING the drive wait (`hasConfirmed` already latched, loader still up) passes the
+    /// leave guard silently — the plan IS committed, so there is nothing left to guard. Exhaustive
+    /// send with no state closure pins "no sheet, no mutation".
+    @Test func aBackTapDuringTheDriveWaitPassesThroughTheLeaveGuard() async {
+        var state = MigrationTransferPlan.State(variant: .scheduled, requiresSigning: true)
+        state.schedule = Self.schedule()
+        state.isConfirming = true
+        state.hasConfirmed = true
+
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        }
+
+        await store.send(.backTapped)
+        await store.receive(.delegate(.leftWithoutConfirming))
     }
 }
