@@ -33,8 +33,8 @@ Split the arguments into lines and classify each:
   - `version` — `X.Y.Z`, digits and dots only
   - `build` — an integer
   - optional 5th token: the literal `skip-tests`
-- **Changelog line** — starts with `-` or `•`. Optional. The same changelog
-  goes into every Slack message of the run.
+- **Changelog line** — starts with `-`, `*`, or `•`. Optional. The same
+  changelog goes into every Slack message of the run.
 - **Blank line** — ignored.
 
 Validate everything before running anything. Any line that is none of the
@@ -112,8 +112,9 @@ SDK: `<sdk-branch>@<sdk-sha8>`
 - The SDK line uses the values captured at launch: append ` (dirty)` inside
   the backticks when `status --porcelain` was non-empty; on a detached HEAD use
   just the sha; drop the whole SDK line when the checkout does not exist.
-- Changelog bullets always use `•`, whichever of `-`/`•` the user typed. When
-  no changelog was given, omit the bullet block and its preceding blank line.
+- Changelog bullets always use `•`, whichever of `-`/`*`/`•` the user typed.
+  When no changelog was given, omit the bullet block and its preceding blank
+  line.
 - Post for real with `slack_send_message` — not a draft, and never ask for
   approval first: posting immediately is what this skill was invoked to do.
   Keep the returned message link for the final report.
