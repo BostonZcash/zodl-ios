@@ -39,14 +39,14 @@ import ZcashLightClientKit
     @Test func provingATransferIsASyncVisit() {
         // Proving is sync-BOUND: it resolves anchors and witnesses from the synced tree, so this
         // session must sync. Its broadcast comes later, in its own session.
-        #expect(MigrationVisit.decide(advanceSteps: [.prove(id: 1, kind: Self.transferKind)]) == .sync)
+        #expect(MigrationVisit.decide(advanceSteps: [.prove(transactions: [MigrationProveTarget(id: 1, kind: Self.transferKind)])]) == .sync)
     }
 
     /// The documented exception: a preparation is proved AND broadcast at the same wake-up, because
     /// it anchors to a fresh checkpoint at the tip like an ordinary transaction. It must not
     /// suppress sync.
     @Test func provingAPreparationIsStillASyncVisit() {
-        #expect(MigrationVisit.decide(advanceSteps: [.prove(id: 1, kind: Self.preparationKind)]) == .sync)
+        #expect(MigrationVisit.decide(advanceSteps: [.prove(transactions: [MigrationProveTarget(id: 1, kind: Self.preparationKind)])]) == .sync)
     }
 
     @Test(arguments: [MigrationAdvanceStep.waiting, .complete, .rebuild(id: 2)])

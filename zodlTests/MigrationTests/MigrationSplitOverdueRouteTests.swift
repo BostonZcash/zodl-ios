@@ -138,7 +138,7 @@ import ZcashLightClientKit
         let route = Self.route(
             state: .inProgress(Self.progress()),
             hasOverdue: true,
-            advanceStep: .prove(id: 3, kind: .transfer(crossing: 0))
+            advanceStep: .prove(transactions: [MigrationProveTarget(id: 3, kind: .transfer(crossing: 0))])
         )
 
         #expect(route != .statusResume)
@@ -202,7 +202,7 @@ import ZcashLightClientKit
         let route = Self.route(
             state: .inProgress(Self.progress()),
             hasOverdue: true,
-            advanceStep: .prove(id: 1, kind: .transfer(crossing: 0))
+            advanceStep: .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
         )
         #expect(route == .statusProgress)
     }

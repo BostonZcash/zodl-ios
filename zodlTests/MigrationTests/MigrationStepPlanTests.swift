@@ -64,7 +64,7 @@ import ZcashLightClientKit
     /// The mirror: proving needs the commitment tree at the tip, so it only happens after a sync —
     /// and never in a broadcast session, where it would force that session onto the wire.
     @Test func proveIsOfferedOnlyAfterSync() {
-        let step = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+        let step = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
 
         #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 1, isPreparation: false))
         #expect(MigrationStepPlan.action(for: step, phase: .beforeSync) == .nothing(.wrongPhase))
@@ -75,11 +75,34 @@ import ZcashLightClientKit
     /// a preparation's same-pass broadcast in the discharge — not a statuses re-read, and never a
     /// `next_step` re-ask.
     @Test func bothProveKindsProveButTheActionCarriesTheKind() {
-        let preparation = MigrationAdvanceStep.prove(id: 9, kind: .preparation(layer: 0, index: 0))
-        let transfer = MigrationAdvanceStep.prove(id: 9, kind: .transfer(crossing: 0))
+        let preparation = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 9, kind: .preparation(layer: 0, index: 0))])
+        let transfer = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 9, kind: .transfer(crossing: 0))])
 
         #expect(MigrationStepPlan.action(for: preparation, phase: .afterSync) == .prove(id: 9, isPreparation: true))
         #expect(MigrationStepPlan.action(for: transfer, phase: .afterSync) == .prove(id: 9, isPreparation: false))
+    }
+
+    /// #2939 batch step: the action takes the HEAD — the earliest-ready entry, exactly what the
+    /// old single-id step carried. A preparation later in the batch changes nothing here: the
+    /// sweep proves the whole queue regardless, and the head's kind is what routes the
+    /// after-proof step.
+    @Test func aBatchProveActsOnItsHeadEntry() {
+        let step = MigrationAdvanceStep.prove(transactions: [
+            MigrationProveTarget(id: 4, kind: .transfer(crossing: 0)),
+            MigrationProveTarget(id: 9, kind: .preparation(layer: 0, index: 0))
+        ])
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 4, isPreparation: false))
+        #expect(MigrationStepPlan.action(for: step, phase: .tick) == .prove(id: 4, isPreparation: false))
+    }
+
+    /// The mirror order: a preparation head keeps its same-wake-up broadcast routing even with a
+    /// transfer queued behind it.
+    @Test func aPreparationHeadKeepsItsSameWakeupRouting() {
+        let step = MigrationAdvanceStep.prove(transactions: [
+            MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0)),
+            MigrationProveTarget(id: 7, kind: .transfer(crossing: 0))
+        ])
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 2, isPreparation: true))
     }
 
     // MARK: - The quiet answers
@@ -129,8 +152,8 @@ import ZcashLightClientKit
     /// sweep is safe on any schedule — the tick obeys it, full stop. This test is the
     /// anti-regression pin for BOTH failure modes.
     @Test func tickProvesUnconditionally() {
-        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
-        let preparation = MigrationAdvanceStep.prove(id: 1, kind: .preparation(layer: 0, index: 0))
+        let transfer = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
+        let preparation = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))])
 
         #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(id: 1, isPreparation: false))
         #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(id: 1, isPreparation: true))
@@ -140,7 +163,7 @@ import ZcashLightClientKit
     /// prove (its own edge is moments away, and the open must stay free to broadcast instead),
     /// and rebuild/attention keep their edge anchoring untouched.
     @Test func tickProveLeavesEveryOtherCellAlone() {
-        let transfer = MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0))
+        let transfer = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
 
         #expect(MigrationStepPlan.action(for: transfer, phase: .beforeSync) == .nothing(.wrongPhase))
         #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
@@ -168,8 +191,8 @@ import ZcashLightClientKit
     @Test func everyStepIsActionableAtSomePhase() {
         let everyStep: [MigrationAdvanceStep] = [
             .broadcast(id: 1),
-            .prove(id: 1, kind: .transfer(crossing: 0)),
-            .prove(id: 1, kind: .preparation(layer: 0, index: 0)),
+            .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
+            .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
             .rebuild(id: 1),
             .requiresAttention(id: 1),
             .waiting,
@@ -201,7 +224,7 @@ import ZcashLightClientKit
     /// `nil` entries (an account with no run, or a read that failed) do not vote.
     @Test func accountsWithNoRunDoNotVote() {
         #expect(!MigrationStepPlan.isBroadcastSession(steps: [nil, nil]))
-        #expect(!MigrationStepPlan.isBroadcastSession(steps: [nil, .prove(id: 1, kind: .preparation(layer: 0, index: 0))]))
+        #expect(!MigrationStepPlan.isBroadcastSession(steps: [nil, .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))])]))
     }
 
     /// The session decision must agree with `MigrationVisit`, which Root still asks separately
@@ -213,7 +236,7 @@ import ZcashLightClientKit
             [nil],
             [.waiting],
             [.broadcast(id: 1)],
-            [.prove(id: 1, kind: .preparation(layer: 0, index: 0)), .broadcast(id: 2)],
+            [.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]), .broadcast(id: 2)],
             [.rebuild(id: 1), .requiresAttention(id: 2)]
         ]
 

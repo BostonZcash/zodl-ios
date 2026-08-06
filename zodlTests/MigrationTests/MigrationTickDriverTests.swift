@@ -139,7 +139,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "should-never-run"))
@@ -165,7 +165,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "abcd"))
@@ -199,7 +199,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
                     submissionCalls.withValue { $0 += 1 }
                     estFlagsSeen.withValue { $0.append(useEstimatedTip) }
@@ -249,7 +249,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "must-not-run"))
@@ -301,7 +301,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -332,7 +332,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -364,7 +364,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -394,7 +394,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -428,7 +428,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
@@ -471,9 +471,11 @@ import ComposableArchitecture
                 // no read of its own beyond the first; the statuses-empty pin below is what
                 // catches a smuggled-back decision re-ask.)
                 migrationAdvanceStep: { _ in
-                    if submissionCalls.value > 0 { return .waiting }
+                    if submissionCalls.value > 0 { return MigrationAdvance(step: .waiting, next: nil) }
                     let read = stepReads.withValue { $0 += 1; return $0 }
-                    return read == 1 ? .prove(id: 2, kind: .preparation(layer: 1, index: 0)) : .broadcast(id: 2)
+                    return read == 1
+                        ? MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0))]), next: nil)
+                        : MigrationAdvance(step: .broadcast(id: 2), next: nil)
                 },
                 // EMPTY on purpose — the old chain's `preparationTransactionIds.contains(id)`
                 // cross-check would break here; the step's kind must be the only authority.
@@ -514,7 +516,9 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in
                     let read = stepReads.withValue { $0 += 1; return $0 }
-                    return read == 1 ? .prove(id: 4, kind: .transfer(crossing: 0)) : .broadcast(id: 4)
+                    return read == 1
+                        ? MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                        : MigrationAdvance(step: .broadcast(id: 4), next: nil)
                 },
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
@@ -554,7 +558,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                },
                 finalizeReadyMigrationTransfers: { _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
@@ -582,7 +588,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .prove(id: 4, kind: .transfer(crossing: 0)) },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
+                },
                 finalizeReadyMigrationTransfers: { _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
@@ -614,7 +622,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
                     submissionCalls.withValue { $0 += 1 }
                     #expect(useEstimatedTip, "the submit stays the est-aware single authority")
@@ -653,7 +661,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
                     return .executed(.success(txId: "must-not-run"))
@@ -717,7 +725,9 @@ import ComposableArchitecture
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
                 migrationAdvanceStep: { accountUUID in
-                    accountUUID == Self.secondAccountUUID ? .broadcast(id: 7) : .broadcast(id: 1)
+                    accountUUID == Self.secondAccountUUID
+                        ? MigrationAdvance(step: .broadcast(id: 7), next: nil)
+                        : MigrationAdvance(step: .broadcast(id: 1), next: nil)
                 },
                 executeNextPendingMigrationTransfer: { accountUUID, _, _ in
                     submittedFor.withValue { $0.append(accountUUID) }
@@ -747,7 +757,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 9) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -776,7 +786,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .requiresAttention(id: 2) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .requiresAttention(id: 2), next: nil) },
                 migrationTransactionStatuses: { _ in [] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -854,7 +864,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 migrationTransactionStatuses: { _ in [] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -896,7 +906,7 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in
                     engineReadCount.withValue { $0 += 1 }
-                    return .broadcast(id: 1)
+                    return MigrationAdvance(step: .broadcast(id: 1), next: nil)
                 },
                 migrationPrivacySyncBufferDuration: { 600 }
             )
@@ -934,7 +944,7 @@ import ComposableArchitecture
                     while !releaseFirstRead.value {
                         try? await Task.sleep(nanoseconds: 5_000_000)
                     }
-                    return .waiting
+                    return MigrationAdvance(step: .waiting, next: nil)
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -981,7 +991,7 @@ import ComposableArchitecture
                             try? await Task.sleep(nanoseconds: 5_000_000)
                         }
                     }
-                    return .waiting
+                    return MigrationAdvance(step: .waiting, next: nil)
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -1036,7 +1046,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .waiting },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
                 migrationSyncWakeups: { _ in
                     armingProbeCalls.withValue { $0 += 1 }
                     return []
@@ -1070,7 +1080,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in .broadcast(id: 3) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 3), next: nil) },
                 executeNextPendingMigrationTransfer: { _, _, _ in .executed(.success(txId: "abcd")) }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }

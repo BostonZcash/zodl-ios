@@ -192,7 +192,7 @@ import ZcashLightClientKit
     /// The precedence that A28 made reachable. The engine can still report a perfectly live
     /// `.waiting` for a run whose funding notes were spent elsewhere — it has no way to know until
     /// the app's invalidation sweep tells it — so a live-looking step must not mask a dead run.
-    @Test(arguments: [MigrationAdvanceStep.waiting, .prove(id: 1, kind: .transfer(crossing: 0)), .broadcast(id: 1)])
+    @Test(arguments: [MigrationAdvanceStep.waiting, .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]), .broadcast(id: 1)])
     func invalidationOutranksALiveStep(step: MigrationAdvanceStep) {
         #expect(Self.banner(advanceStep: step, hasInvalid: true) == .updatePlan)
     }
@@ -206,7 +206,10 @@ import ZcashLightClientKit
     /// counts idle (`.idleCounts`), never the notify line (`.idle` is termination-only,
     /// store-entered) and never a numberless progress claim.
     @Test func aProveStepWithoutInFlightRowsReadsAsIdle() {
-        let variant = Self.banner(advanceStep: .prove(id: 1, kind: .transfer(crossing: 0)), progress: Self.progress())
+        let variant = Self.banner(
+            advanceStep: .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
+            progress: Self.progress()
+        )
         #expect(variant == .idleCounts(done: 0, total: 0))
     }
 
@@ -226,7 +229,7 @@ import ZcashLightClientKit
         ]
         let rows = [MigrationTransferRow(id: "10", index: 0, amount: nil, status: .pending, hoursFromNow: 6)]
         let variant = Self.banner(
-            advanceStep: .prove(id: 2, kind: .preparation(layer: 1, index: 0)),
+            advanceStep: .prove(transactions: [MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0))]),
             progress: Self.progress(),
             statuses: statuses,
             transferRows: rows
@@ -274,8 +277,8 @@ import ZcashLightClientKit
     /// Every advance step the engine can report produces SOME user-visible answer — none of them
     /// falls into a hole that renders nothing while a run is live.
     @Test(arguments: [
-        MigrationAdvanceStep.prove(id: 1, kind: .transfer(crossing: 0)),
-        .prove(id: 1, kind: .preparation(layer: 0, index: 0)),
+        MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
+        .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
         .broadcast(id: 1),
         .rebuild(id: 1),
         .waiting,
