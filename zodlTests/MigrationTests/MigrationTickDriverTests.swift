@@ -1182,6 +1182,7 @@ import ComposableArchitecture
         } operation: {
             let manager = MigrationManagerImpl(
                 gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
                 sessionOrdinalProvider: { 1 }
             )
             return await manager.advance(phase: .afterSync)
