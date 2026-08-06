@@ -403,8 +403,9 @@ struct MigrationTransferPlan {
         case backTapped
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
-        /// Signs and stores the active schedule (sign-only — the first prep broadcasts later, via
-        /// the coordinator's post-confirm kick; MOB-1513 B4).
+        /// Signs and stores the active schedule — sign-only (MOB-1513 B4), then (Field 2026-08-06)
+        /// `.scheduleCommitted` keeps this same loader up while it awaits the run's first drive
+        /// (prove + first broadcast, `advance(.afterSync)` at tip) before navigating — see its doc.
         case confirmTapped
         /// MOB-1458: `confirmTapped`/`retryTapped`'s device-authentication gate
         /// (`State.confirmRequiresAuthentication`) refused — authentication failed, or the user

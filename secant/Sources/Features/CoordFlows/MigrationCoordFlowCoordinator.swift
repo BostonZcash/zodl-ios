@@ -989,11 +989,14 @@ extension MigrationCoordFlow {
     /// sweep — the first-tap "nothing happens" stall, which survived the read-only-reads work
     /// precisely because those two hops are writers.
     ///
-    /// Field 2026-08-06: `.delegate(.confirmed)` itself now arrives LATER than it used to —
+    /// Field 2026-08-06: for the software `.transferPlan(.delegate(.confirmed))` caller (:196)
+    /// ONLY, `.delegate(.confirmed)` itself now arrives LATER than it used to —
     /// `MigrationTransferPlan` holds it back behind an awaited first drive (`.scheduleCommitted`),
-    /// so by the time this builder runs, that drive (at tip) has already run its course, or was
-    /// skipped mid-sync. Either way the write actor the async summary used to queue behind is
-    /// free again by the time `transferPlanPostConfirmChain` below reads the snapshot.
+    /// so by the time THAT caller reaches this builder, the drive (at tip) has already run its
+    /// course, or was skipped mid-sync. This builder has two OTHER callers that reach it WITHOUT
+    /// any awaited drive at all: the recovery refresh-stale push below (:335), and the Keystone
+    /// `planCommit` resume (`resumeCommittedMigrationChain`, :1290) — the Keystone lane's own
+    /// first-drive gap is a known limitation, flagged in the PR as not yet fixed.
     static func scheduledStateNow(
         schedule: MigrationSchedule?,
         snapshot: MigrationViewSnapshot?
@@ -1022,12 +1025,16 @@ extension MigrationCoordFlow {
             // the screen is up, its latency off the navigation path — where a post-commit
             // prove sweep can no longer hold the push hostage.
             //
-            // Field 2026-08-06: this push itself now lands AFTER the run's awaited first drive —
-            // `MigrationTransferPlan` holds `.delegate(.confirmed)` back behind its own
-            // `.scheduleCommitted` handler until that drive completes (or is skipped mid-sync), so
-            // by the time control reaches here the write actor the drive's prove sweep can hold is
-            // free again — the snapshot refresh below republishes against a free actor instead of
-            // queuing behind the very sweep this chain just ran.
+            // Field 2026-08-06: for this function's SOFTWARE caller (the `.transferPlan
+            // (.delegate(.confirmed))` case at :196) ONLY, this push now lands AFTER the run's
+            // awaited first drive — `MigrationTransferPlan` holds `.delegate(.confirmed)` back
+            // behind its own `.scheduleCommitted` handler until that drive completes (or is
+            // skipped mid-sync), so by the time control reaches here on THAT path the write actor
+            // the drive's prove sweep can hold is free again, and the snapshot refresh below
+            // republishes against a free actor. This function's OTHER caller — the Keystone
+            // `planCommit` resume (`resumeCommittedMigrationChain`, :1290) — reaches here WITHOUT
+            // any awaited drive at all; the Keystone lane's own first-drive gap is a known
+            // limitation, flagged in the PR as not yet fixed.
             state.path.append(.scheduled(Self.scheduledStateNow(
                 schedule: schedule,
                 snapshot: migrationManager.currentMigrationSnapshot(accountUUID)
