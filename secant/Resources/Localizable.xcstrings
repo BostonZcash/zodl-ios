@@ -13000,6 +13000,28 @@
         }
       }
     },
+    "migrationStatus.descBroadcasting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers. Keep Zodl open while it is broadcasting the transaction."
+          }
+        }
+      }
+    },
+    "migrationStatus.descPreparing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers. Keep Zodl open while it is preparing the migration transfers."
+          }
+        }
+      }
+    },
     "migrationStatus.done" : {
       "extractionState" : "manual",
       "localizations" : {

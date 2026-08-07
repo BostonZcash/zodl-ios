@@ -74,3 +74,42 @@ import Testing
         )
     }
 }
+
+/// H-FORK (Lukas, 2026-08-07): the Status header's paragraph is ONE stem with three tails, chosen
+/// by the same `MigrationBannerVariant` the banner renders from. The stem is what makes the fork
+/// legible as a fork rather than three unrelated sentences, so it is pinned: if someone edits one
+/// variant's opening, this fails and they have to edit all three deliberately.
+///
+/// Pinned as full separate keys, not a stem plus a swapped verb — a verb slotted into a sentence
+/// does not survive a language that reorders clauses, and a stem-plus-tail split hands translators
+/// half-sentences and needs interpolation to dodge SwiftLint's `string_concatenation`.
+@Suite struct MigrationStatusDescriptionForkTests {
+    private static let idle = String(localizable: .migrationStatusDesc(6, 36, 3))
+    private static let preparing = String(localizable: .migrationStatusDescPreparing(6, 36, 3))
+    private static let broadcasting = String(localizable: .migrationStatusDescBroadcasting(6, 36, 3))
+
+    /// The shared opening — counts, duration, remaining — is identical across all three.
+    @Test func allThreeShareTheStem() {
+        let stem = "Your balance is split into 6 transfers over ~36 hours. There are 3 remaining transfers."
+        #expect(Self.idle.hasPrefix(stem))
+        #expect(Self.preparing.hasPrefix(stem))
+        #expect(Self.broadcasting.hasPrefix(stem))
+    }
+
+    /// Three DISTINCT tails: the fork exists precisely because these say different things about
+    /// what the app is doing right now.
+    @Test func eachVariantEndsDifferently() {
+        #expect(Self.idle != Self.preparing)
+        #expect(Self.idle != Self.broadcasting)
+        #expect(Self.preparing != Self.broadcasting)
+    }
+
+    /// The two working states carry the keep-open ask; the idle one carries the notify promise and
+    /// must NOT ask the user to stay — nothing is running for them to stay for.
+    @Test func onlyTheWorkingVariantsAskToStayOpen() {
+        #expect(Self.preparing.contains("Keep Zodl open"))
+        #expect(Self.broadcasting.contains("Keep Zodl open"))
+        #expect(!Self.idle.contains("Keep Zodl open"))
+        #expect(Self.idle.contains("notify"))
+    }
+}

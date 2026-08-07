@@ -253,6 +253,33 @@ struct MigrationStatusView: View {
         switch store.presentation {
         case .progress:
             guard let totalDurationHours = store.totalDurationHours else { return nil }
+            // H-FORK (Lukas, 2026-08-07): same stem, three tails, chosen by the SAME
+            // `MigrationBannerVariant` the banner renders from — never by a condition of this
+            // screen's own. `poolFlow.banner` is that variant, already on the snapshot, so the
+            // header and the banner cannot disagree about what is happening.
+            //
+            // Three full sentences rather than one with a swapped verb: a verb slotted into a
+            // sentence does not survive a language that reorders clauses, and the alternative
+            // (shared stem + tail) hands translators half-sentences AND needs interpolation to
+            // dodge SwiftLint's `string_concatenation`.
+            //
+            // Only these four variants reach `.progress`: `.checkingStatus` no longer opens this
+            // screen at all, and `hasInvalid` routes to `.recovery` ahead of every state arm, so
+            // `.updatePlan`/`.transfersExpired` land there instead. `default` therefore states the
+            // standing arrangement — true whenever nothing is running — rather than inventing an
+            // ask for a state that cannot get here.
+            switch store.poolFlow.banner {
+            case .preparing:
+                return String(
+                    localizable: .migrationStatusDescPreparing(store.rows.count, totalDurationHours, store.remainingCount)
+                )
+            case .transferSending:
+                return String(
+                    localizable: .migrationStatusDescBroadcasting(store.rows.count, totalDurationHours, store.remainingCount)
+                )
+            default:
+                break
+            }
             // CLOSED 2026-08-07 (Lukas, H9): the paragraph's third sentence is now in
             // `migrationStatus.desc` itself — "We'll notify you when it's time to open Zodl and
             // take the next action." It is NOT the frame's "Keep Zodl open while it is preparing…";
