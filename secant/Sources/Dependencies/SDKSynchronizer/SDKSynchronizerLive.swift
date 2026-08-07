@@ -145,6 +145,46 @@ extension SDKSynchronizerClient: DependencyKey {
                     maxProofs: maxProofs
                 )
             },
+            takeMigrationPreparation: { accountUUID, txid in
+                try await synchronizer.takeMigrationPreparation(accountUUID: accountUUID, byTxid: txid)
+            },
+            submitMigrationPreparation: { prepared in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    // The bytes are a FINALIZED CONSENSUS TRANSACTION the migration engine already
+                    // built, extracted and recorded (the accessor's own seam did that), so there is
+                    // nothing to create here — only to submit. Everything below the
+                    // `CreatedTransaction` is the app's existing raw-submission machinery,
+                    // unchanged and shared with `createAndSubmitProposedTransactions`: the same
+                    // one-at-a-time submit (so the SDK records a retry plan per transaction), the
+                    // same connection-mode endpoint selection, the same outcome mapping.
+                    //
+                    // No expiry height: the engine owns the preparation's ZIP 203 expiry and the
+                    // app never re-derives it. The SDK's background resubmission uses it only to
+                    // stop retrying, and this transaction is already recorded in the wallet's own
+                    // tables with the engine's expiry on it.
+                    let transaction = CreatedTransaction(txId: prepared.txid, raw: prepared.pczt, expiryHeight: nil)
+
+                    return await Self.submitCreatedTransactions(
+                        [transaction],
+                        logPrefix: "[MigrationPrep]",
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment,
+                        submit: { createdTransactions, endpoints in
+                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                            }
+                        }
+                    )
+                }
+            },
+            recordMigrationPreparationBroadcast: { accountUUID, prepared, result in
+                try await synchronizer.recordMigrationPreparationBroadcast(
+                    accountUUID: accountUUID,
+                    prepared,
+                    result: result
+                )
+            },
             migrationSyncWakeups: { accountUUID in
                 try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)
             },

@@ -129,9 +129,12 @@ struct MigrationManagerClient: Sendable {
     /// the crank's own batch names, so this takes that account's batch and a phase-chosen
     /// `maxProofs` budget rather than sweeping the wallet with no payload.
     ///
-    /// Returns the number of transactions proved (0 is the normal case — a skipped row does not
-    /// spend the budget).
-    var runProveSweep: @Sendable (AccountUUID, [MigrationProveTarget], Int) async -> Int = { _, _, _ in 0 }
+    /// Returns the pass's `MigrationProveOutcome`: how many transactions were proved (0 is the
+    /// normal case — a skipped row does not spend the budget), plus the txids of the PREPARATIONS
+    /// among them. Those txids are the driver's handoff: a proved preparation is submitted by the
+    /// app, the ordinary way (see `MigrationStepDriver`'s prove arm).
+    var runProveSweep: @Sendable (AccountUUID, [MigrationProveTarget], Int) async -> MigrationProveOutcome
+        = { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) }
 
     /// THE BROADCAST SESSION — the other half of `visitKind() == .send`. Discharges the engine's
     /// `.broadcast` step headlessly, without the user ever navigating into the migration flow.

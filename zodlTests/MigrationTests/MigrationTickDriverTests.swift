@@ -400,21 +400,29 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 1)
     }
 
-    // MARK: - One instruction, one action: a prove pass ends at the proof (kris, 2026-08-07)
+    // MARK: - The txid seam: a proved preparation goes out in the same pass (kris, 2026-08-07)
 
-    /// A PREPARATION's prove pass ends at the proof, exactly like a transfer's. This is the
-    /// inverse of the retired D2 pin, which required the prep to be broadcast in the SAME pass off
-    /// the step's own kind. D2's stated justification was "there should be no second call needed";
-    /// a broadcast now needs an opaque instruction a prove batch does not carry, so the same-pass
-    /// delivery would have cost exactly that second call while keeping an app-side judgement about
-    /// kinds. The pass proves and stops; the next crank delivers.
+    /// A PREPARATION PROVED THIS PASS IS SUBMITTED IN THIS PASS, through the txid seam — and NOT
+    /// through the engine's delivery ceremony. Quoting the ruling: a proved preparation is a
+    /// complete PCZT, preparations are ZIP 318-exempt, and the engine's own contract is that one
+    /// is broadcast as soon as it is proved, so its submission is the app's ordinary path.
     ///
-    /// The mock is a TRAP: it stands ready to answer `.broadcast(2)` to any post-prove read, so an
-    /// implementation that re-cranked and acted would be betrayed by the submission count.
-    @Test func provePassEndsAtTheProofForAPreparation() async {
+    /// This supersedes the interim "a prove pass ends at the proof, for every kind" pin: the prove
+    /// return now NAMES the preparations it proved, so the same-pass delivery D2 asked for needs
+    /// no second crank and no app-side kind judgement — the SDK's return and its preparation gate
+    /// carry both.
+    ///
+    /// The mock keeps the old TRAP: `performMigrationBroadcast` stands ready to answer any
+    /// post-prove read, so an implementation that re-cranked and delivered through the ceremony
+    /// would be betrayed by `ceremonyCalls`.
+    @Test func provePassSubmitsThePreparationsItProvedThroughTheSeam() async {
         Self.installCandidateAccount()
-        let submissionCalls = LockIsolated<Int>(0)
+        let ceremonyCalls = LockIsolated<Int>(0)
+        let retrievedTxids = LockIsolated<[Data]>([])
+        let submitted = LockIsolated<[PreparedMigrationTransfer]>([])
+        let engineMarks = LockIsolated<[(UInt32, MigrationTransferResult)]>([])
         let stepReads = LockIsolated<Int>(0)
+        let preparationTxid = Data(repeating: 0x2A, count: 32)
 
         let verdict = await withDependencies {
             $0.sdkSynchronizer = .mocked(
@@ -431,23 +439,165 @@ import ComposableArchitecture
                 },
                 migrationTransactionStatuses: { _ in [] },
                 performMigrationBroadcast: { _, _, _ in
-                    submissionCalls.withValue { $0 += 1 }
+                    ceremonyCalls.withValue { $0 += 1 }
                     return .success(txId: "must-not-run")
                 },
-                proveMigrationTransactions: { _, _, _ in 1 }
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 1, preparationTxids: [preparationTxid])
+                },
+                takeMigrationPreparation: { _, txid in
+                    retrievedTxids.withValue { $0.append(txid) }
+                    return PreparedMigrationTransfer(id: 2, txid: txid, pczt: Data([0xDE, 0xAD]))
+                },
+                submitMigrationPreparation: { prepared in
+                    submitted.withValue { $0.append(prepared) }
+                    return .success(txIds: [prepared.txid.toHexStringTxId()])
+                },
+                recordMigrationPreparationBroadcast: { _, prepared, result in
+                    engineMarks.withValue { $0.append((prepared.id, result)) }
+                }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
         } operation: {
             let manager = MigrationManagerImpl(
                 gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
                 sessionOrdinalProvider: { 1 }
             )
             return await manager.advance(phase: .afterSync)
         }
 
-        #expect(verdict == .proved(count: 1), "a preparation's prove pass ends at the proof, got \(verdict)")
-        #expect(submissionCalls.value == 0, "no same-pass delivery, and no re-crank to find one")
+        #expect(verdict == .proved(count: 1), "the verdict still reports the proof count, got \(verdict)")
+        #expect(
+            retrievedTxids.value == [preparationTxid],
+            "exactly the txid the prove return named is retrieved, got \(retrievedTxids.value)"
+        )
+        #expect(submitted.value.count == 1, "the retrieved preparation is submitted once, got \(submitted.value.count)")
+        #expect(submitted.value.first?.id == 2, "the engine transfer id rides along for the record path")
+        #expect(submitted.value.first?.pczt == Data([0xDE, 0xAD]), "the finalized bytes go out as-is")
+        #expect(ceremonyCalls.value == 0, "a preparation must never travel the engine's delivery ceremony")
+        #expect(engineMarks.value.count == 1, "the loop closes on the engine exactly once")
+        #expect(engineMarks.value.first?.0 == 2, "the mark is keyed by the retrieval DTO's engine transfer id")
+        #expect(
+            engineMarks.value.first?.1 == .success(txId: preparationTxid.toHexStringTxId()),
+            "the landed outcome reaches the engine, got \(String(describing: engineMarks.value.first?.1))"
+        )
+    }
+
+    /// THE MARK IS FOR ACCEPTANCES ONLY. A submission the servers rejected maps to the engine's
+    /// retryable network error, which records nothing by design — so the app makes no engine mark
+    /// at all and the row stays exactly as re-servable as silence would leave it. The app-side
+    /// ledger still sees the attempt; the engine does not.
+    @Test func provePassDoesNotMarkTheEngineWhenTheSubmissionIsRejected() async {
+        Self.installCandidateAccount()
+        let engineMarks = LockIsolated<Int>(0)
+        let submissions = LockIsolated<Int>(0)
+        let preparationTxid = Data(repeating: 0x3B, count: 32)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .prove(transactions: [MigrationProveTarget(id: 3, kind: .preparation(layer: 0, index: 0))]),
+                        next: nil
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 1, preparationTxids: [preparationTxid])
+                },
+                takeMigrationPreparation: { _, txid in
+                    PreparedMigrationTransfer(id: 3, txid: txid, pczt: Data([0xAA]))
+                },
+                submitMigrationPreparation: { _ in
+                    submissions.withValue { $0 += 1 }
+                    return .failure(txIds: [], code: -25, description: "rejected")
+                },
+                recordMigrationPreparationBroadcast: { _, _, _ in
+                    engineMarks.withValue { $0 += 1 }
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 1), "a rejected submission is not a failure of the pass, got \(verdict)")
+        #expect(submissions.value == 1, "the submission was attempted")
+        #expect(engineMarks.value == 0, "a non-acceptance must never be marked on the engine")
+    }
+
+    /// ONE BAD PREPARATION DOES NOT ABORT THE PASS. A retrieval that is refused — a txid whose row
+    /// is no longer servable, the seam's own readiness gate — is skipped and logged; the rest of
+    /// the pass's preparations still go out, and the verdict still reports what was proved. The
+    /// proofs are already durable and the engine re-offers whatever did not ship.
+    @Test func provePassSkipsAPreparationItCannotRetrieveAndKeepsGoing() async {
+        Self.installCandidateAccount()
+        let refusedTxid = Data(repeating: 0x01, count: 32)
+        let servableTxid = Data(repeating: 0x02, count: 32)
+        let submitted = LockIsolated<[Data]>([])
+        let marked = LockIsolated<[Data]>([])
+
+        struct StubRetrievalRefusal: Error {}
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .prove(transactions: [
+                            MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0)),
+                            MigrationProveTarget(id: 2, kind: .preparation(layer: 0, index: 1))
+                        ]),
+                        next: nil
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 2, preparationTxids: [refusedTxid, servableTxid])
+                },
+                takeMigrationPreparation: { _, txid in
+                    guard txid != refusedTxid else { throw StubRetrievalRefusal() }
+                    return PreparedMigrationTransfer(id: 2, txid: txid, pczt: Data([0xBE, 0xEF]))
+                },
+                submitMigrationPreparation: { prepared in
+                    submitted.withValue { $0.append(prepared.txid) }
+                    return .success(txIds: [prepared.txid.toHexStringTxId()])
+                },
+                recordMigrationPreparationBroadcast: { _, prepared, _ in
+                    marked.withValue { $0.append(prepared.txid) }
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 2), "the refusal is not a failure of the pass, got \(verdict)")
+        #expect(
+            submitted.value == [servableTxid],
+            "the refused preparation is skipped and the next one still ships, got \(submitted.value)"
+        )
+        #expect(
+            marked.value == [servableTxid],
+            "only what actually shipped is marked on the engine, got \(marked.value)"
+        )
     }
 
     /// The same rule from the transfer side: a TRANSFER's `.prove` never broadcasts. The pass
@@ -458,6 +608,8 @@ import ComposableArchitecture
     @Test func provePassNeverBroadcastsAfterProvingATransfer() async {
         Self.installCandidateAccount()
         let submissionCalls = LockIsolated<Int>(0)
+        let retrievals = LockIsolated<Int>(0)
+        let marks = LockIsolated<Int>(0)
         let stepReads = LockIsolated<Int>(0)
 
         let verdict = await withDependencies {
@@ -475,13 +627,23 @@ import ComposableArchitecture
                     submissionCalls.withValue { $0 += 1 }
                     return .success(txId: "must-not-run")
                 },
-                proveMigrationTransactions: { _, _, _ in 1 }
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 1, preparationTxids: [])
+                },
+                takeMigrationPreparation: { _, _ in
+                    retrievals.withValue { $0 += 1 }
+                    return PreparedMigrationTransfer(id: 4, txid: Data(), pczt: Data())
+                },
+                recordMigrationPreparationBroadcast: { _, _, _ in
+                    marks.withValue { $0 += 1 }
+                }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
         } operation: {
             let manager = MigrationManagerImpl(
                 gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
                 sessionOrdinalProvider: { 1 }
             )
             return await manager.advance(phase: .afterSync)
@@ -489,6 +651,133 @@ import ComposableArchitecture
 
         #expect(verdict == .proved(count: 1), "a transfer's prove pass ends at the proof, got \(verdict)")
         #expect(submissionCalls.value == 0, "a transfer must never be delivered from a prove pass")
+        #expect(retrievals.value == 0, "the prove return named no preparation, so nothing is retrieved")
+        #expect(marks.value == 0, "and nothing is marked: a transfer's outcome is the broadcast lane's to record")
+    }
+
+    /// A SUBMISSION THAT THROWS is skipped like a refused retrieval: the pass survives, nothing is
+    /// marked on the engine, and the remaining preparations still ship. (`submitMigrationPreparation`
+    /// throws when the transaction guard refuses or is cancelled — the submit itself reports
+    /// failure by RETURNING, not throwing.)
+    @Test func provePassSurvivesASubmissionThatThrows() async {
+        Self.installCandidateAccount()
+        let throwingTxid = Data(repeating: 0x04, count: 32)
+        let servableTxid = Data(repeating: 0x05, count: 32)
+        let marked = LockIsolated<[Data]>([])
+
+        struct StubSubmitFailure: Error {}
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
+                        next: nil
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 2, preparationTxids: [throwingTxid, servableTxid])
+                },
+                takeMigrationPreparation: { _, txid in
+                    PreparedMigrationTransfer(id: 1, txid: txid, pczt: Data([0xCC]))
+                },
+                submitMigrationPreparation: { prepared in
+                    guard prepared.txid != throwingTxid else { throw StubSubmitFailure() }
+                    return .success(txIds: [prepared.txid.toHexStringTxId()])
+                },
+                recordMigrationPreparationBroadcast: { _, prepared, _ in
+                    marked.withValue { $0.append(prepared.txid) }
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 2), "a throwing submit is not a failure of the pass, got \(verdict)")
+        #expect(marked.value == [servableTxid], "only the submission that landed is marked, got \(marked.value)")
+    }
+
+    /// A TRANSPORT FAILURE on every server (`.grpcFailure`) is the same non-acceptance as a
+    /// server rejection: no engine mark. Pinned separately from the `.failure` case because the
+    /// two arrive through different result cases and only the mapping unites them.
+    @Test func provePassDoesNotMarkTheEngineOnATransportFailure() async {
+        Self.installCandidateAccount()
+        let engineMarks = LockIsolated<Int>(0)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .prove(transactions: [MigrationProveTarget(id: 6, kind: .preparation(layer: 0, index: 0))]),
+                        next: nil
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 1, preparationTxids: [Data(repeating: 0x06, count: 32)])
+                },
+                takeMigrationPreparation: { _, txid in
+                    PreparedMigrationTransfer(id: 6, txid: txid, pczt: Data([0xDD]))
+                },
+                submitMigrationPreparation: { _ in .grpcFailure(txIds: [], reason: .timeout) },
+                recordMigrationPreparationBroadcast: { _, _, _ in
+                    engineMarks.withValue { $0 += 1 }
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 1))
+        #expect(engineMarks.value == 0, "an unreachable-servers outcome must never be marked as broadcast")
+    }
+
+    /// THE OUTCOME MAPPING, arm by arm — including `.partial`, which `submitProvedPreparations`
+    /// cannot reach (it submits ONE transaction, and `.partial` needs both an acceptance and a
+    /// failure) and which therefore has no other pin.
+    @Test func transferResultMapsEverySubmissionOutcome() {
+        #expect(
+            MigrationManagerImpl.transferResult(from: .success(txIds: ["abc", "def"]))
+                == .success(txId: "abc"),
+            "an acceptance reports the first txid the submission returned"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(from: .partial(txIds: ["abc"], statuses: ["ok"]))
+                == .success(txId: "abc"),
+            "an acceptance is an acceptance even when a sibling failed"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(from: .success(txIds: [])) == .success(txId: ""),
+            "an acceptance with no txid still reports success, with an empty id"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(from: .failure(txIds: [], code: -25, description: "no"))
+                == .networkError(retryable: true),
+            "a server rejection is reported as retryable — this lane sees transport, not verdicts"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(from: .grpcFailure(txIds: [], reason: .timeout))
+                == .networkError(retryable: true)
+        )
     }
 
     // MARK: - The unconditional tick prove (FIND-5, 2026-08-05)
@@ -513,7 +802,7 @@ import ComposableArchitecture
                 },
                 proveMigrationTransactions: { _, _, _ in
                     sweepCalls.withValue { $0 += 1 }
-                    return 1
+                    return MigrationProveOutcome(totalProved: 1, preparationTxids: [])
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -543,7 +832,7 @@ import ComposableArchitecture
                 },
                 proveMigrationTransactions: { _, _, _ in
                     sweepCalls.withValue { $0 += 1 }
-                    return 1
+                    return MigrationProveOutcome(totalProved: 1, preparationTxids: [])
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }

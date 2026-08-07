@@ -48,7 +48,15 @@ extension SDKSynchronizerClient: TestDependencyKey {
         performMigrationBroadcast:
             unimplemented("\(Self.self).performMigrationBroadcast", placeholder: .success(txId: "")),
         hasOverdueMigrationTransfers: unimplemented("\(Self.self).hasOverdueMigrationTransfers", placeholder: false),
-        proveMigrationTransactions: unimplemented("\(Self.self).proveMigrationTransactions", placeholder: 0),
+        proveMigrationTransactions:
+            unimplemented("\(Self.self).proveMigrationTransactions", placeholder: MigrationProveOutcome(totalProved: 0, preparationTxids: [])),
+        takeMigrationPreparation:
+            unimplemented("\(Self.self).takeMigrationPreparation", placeholder: PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data())),
+        submitMigrationPreparation: unimplemented(
+            "\(Self.self).submitMigrationPreparation",
+            placeholder: CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented")
+        ),
+        recordMigrationPreparationBroadcast: unimplemented("\(Self.self).recordMigrationPreparationBroadcast"),
         migrationSyncWakeups: unimplemented("\(Self.self).migrationSyncWakeups", placeholder: []),
         estimatedMigrationChainTip: unimplemented("\(Self.self).estimatedMigrationChainTip", placeholder: 0),
         estimatedMigrationSecondsPerBlock: unimplemented("\(Self.self).estimatedMigrationSecondsPerBlock", placeholder: 75),
@@ -144,7 +152,10 @@ extension SDKSynchronizerClient {
         signAndStoreMigrationSchedule: { _, _, _ in },
         performMigrationBroadcast: { _, _, _ in .success(txId: "") },
         hasOverdueMigrationTransfers: { _, _ in false },
-        proveMigrationTransactions: { _, _, _ in 0 },
+        proveMigrationTransactions: { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) },
+        takeMigrationPreparation: { _, _ in PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data()) },
+        submitMigrationPreparation: { _ in CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented") },
+        recordMigrationPreparationBroadcast: { _, _, _ in },
         migrationSyncWakeups: { _ in [] },
         estimatedMigrationChainTip: { 0 },
         estimatedMigrationSecondsPerBlock: { 75 },
@@ -243,7 +254,17 @@ extension SDKSynchronizerClient {
             async throws -> MigrationTransferResult = { _, _, _ in .success(txId: "") },
         hasOverdueMigrationTransfers: @escaping @Sendable (AccountUUID, Bool) async throws -> Bool = { _, _ in false },
         proveMigrationTransactions:
-            @escaping @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> Int = { _, _, _ in 0 },
+            @escaping @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> MigrationProveOutcome
+            = { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) },
+        takeMigrationPreparation:
+            @escaping @Sendable (AccountUUID, Data) async throws -> PreparedMigrationTransfer
+            = { _, _ in PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data()) },
+        submitMigrationPreparation:
+            @escaping @Sendable (PreparedMigrationTransfer) async throws -> CreateProposedTransactionsResult
+            = { _ in CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented") },
+        recordMigrationPreparationBroadcast:
+            @escaping @Sendable (AccountUUID, PreparedMigrationTransfer, MigrationTransferResult) async throws -> Void
+            = { _, _, _ in },
         migrationSyncWakeups: @escaping @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup] = { _ in [] },
         estimatedMigrationChainTip: @escaping @Sendable () async throws -> BlockHeight = { 0 },
         estimatedMigrationSecondsPerBlock: @escaping @Sendable () async throws -> Double = { 75 },
@@ -404,6 +425,9 @@ extension SDKSynchronizerClient {
             performMigrationBroadcast: performMigrationBroadcast,
             hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
             proveMigrationTransactions: proveMigrationTransactions,
+            takeMigrationPreparation: takeMigrationPreparation,
+            submitMigrationPreparation: submitMigrationPreparation,
+            recordMigrationPreparationBroadcast: recordMigrationPreparationBroadcast,
             migrationSyncWakeups: migrationSyncWakeups,
             estimatedMigrationChainTip: estimatedMigrationChainTip,
             estimatedMigrationSecondsPerBlock: estimatedMigrationSecondsPerBlock,

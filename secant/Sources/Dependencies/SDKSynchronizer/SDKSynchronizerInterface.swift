@@ -128,9 +128,9 @@ struct SDKSynchronizerClient: Sendable {
     /// `useEstimatedTip` as above — pass `true` on SEND visits and launch checks.
     let hasOverdueMigrationTransfers: @Sendable (AccountUUID, Bool) async throws -> Bool
     /// THE PROVE EXECUTOR. Proves up to `maxProofs` of the transactions the instruction batch
-    /// names and returns how many were proved; `0` is the ordinary "nothing in this batch is
-    /// provable right now" answer. Run at SYNC visits once sync reaches the tip, NEVER in a
-    /// broadcast session.
+    /// names and returns a `MigrationProveOutcome`: how many were proved (`0` is the ordinary
+    /// "nothing in this batch is provable right now" answer) and THE TXIDS OF THE PREPARATIONS it
+    /// proved. Run at SYNC visits once sync reaches the tip, NEVER in a broadcast session.
     ///
     /// The batch is the payload of a `.prove` step a crank handed out — this executor never asks
     /// the engine what to prove. There is no loop inside it: proving can unblock rows the batch did
@@ -140,7 +140,46 @@ struct SDKSynchronizerClient: Sendable {
     /// `maxProofs` must be >= 1 or the call throws `rustMigrationProveTransactions`. Proving has no
     /// deadline — boundary checkpoints are durably retained until the transfer is broadcast — so a
     /// bounded budget only defers work, never loses it.
-    let proveMigrationTransactions: @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> Int
+    ///
+    /// The returned txids are the handoff to `takeMigrationPreparation`: a proved preparation is
+    /// submitted by the APP, the ordinary way. Transfers are never named, so the caller makes no
+    /// kind judgement of its own.
+    let proveMigrationTransactions: @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> MigrationProveOutcome
+    /// THE PREPARATION ACCESSOR. Serves the proved preparation `txid` names — one the outcome of
+    /// `proveMigrationTransactions` just returned — for submission.
+    ///
+    /// A proved preparation is a complete PCZT; preparations are ZIP 318-exempt and the engine's
+    /// contract is that one is broadcast as soon as it is proved, so its submission is the app's
+    /// ORDINARY path rather than a delivery session. THE ACCESSOR IS THE SEAM: the wallet's own
+    /// record of the transaction binds AT RETRIEVAL, in the same database transaction that hands
+    /// the bytes back, and re-retrieving after a crash serves the same bytes over the same record —
+    /// so call it AT SUBMISSION TIME, never eagerly.
+    ///
+    /// PREPARATION-GATED: a transfer's txid is refused with
+    /// `ZcashError.rustMigrationTakePreparation`, as an unknown or not-yet-proved one is. The
+    /// returned `PreparedMigrationTransfer.id` is the ENGINE TRANSFER ID the record path keys on;
+    /// its `pczt` is a finalized consensus transaction, submittable as-is.
+    let takeMigrationPreparation: @Sendable (AccountUUID, Data) async throws -> PreparedMigrationTransfer
+    /// Submits an already-finalized migration preparation through the app's ORDINARY
+    /// raw-transaction submission machinery — the same `submitCreatedTransactions` /
+    /// `Broadcaster.submit(transaction:to:)` path, endpoint selection and result mapping that
+    /// `createAndSubmitProposedTransactions` uses, entered with bytes the migration engine built
+    /// instead of ones the proposal path did. Not a parallel submit lane: nothing here is
+    /// migration-specific except where the bytes came from.
+    let submitMigrationPreparation: @Sendable (PreparedMigrationTransfer) async throws -> CreateProposedTransactionsResult
+    /// CLOSES THE SEAM: records the ENGINE-side outcome of a preparation this app retrieved and
+    /// submitted itself. `takeMigrationPreparation` bound the wallet's own record at retrieval,
+    /// but the engine's per-row `Proved -> Broadcast` mark is what `performMigrationBroadcast`
+    /// makes on its success arm — a path a self-submitted preparation never travels.
+    ///
+    /// Takes the `PreparedMigrationTransfer` the accessor returned (its `id` is the engine
+    /// transfer id the record path keys on) and is preparation-gated in the same register: a
+    /// transfer's id is refused with `ZcashError.rustMigrationRecordTransferResult`, since that
+    /// lane records its own outcome. Call it on an ACCEPTANCE only — the engine's network-error
+    /// outcome records nothing by design.
+    let recordMigrationPreparationBroadcast: @Sendable (
+        AccountUUID, PreparedMigrationTransfer, MigrationTransferResult
+    ) async throws -> Void
     /// The minimal set of heights at which to wake, sync and prove. Jitter is re-drawn per call, so
     /// these must be recomputed after any state change rather than cached.
     let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]

@@ -2230,9 +2230,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// serializes reconcile/commit for its whole duration would stall the very reconcile that is
     /// about to run behind it. A failure degrades to 0 rather than throwing — the next sync visit
     /// retries.
-    func runProveSweep(accountUUID: AccountUUID, instruction: [MigrationProveTarget], maxProofs: Int) async -> Int {
-        guard isIronwoodActivated() else { return 0 }
-        guard !instruction.isEmpty else { return 0 }
+    func runProveSweep(
+        accountUUID: AccountUUID,
+        instruction: [MigrationProveTarget],
+        maxProofs: Int
+    ) async -> MigrationProveOutcome {
+        let nothingProved = MigrationProveOutcome(totalProved: 0, preparationTxids: [])
+        guard isIronwoodActivated() else { return nothingProved }
+        guard !instruction.isEmpty else { return nothingProved }
 
         let accountUUIDs = [accountUUID]
 
@@ -2241,9 +2246,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         pokeStateEvent(for: accountUUID)
 
-        var proved = 0
+        var outcome = nothingProved
         do {
-            proved = try await sdkSynchronizer.proveMigrationTransactions(accountUUID, instruction, maxProofs)
+            outcome = try await sdkSynchronizer.proveMigrationTransactions(accountUUID, instruction, maxProofs)
         } catch {
             // Includes `migrationProvingUnavailable` (ZRUST0127), the one HARD proving error:
             // the ironwood tree is not queryable yet. Nothing the app can do but try at the
@@ -2253,8 +2258,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // Logged even at ZERO. A sweep that proves nothing, over and over, while the engine keeps
         // asking to prove IS the signal — and staying quiet about it made a stalled run look
         // identical to a healthy idle one.
+        let proved = outcome.totalProved
         MigrationTrace.recordProveSweep(proved: proved)
-        LoggerProxy.event("\(Self.logTag) prove pass: proved \(proved) of \(instruction.count) instructed transaction(s)")
+        let preparations = outcome.preparationTxids.count
+        LoggerProxy.event(
+            "\(Self.logTag) prove pass: proved \(proved) of \(instruction.count) instructed, \(preparations) preparation(s) to submit"
+        )
         if proved == 0 {
             let anyRowClaimedProvable = await logProveStall(accountUUIDs: accountUUIDs)
             // A FRUITLESS sweep is not the same as a quiet one. A sweep that proves nothing because
@@ -2289,7 +2298,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         for accountUUID in accountUUIDs {
             pokeStateEvent(for: accountUUID)
         }
-        return proved
+        return outcome
     }
 
     /// Consecutive prove sweeps that produced nothing WHILE the engine reported rows as

@@ -463,6 +463,123 @@ extension MigrationManagerImpl {
         }
     }
 
+    /// SUBMITS THE PREPARATIONS THIS PASS PROVED, in the order the engine proved them.
+    ///
+    /// The ruling behind this (kris, 2026-08-07): a proved preparation is a complete PCZT
+    /// (signatures and proofs); its submission is the ORDINARY path, not the engine's delivery
+    /// ceremony — preparations are ZIP 318-exempt, and the engine's own contract is that a
+    /// preparation is broadcast as soon as it is proved. So this is not a broadcast session: sync
+    /// is not stopped, no `MigrationNetworkPrivacyOptions` are consulted, no broadcast verdict is
+    /// produced, and the bytes go out through the same raw-transaction machinery every ordinary
+    /// send uses (`submitMigrationPreparation`).
+    ///
+    /// NO KIND JUDGEMENT LIVES HERE. `txids` is what the prove return handed back, and that return
+    /// names preparations ONLY — a transfer's txid never appears in it, and the SDK's accessor
+    /// refuses one anyway. The app does not inspect a `kind` to decide anything.
+    ///
+    /// RETRIEVE AT SUBMISSION TIME, one at a time. The accessor IS the take seam: the wallet's own
+    /// record of the transaction binds at retrieval, in the same database transaction that hands
+    /// the bytes back. Retrieving the whole list up front would bind every record before the first
+    /// submit; retrieving each immediately before its own submit keeps that window as small as the
+    /// seam allows. (It is idempotent either way — a crash between retrieve and submit re-retrieves
+    /// the same bytes over the same record, and the preparation's ZIP 203 expiry bounds the state
+    /// if it is never submitted.)
+    ///
+    /// ONE FAILURE DOES NOT ABORT THE PASS. A retrieval refusal (a stale txid whose row is no
+    /// longer servable) or a submission failure is logged and SKIPPED: the proofs this pass
+    /// persisted are already durable, the remaining preparations are independent, and a
+    /// preparation that did not go out is re-offered by the engine's own next crank.
+    ///
+    /// NO FAILURE-CLASS ROUTING. `broadcastOneTransfer` runs a non-success through
+    /// `MigrationBroadcastFailureClass` for its PERSISTENT effects — the Tor-hold indicator, the
+    /// pending-prompt latch — because that lane submits under the run's pinned privacy options and
+    /// a Tor failure there is a fact about the user's chosen transport. This lane submits over the
+    /// app's ordinary connection with no privacy options at all, so it has no Tor verdict to
+    /// record and no held prompt to raise; what it sees is transport success or transport failure,
+    /// and it reports exactly that. Routing a plain server rejection into the Tor UX would put a
+    /// privacy claim behind an outcome that made none.
+    private func submitProvedPreparations(accountUUID: AccountUUID, txids: [Data]) async {
+        guard !txids.isEmpty else { return }
+
+        for txid in txids {
+            do {
+                let prepared = try await sdkSynchronizer.takeMigrationPreparation(accountUUID, txid)
+                let result = try await sdkSynchronizer.submitMigrationPreparation(prepared)
+                LoggerProxy.event(
+                    "\(Self.logTag) preparation \(prepared.id) submitted: \(result)"
+                )
+                let outcome = Self.transferResult(from: result)
+                guard case MigrationTransferResult.success = outcome else {
+                    // Nothing to record anywhere. The engine's retryable network error records
+                    // nothing by design, so reporting it and reporting silence leave the row
+                    // equally re-servable; and the app-side flag below is a LANDED-broadcast flag.
+                    continue
+                }
+
+                // DELIBERATELY NOT `recordTransferBroadcast`. That member is the schedule-ledger
+                // chokepoint for TRANSFERS: it resolves the served transfer id, and a preparation
+                // matches none of its resolution paths (`resolveServedTransferId` considers only
+                // `.transfer`-kind rows, and this lane sets no in-flight marker), so it would fall
+                // through to the storage layer's positional guess and attribute a preparation's
+                // submission to the first unsent schedule TRANSFER. Its `.splitPendingConfirmation`
+                // short-circuit ordinarily prevents that, but only when the migration state READS —
+                // an unreadable state (the read throws) lets the positional guess run. Riding a
+                // short-circuit for correctness is not correctness, and here it is unnecessary:
+                // this lane KNOWS the transaction is a preparation, so it performs exactly what
+                // that short-circuit's own doc prescribes for one — mark the had-broadcast flag,
+                // append NO schedule sent record — without asking the state at all.
+                failureRoutingStorage.markHadBroadcast(for: accountUUID)
+
+                // ...and the ENGINE's own mark, which no app-side ledger makes.
+                // `Proved -> Broadcast` is what `performMigrationBroadcast`'s success arm does for
+                // a transfer; a preparation the app submitted itself never travels that path, so
+                // the app makes the same mark here — KEYED BY `prepared.id`, the engine transfer
+                // id the retrieval handed back, which is the one place in this lane an id is
+                // genuinely load-bearing. The mark gets its OWN catch: by this line the submission
+                // SUCCEEDED, so a mark failure must not log "not submitted" — the engine's
+                // mined-reconciliation still promotes the transaction once the scan sees it.
+                do {
+                    try await sdkSynchronizer.recordMigrationPreparationBroadcast(accountUUID, prepared, outcome)
+                } catch {
+                    let reason = error.toZcashError()
+                    LoggerProxy.event(
+                        "\(Self.logTag) preparation \(txid.toHexStringTxId()) submitted; engine mark failed — \(reason); scan promotes it"
+                    )
+                }
+            } catch {
+                let reason = error.toZcashError()
+                LoggerProxy.event(
+                    "\(Self.logTag) preparation \(txid.toHexStringTxId()) not submitted — \(reason); skipped, engine re-offers it"
+                )
+            }
+        }
+    }
+
+    /// The app's ordinary submission result read as the migration engine's outcome vocabulary.
+    ///
+    /// Anything short of an acceptance is reported as a RETRYABLE network error rather than a
+    /// verdict about the transaction: this lane submits raw bytes and sees transport outcomes, not
+    /// the engine's own rejection classification, and a retryable network error is the one outcome
+    /// that records nothing and leaves the row offered. Guessing `invalidNote` or `expired` from a
+    /// server code here would put words in the engine's mouth.
+    /// Internal rather than private so its arms can be pinned directly — the `.partial` arm in
+    /// particular is unreachable through `submitProvedPreparations`.
+    static func transferResult(
+        from result: SDKSynchronizerClient.CreateProposedTransactionsResult
+    ) -> MigrationTransferResult {
+        switch result {
+        case let SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds):
+            return MigrationTransferResult.success(txId: txIds.first ?? "")
+        case let SDKSynchronizerClient.CreateProposedTransactionsResult.partial(txIds, _):
+            // Unreachable for the single transaction this lane submits (`.partial` needs both an
+            // acceptance and a failure), but an acceptance is an acceptance.
+            return MigrationTransferResult.success(txId: txIds.first ?? "")
+        case SDKSynchronizerClient.CreateProposedTransactionsResult.failure,
+             SDKSynchronizerClient.CreateProposedTransactionsResult.grpcFailure:
+            return MigrationTransferResult.networkError(retryable: true)
+        }
+    }
+
     private func execute(
         _ action: MigrationStepAction,
         accountUUID: AccountUUID,
@@ -506,11 +623,16 @@ extension MigrationManagerImpl {
             // walking every candidate. The budget is chosen by phase — a 30 s tick takes on less
             // than a post-sync edge, since each proof is seconds of CPU and the run loses nothing
             // by deferring (boundary checkpoints are durably retained).
-            let proved = await runProveSweep(
+            let outcome = await runProveSweep(
                 accountUUID: accountUUID,
                 instruction: instruction,
                 maxProofs: Self.proofBudget(for: phase)
             )
+            // THE PREPARATIONS THIS PASS PROVED GO OUT IN THIS PASS (kris, 2026-08-07). See
+            // `submitProvedPreparations`. This is what supersedes the interim next-crank prep
+            // delivery the previous commit settled for.
+            await submitProvedPreparations(accountUUID: accountUUID, txids: outcome.preparationTxids)
+            let proved = outcome.totalProved
             await reconcile()
             if proved == 0 && isProvingStalled {
                 // I3: the engine says these rows are ready and the sweep proves none of them, twice
@@ -518,22 +640,17 @@ extension MigrationManagerImpl {
                 // and says so rather than leaving a spinner up.
                 return MigrationStepVerdict.needsUser(MigrationStepBlocker.provingStalled)
             }
-            // ONE INSTRUCTION, ONE ACTION (kris, 2026-08-07). The pass ends at the proof, for
-            // every kind. Nothing is re-cranked, nothing is chained: the engine said prove, we
-            // proved, and whatever comes next is the next wake-up's business.
+            // ONE INSTRUCTION, ONE ACTION. The pass ends at the proof plus the submissions the
+            // proof itself authorized: nothing is re-cranked and nothing is chained. A TRANSFER's
+            // broadcast is still the next wake-up's business, because only a `.broadcast`
+            // instruction can sanction one.
             //
-            // This retires D2 (danny + nuttycom, 2026-08-05), which broadcast a PREPARATION in the
-            // same pass that proved it — "inspect the kind attribute of `Prove { id, kind }`, and
-            // if it matches Preparation then prove and broadcast". Its own justification was that
-            // "there should be no second call needed", and that is precisely what stopped being
-            // true: a broadcast now requires an opaque `MigrationBroadcastInstruction`, a prove
-            // batch contains none, and one cannot be fabricated — so honouring D2 would have meant
-            // paying for the second call it existed to avoid, while keeping an app-side judgement
-            // about transaction kinds that the capability discipline removes everywhere else.
-            //
-            // The prep's delivery is not lost, only deferred to a crank that actually sanctions it:
-            // the tick column dispatches `.broadcast`, so a foregrounded session picks it up at the
-            // next tick rather than the next human app-open.
+            // D2 (danny + nuttycom, 2026-08-05) — "prove and broadcast a preparation in the same
+            // pass" — is honoured again, by the seam that replaced its blocked route. What blocked
+            // it was that a broadcast needs an opaque `MigrationBroadcastInstruction` a prove batch
+            // does not contain; the prove return now names the preparations directly, so nothing
+            // has to be fabricated and no app-side kind judgement is reintroduced — the SDK's
+            // return and its preparation gate carry it.
             return MigrationStepVerdict.proved(count: proved)
 
         case let MigrationStepAction.rebuild(id):
