@@ -197,6 +197,7 @@ extension MigrationManagerClient: DependencyKey {
             migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
             refreshMigrationSyncGate: { await impl.refreshMigrationSyncGate() },
             armNextWindowNotifications: { await impl.armNextWindowNotifications(accountUUID: $0) },
+            markRunCancelledByUser: { accountUUID in await impl.markRunCancelledByUser(accountUUID: accountUUID) },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
             wipeAllMigrationState: { await impl.wipeAllMigrationState() },
@@ -1282,6 +1283,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// reads committed for a schedule write that then fails. The stamp rides INSIDE the same
     /// serialized critical section as the schedule write (rebase of MOB-1497 onto R8-T3): it is a
     /// mutating pass over the same per-run storage pair the executor exists to serialize.
+    /// MOB-1466: stamps THIS run's persisted payload as user-cancelled. Serialized with
+    /// `recordCommittedSchedule`/`reconcile` on the same executor, so the mark and a concurrent
+    /// commit can never interleave — a commit that lands after this must win, and it does, because
+    /// it replaces the payload the mark lives in.
+    func markRunCancelledByUser(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        await serialExecutor.run { [self] in
+            scheduleStorage.markRunCancelledByUser(for: resolvedAccountUUID, now: Date())
+        }
+        LoggerProxy.event("\(Self.logTag) run marked CANCELLED BY USER — the banner will re-offer migration")
+    }
+
     func recordCommittedSchedule(accountUUID: AccountUUID?, schedule: MigrationSchedule) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         await serialExecutor.run { [self] in
@@ -3126,7 +3139,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             advanceStep: advance?.step,
             progress: try? await sdkSynchronizer.getMigrationProgress(accountUUID),
             statuses: (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? [],
-            hasInvalidTransfers: await hasInvalidMigrationTransfers(accountUUID: accountUUID)
+            hasInvalidTransfers: await hasInvalidMigrationTransfers(accountUUID: accountUUID),
+            // MOB-1466: read off THIS run's persisted payload, so the marker dies with the run it
+            // describes — see `markRunCancelledByUser`.
+            wasCancelledByUser: scheduleStorage.wasRunCancelledByUser(for: accountUUID)
         )
     }
 
@@ -5114,6 +5130,25 @@ final class MigrationScheduleStorage: @unchecked Sendable {
 
     func hasStoredPayload(for accountUUID: AccountUUID) -> Bool {
         committedSchedule(for: accountUUID) != nil
+    }
+
+    /// MOB-1466: THE ONLY WRITER of `cancelledByUserAt`. Called from Restart Migration's own
+    /// confirm, after the engine's cancel returns — nothing else in the app may set this, which is
+    /// what keeps "Migration required" impossible to reach by accident.
+    ///
+    /// A no-op when no payload exists: without a stored run there is nothing to have cancelled, and
+    /// inventing a payload here would fabricate a run that never was.
+    func markRunCancelledByUser(for accountUUID: AccountUUID, now: Date) {
+        storage.modify(for: accountUUID) { payload in
+            payload?.cancelledByUserAt = now
+        }
+    }
+
+    /// Whether THIS stored run was cancelled by the user. Cleared implicitly by
+    /// `recordCommittedSchedule`, which replaces the payload with a fresh one — a newly committed
+    /// plan is a new run and inherits nothing.
+    func wasRunCancelledByUser(for accountUUID: AccountUUID) -> Bool {
+        committedSchedule(for: accountUUID)?.cancelledByUserAt != nil
     }
 
     /// REPLACES `schedule`/`committedAt`; PRESERVES `sentRecords` from any existing payload (a

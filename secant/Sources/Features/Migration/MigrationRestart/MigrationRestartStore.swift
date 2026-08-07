@@ -131,6 +131,15 @@ struct MigrationRestart {
                     do {
                         // The fresh preview is discarded on purpose — see this file's header.
                         _ = try await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
+                        // MOB-1466 (Lukas, 2026-08-07): THE ONLY PLACE THIS IS EVER SET. The engine
+                        // has no field for "the user asked to start over" — it folds a cancelled run
+                        // into the same terminal step as every other one — so without this the state
+                        // derivation reads the cancelled run as terminated-UNFINISHED and the banner
+                        // offers "Update migration plan" instead of "Migration required".
+                        //
+                        // AFTER the engine's cancel returns, never before: a throw above must leave
+                        // no marker behind for a run that still exists.
+                        await migrationManager.markRunCancelledByUser(accountUUID)
                         // The cancel changed engine state that every migration surface reads;
                         // without this the banner keeps showing the run that no longer exists.
                         await migrationManager.reconcile()

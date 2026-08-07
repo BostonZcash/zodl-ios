@@ -437,4 +437,26 @@ struct MigrationCommittedSchedule: Equatable, Sendable, Codable {
     var schedule: MigrationSchedule
     var sentRecords: [SentRecord]
     var committedAt: Date
+    /// MOB-1466 (Lukas, 2026-08-07): when the user cancelled this run from Advanced Settings →
+    /// Restart Migration. `nil` for every other terminal outcome.
+    ///
+    /// WHY THE APP HAS TO REMEMBER THIS. `zcashlc_migration_restart_step` calls the engine's
+    /// `cancel_migration()`, which records the run terminal — and the SDK folds cancelled into the
+    /// same `.complete` step as every other terminal run ("`complete` is terminal for the STORED
+    /// run — including a CANCELLED one"). Nothing in `advanceStep`/`progress`/`statuses`/
+    /// `hasInvalidTransfers` separates "the user asked to start over" from "this run died
+    /// unfinished", so the M1 rule read the cancelled run as `.requiresAttention(.invalidTransfer)`
+    /// and the banner offered "Update migration plan" instead of "Migration required".
+    ///
+    /// We performed the cancel, so we are entitled to remember it. This is NOT the app
+    /// second-guessing an engine number — every value still comes from the engine; this records an
+    /// action of ours the engine has no field for.
+    ///
+    /// FALSE POSITIVES ARE THE WHOLE RISK ("migration complete must be protected.. we really only
+    /// want to show migration required when I used restart migration"). Three things bound it:
+    /// exactly ONE writer (the restart's own confirm), it lives INSIDE this payload so
+    /// `recordCommittedSchedule` drops it by construction when a new plan is committed, and the
+    /// only derivation that reads it is the terminated-UNFINISHED arm — a genuinely complete run
+    /// (every transfer mined) never reaches that arm and cannot be affected.
+    var cancelledByUserAt: Date?
 }

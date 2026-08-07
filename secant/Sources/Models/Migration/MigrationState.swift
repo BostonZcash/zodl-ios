@@ -101,7 +101,12 @@ extension MigrationState {
         advanceStep: MigrationAdvanceStep?,
         progress: MigrationProgress?,
         statuses: [MigrationTransactionStatus],
-        hasInvalidTransfers: Bool
+        hasInvalidTransfers: Bool,
+        /// MOB-1466 (Lukas, 2026-08-07): the user cancelled this run from Advanced Settings →
+        /// Restart Migration, and asked to "start over and let it find orchard funds from the
+        /// beginning". Defaults `false`, so every existing caller and every test keeps its exact
+        /// behaviour and this can only ever ADD a path, never change one.
+        wasCancelledByUser: Bool = false
     ) -> MigrationState {
         guard let advanceStep else {
             // No run stored. `progress` can still be non-nil for the immediate send-max sweep,
@@ -135,7 +140,21 @@ extension MigrationState {
                 if case MigrationTransactionStatus.State.mined = status.state { return false }
                 return true
             }
-            return hasUnminedTransfer ? .requiresAttention(.invalidTransfer) : .complete
+            guard hasUnminedTransfer else {
+                // EVERY transfer mined — a genuinely complete run. `wasCancelledByUser` is not even
+                // consulted here: "migration complete must be protected" (Lukas, 2026-08-07), and
+                // the cheapest way to protect it is to make the flag unreachable on this path.
+                return .complete
+            }
+            // TERMINATED UNFINISHED — and now WHY matters. M1 assumed one cause (the run died) and
+            // routed to the attention lane, which is right for a death and wrong for a cancellation:
+            // the user asked to start over, so the honest answer is that there is no run, and the
+            // banner re-offers migration for whatever Orchard is left.
+            //
+            // Only the restart's own confirm can set this flag, and a newly committed plan drops it
+            // with the payload it lived in — so a run that merely died still reads
+            // `.requiresAttention`, exactly as before.
+            return wasCancelledByUser ? .notStarted : .requiresAttention(.invalidTransfer)
         case .rebuild:
             return .requiresAttention(.transferExpired)
         case .prove, .broadcast, .waiting:

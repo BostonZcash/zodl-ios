@@ -50,6 +50,7 @@ extension MigrationManagerClient: TestDependencyKey {
         // Persisted records of what a migration DID. A test reaching one of these unstubbed is
         // writing a schedule or a broadcast record it never meant to write.
         client.recordCommittedSchedule = unimplemented("MigrationManagerClient.recordCommittedSchedule", placeholder: {}())
+        client.markRunCancelledByUser = unimplemented("MigrationManagerClient.markRunCancelledByUser", placeholder: {}())
         client.recordTransferBroadcast = unimplemented("MigrationManagerClient.recordTransferBroadcast", placeholder: {}())
 
         // Spends and submissions. `runBroadcastSession` is the headless broadcast driver: reaching

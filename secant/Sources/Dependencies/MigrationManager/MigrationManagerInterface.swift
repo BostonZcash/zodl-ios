@@ -420,6 +420,16 @@ struct MigrationManagerClient: Sendable {
     /// Re-arming is idempotent by construction: the id is stable per account, so a re-arm REPLACES
     /// the account's own prior pending request rather than stacking a second one.
     var armNextWindowNotifications: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    /// MOB-1466 (Lukas, 2026-08-07): record that the user cancelled this account's run from
+    /// Advanced Settings -> Restart Migration, so the state derivation reads the terminal run as
+    /// "no run" and the banner re-offers migration for the remaining Orchard, instead of "Update
+    /// migration plan".
+    ///
+    /// THE ONLY CALLER IS THE RESTART'S OWN CONFIRM. That is the false-positive guard: "we really
+    /// only want to show migration required when I used restart migration in the advanced
+    /// settings". A completed migration is protected by construction — see `MigrationState.derive`,
+    /// where the all-mined case returns `.complete` without consulting this at all.
+    var markRunCancelledByUser: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     var reconcile: @Sendable () async -> Void = { }
     // R8-T3 (#9): clears `accountUUID`'s (`nil` resolves the selected account) network snapshot iff
     // its engine state is fresh `.notStarted` with no stored schedule payload — i.e. a confirm lane
