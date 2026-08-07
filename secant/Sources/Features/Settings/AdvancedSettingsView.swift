@@ -111,20 +111,9 @@ struct AdvancedSettingsView: View {
                         ActionRow(
                             icon: Asset.Assets.Icons.refreshSingleCCW.image,
                             title: String(localizable: .ironwoodAnnouncementDebugReset),
-                            divider: true
-                        ) {
-                            store.send(.debugResetIronwoodAnnouncementTapped)
-                        }
-
-                        // SIGNPOST (retired with SDK PR #1951): the manual reschedule lever is
-                        // gone — the tap explains where QA cadence comes from now, so nobody
-                        // hunts for a vanished feature.
-                        ActionRow(
-                            icon: Asset.Assets.Icons.clockCheck.image,
-                            title: "Migration: reschedule onto short strides",
                             divider: false
                         ) {
-                            store.send(.debugMigrationRescheduleTapped)
+                            store.send(.debugResetIronwoodAnnouncementTapped)
                         }
                         #endif
                     }
@@ -170,9 +159,6 @@ struct AdvancedSettingsView: View {
         }
         .applyScreenBackground()
         .onAppear { store.send(.onAppear) }
-        #if !SECANT_DISTRIB
-        .alert($store.scope(state: \.alert, action: \.alert))
-        #endif
         .listStyle(.plain)
         .navigationBarTitleDisplayMode(.inline)
         .zashiBack()

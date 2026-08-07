@@ -1,8 +1,8 @@
 import SwiftUI
 import ComposableArchitecture
 import MessageUI
-// The debug reschedule captures an `AccountUUID`, which the pinned SDK does not declare
-// `Sendable`; every other store that captures one imports it this way.
+// `WalletAccount` comes from the pinned SDK, which does not declare it `Sendable`; every other
+// store that holds one imports it this way.
 @preconcurrency import ZcashLightClientKit
 
 @Reducer
@@ -28,8 +28,6 @@ struct AdvancedSettings {
         var hasMigrationRun = false
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
-        /// DEBUG-only result of the migration stride reschedule, shown as a plain alert.
-        @Presents var alert: AlertState<Action>?
 
         var isKeystoneConnected: Bool {
             for account in walletAccounts {
@@ -45,14 +43,6 @@ struct AdvancedSettings {
     }
 
     enum Action: Equatable {
-        case alert(PresentationAction<Action>)
-        /// DEBUG-only SIGNPOST (retired with SDK PR #1951): the manual "reschedule onto short
-        /// strides" lever is gone — schedules are engine-owned, and test-network schedules arrive
-        /// compressed at commit time. The row stays so QA learns the new mechanism instead of
-        /// hunting for a vanished feature; the tap just presents the explanation.
-        case debugMigrationRescheduleTapped
-        /// The signpost alert's payload — see `debugMigrationRescheduleTapped`.
-        case debugMigrationRescheduleFinished(String)
         case debugResetIronwoodAnnouncementTapped
         /// MOB-1466: the one-shot read that decides whether the Restart Migration row exists.
         case migrationRunPresence(Bool)
@@ -70,34 +60,6 @@ struct AdvancedSettings {
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
-            case .alert(.dismiss):
-                state.alert = nil
-                return .none
-
-            case .alert:
-                return .none
-
-            case .debugMigrationRescheduleTapped:
-                // Retired with SDK PR #1951: the QA reschedule endpoint is gone — scheduling
-                // belongs to the engine, and test-network schedules arrive compressed at commit
-                // time (the interim spacing-floor knob on the advance call left the SDK with the
-                // librustzcash rebase). The button stays as a signpost so QA learns the new
-                // mechanism instead of hunting for a vanished feature; the alert plumbing it
-                // reuses is unchanged.
-                return .send(.debugMigrationRescheduleFinished(
-                    "Retired: schedules are engine-owned now — a fresh testnet run already arrives compressed, and -MigrationFastLane collapses the privacy buffer. There is no manual reschedule."
-                ))
-
-            case .debugMigrationRescheduleFinished(let message):
-                state.alert = AlertState {
-                    TextState("Migration reschedule")
-                } actions: {
-                    ButtonState(role: .cancel) { TextState("OK") }
-                } message: {
-                    TextState(message)
-                }
-                return .none
-
             case .debugResetIronwoodAnnouncementTapped:
                 // Debug-only row, compiled out of the App Store build (see AdvancedSettingsView).
                 // Clears the Ironwood-announcement keychain flag so the one-time announcement
@@ -140,6 +102,5 @@ struct AdvancedSettings {
                 return .none
             }
         }
-        .ifLet(\.$alert, action: \.alert)
     }
 }
