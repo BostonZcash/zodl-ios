@@ -8,7 +8,7 @@
 //  only the wiring between those types and `@Dependency(\.sdkSynchronizer)` /
 //  `@Dependency(\.zcashSDKEnvironment)`.
 //
-//  MOB-1496: `bannerVariant`/`reentryRoute`/`sendGate`/`reconcile` now read the real per-account,
+//  MOB-1496: `bannerVariant`/`reentryRoute`/`reconcile` now read the real per-account,
 //  throwing SDK surface — every SDK read degrades to a safe default (false/nil/entry) on either a
 //  missing selected account or a thrown error, so a migration-surface hiccup never crashes launch,
 //  foreground entry, or the smart banner. `migrationSummary`/`migrationTransfers`/`lockMigrationDust`/
@@ -16,15 +16,15 @@
 //  (summary/transfers/dust-lock are app-side derivations/persistence, not SDK calls; stateEvents is
 //  the per-account replacement for the old wallet-wide `migrationStateStream`).
 //
-//  MOB-1496 (W3): the privacy gate is now split across the SDK and this client. The SDK owns
-//  broadcast->sync (`SDKSynchronizerClient.isMigrationSyncBlocked`/`migrationSyncBlockedStream`,
-//  driven from `RootInitialization.swift`'s `.retryStart`/`.migrationSyncGateChanged`) — this
-//  client's stub-era duplicate of that direction (`recordMigrationBroadcast`/
-//  `isSyncDeferredAfterBroadcast`, keyed off `migrationLastBroadcastAt`) is retired. This client
-//  keeps owning the OTHER direction — sync->send — re-keyed off observed sync completions
-//  (`recordSyncCompleted`, `migrationLastSyncCompletedAt`) and the SDK's own
-//  `migrationPrivacySyncBufferDuration()`, since the SDK only rejects a broadcast *during* an
-//  active sync (advisory, point-in-time) rather than enforcing a post-sync cooldown itself.
+//  MOB-1496 (W3) split the privacy gate across the SDK and this client: the SDK owned
+//  broadcast->sync, this client owned sync->send via a post-sync cooldown. BOTH timed halves are
+//  gone as of 2026-08-07. A fixed delay either side of the pair is an identifiable pattern rather
+//  than a defense against one, so neither direction is paced by a clock now. What remains is the
+//  SDK's present-tense hold — a submission actually in flight
+//  (`SDKSynchronizerClient.isMigrationSyncBlocked`/`migrationSyncBlockedStream`, driven from
+//  `RootInitialization.swift`'s `.retryStart`/`.migrationSyncGateChanged`) — plus this app's
+//  stop-sync-before-broadcast sequencing. `recordSyncCompleted` survives, but purely as the
+//  snapshot-republish edge it also always was; it no longer stamps a timestamp.
 //
 //  MOB-1497 (T1 of the Tor & broadcast-routing requirements round): four changes to the network
 //  snapshot. (1) Forming moves from the first broadcast-bearing `migrationNetworkOptions` read to
@@ -192,7 +192,6 @@ extension MigrationManagerClient: DependencyKey {
             setMigrationFlowPresented: { accountUUID, isPresented in
                 impl.setMigrationFlowPresented(accountUUID: accountUUID, isPresented: isPresented)
             },
-            sendGate: { await impl.sendGate() },
             recordSyncCompleted: { impl.recordSyncCompleted() },
             migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
             refreshMigrationSyncGate: { await impl.refreshMigrationSyncGate() },
@@ -1857,30 +1856,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
     }
 
-    /// MOB-1496 (W3): blocked when EITHER (a) the synchronizer is actively syncing right now, or
-    /// (b) a sync completed less than `migrationPrivacySyncBufferDuration()` ago. (a) is checked
-    /// first — an active sync is the more specific/urgent state of the two. 2026-08-07: the manual
-    /// Send-now lanes that consulted this are gone; the one remaining consumer is the step
-    /// driver's transfer privacy-buffer hold (AUD-3).
-    func sendGate() async -> MigrationSendGate {
-        if sdkSynchronizer.isSyncing() {
-            return MigrationSendGate.syncRequired
-        }
-
-        // FAST LANE (harness-only, double-fenced — see MigrationFastLane.swift): the buffer IS
-        // the pacing the automated campaigns exist to wait out; with the lane active the only
-        // real wait left is mining. `isActive` is a literal `false` in Release, so shipped
-        // builds compile this to the stock read.
-        let buffer = MigrationFastLane.isActive ? 0 : sdkSynchronizer.migrationPrivacySyncBufferDuration()
-        return gateStorage.sendGate(now: Date(), buffer: buffer)
-    }
-
     /// MOB-1496 (W3): called from Root's sync-completion edge (`RootInitialization.swift`'s
     /// `.synchronizerStateChanged`, the false->true transition into `.upToDate` — the same edge
     /// `reconcile()` fires on) so this updates once per completed sync, never per tick.
     func recordSyncCompleted() {
         MigrationTrace.recordSyncCompleted()
-        gateStorage.recordSyncCompleted(at: Date())
         // R13 Brick 1: sync finishing is a WRITER edge — the wallet store just advanced, so every
         // wallet-derived snapshot fact (greens, pool values, `asOfSyncedAt`) may have moved. This
         // edge is exactly the one the old world could miss: a sync that mines a transfer without
@@ -1977,11 +1957,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// open is one opportunity to take ONE step: sync, or send, or split, or re-plan. Which one
     /// depends on state at open time, so the poke names none of them.
     ///
-    /// One step per open is the PRIVACY property, not a convenience: `sendGate`'s ~600 s buffer
-    /// exists so a sync and a send are never adjacent enough for an observer to link them. That
-    /// holds no matter how long the user was away — waking up nine hours late does not earn the
-    /// right to batch two actions. So after any step there is always exactly one moment worth
-    /// poking about: when the NEXT step becomes permissible.
+    /// One step per open is the PRIVACY property, not a convenience: a sync and a send should not
+    /// be adjacent enough for an observer to link them. 2026-08-07: what enforces that is the
+    /// one-step-per-open shape itself plus the engine's own scheduling, NOT a timer — the ~600 s
+    /// post-sync buffer this used to name was deleted, because a fixed delay is exactly the kind of
+    /// regular pattern an observer keys on. So after any step there is still exactly one moment
+    /// worth poking about: when the NEXT step becomes due.
     ///
     /// This replaces the D9 two-poke cadence (a `timeToSync` lead ahead of a `manualTransferReady`
     /// at the window). That pair assumed the user would open at a time we chose; they do not —
@@ -2009,7 +1990,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         let clock = await chainClock(accountUUID: resolvedAccountUUID)
         let now = Date()
-        let gate = await sendGate()
 
         // A SYNC step: the earliest height at which the engine wants the wallet woken and proved.
         // No privacy buffer applies — a sync visit is the thing THAT buffer separates a SEND from.
@@ -2062,22 +2042,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         var sendDate: Date?
         if let next = pendingBroadcast {
-            // ...at the later of its own window and the privacy buffer's expiry. A sync that just
-            // completed pushes it out: sending on its heels is exactly the adjacency the buffer
-            // exists to prevent, so poking at the window would invite an action the gate refuses.
+            // ...at its own window. 2026-08-07: the post-sync privacy-buffer clamp that used to
+            // push this out is gone with the buffer itself — a poke now points at the moment the
+            // send actually becomes due, with nothing timed standing between a sync and it.
             //
             // The row carries MINUTES (its displayed ETA), not a height, so the two-block slack is
             // added here rather than through `notificationDate` — same number, same reason.
             // MOB-1466: with an unknown tip there is no ETA to arm from — `forwardETAMinutes` is
             // `nil`, and arming off a fabricated zero would schedule the poke for "now". Fall back
             // to the row's coarse position estimate, which never consults a tip.
-            var date = now.addingTimeInterval(
+            sendDate = now.addingTimeInterval(
                 TimeInterval(next.forwardETAMinutes ?? next.hoursFromNow * 60) * 60 + clock.notificationBuffer
             )
-            if case let MigrationSendGate.waitUntil(gateUntil) = gate, gateUntil > date {
-                date = gateUntil
-            }
-            sendDate = date
         }
 
         let accountHex = Data(resolvedAccountUUID.id).hexEncodedString()
@@ -2101,8 +2077,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let outlookDate = MigrationDerivations.outlookCandidateDate(
             outlook: outlook,
             clock: clock,
-            now: now,
-            sendGate: gate
+            now: now
         )
         guard let nextStepDate = [proveDate, sendDate, blockerDate, outlookDate].compactMap({ $0 }).min() else {
             // Nothing left to do — retire THIS ACCOUNT's poke rather than leaving a stale one
@@ -2438,10 +2413,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// driver now passes the account it vetted and the session delivers THAT one; the wallet-wide
     /// sweep remains for the parameterless client member (no production caller today).
     /// `vettedPreparationDelivery` (AUD-3): the driver vetted this session's id as a note-
-    /// PREPARATION. ZIP 318 exempts preps from the post-sync privacy buffer and from the
-    /// manual-delivery contract (a prep is wallet plumbing, never a user-pressed send — holding
-    /// it for a button that does not exist wedged manual accounts' preps forever), so both holds
-    /// below are skipped. The submit itself is unchanged — same artifact handout, same outcome
+    /// PREPARATION. It used to skip two holds here — the post-sync privacy buffer and the
+    /// manual-delivery contract — and both of those are gone now (the manual-tap surface on
+    /// 2026-08-07 with the send lane, the buffer the same day as an identifiable pattern). What it
+    /// still decides is the BANNER MAP below: a prep submit wears keep-open, never "Transfer N is
+    /// sending". The submit itself is unchanged — same artifact handout, same outcome
     /// verification, same `mark_broadcast` recording.
     func runBroadcastSession(vettedAccountUUID: AccountUUID? = nil, vettedPreparationDelivery: Bool = false) async -> Bool {
         guard isIronwoodActivated() else { return false }
@@ -2451,50 +2427,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
             walletAccounts: walletAccounts
         )
 
-        // MOB-1466 (N2, field-caught 2026-08-01): THE PRIVACY BUFFER, on the lane that never asked
-        // for it.
-        //
-        // `visitKind()` guarantees this SESSION does not sync — but the buffer is not about this
-        // session. It is about the last COMPLETED sync, whenever that was: an observer watching one
-        // circuit sees a restore finish and a migration transfer go out eight minutes later, and
-        // the app being backgrounded in between hides nothing. `MigrationGateStorage` has always
-        // persisted `migrationLastSyncCompletedAt` for exactly this, and `sendGate()` has always
-        // answered from it — the notification arming asks, the user's own Send now asks, and this
-        // lane, the only one that decides FOR the user, did not.
-        //
-        // 600 s on mainnet, 180 s on testnet. The field sequence (restore, background, foreground
-        // five minutes later, headless broadcast) cleared the testnet buffer by two minutes and
-        // would have broadcast five minutes INSIDE the mainnet one with nothing to stop it.
-        //
-        // Refusing means this app-open does nothing at all, and that is deliberate: reopening sync
-        // instead would re-stamp `lastSyncCompletedAt` and push the broadcast out again, so a user
-        // who opens often would never send. The already-armed poke is computed as
-        // `max(window, gateUntil)`, so it points past the buffer and brings them back at the first
-        // moment the send is permissible.
-        //
-        // Only `.waitUntil` is honoured. `.syncRequired` (a sync running right now) keeps its
-        // existing stop-then-broadcast handling — refusing on it would let an unrelated background
-        // sync stall a run indefinitely — but it is logged, because a broadcast on the heels of a
-        // live sync is the tightest adjacency of all and we currently have no field data on how
-        // often this lane meets one.
-        // AUD-3: the buffer is a TRANSFER rule — a vetted PREPARATION delivery skips this consult
-        // entirely (ZIP 318: "a preparation transaction is a fully shielded send-to-self"; its
-        // wake-up IS a sync session, so the buffer would otherwise hold every prep by
-        // construction). `broadcastOneTransfer`'s own stop-if-syncing handling still applies.
-        if !vettedPreparationDelivery {
-            let gate = await sendGate()
-            switch gate {
-            case MigrationSendGate.waitUntil(let gateUntil):
-                LoggerProxy.event(
-                    "\(Self.logTag) broadcast held by the privacy buffer until \(gateUntil)"
-                    + " — \(Int(gateUntil.timeIntervalSinceNow))s to go; this session does nothing"
-                )
-                return false
-            case MigrationSendGate.syncRequired:
-                LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
-            case MigrationSendGate.allowed:
-                break
-            }
+        // MOB-1466 (N2) held this lane for a fixed window after the last COMPLETED sync. That
+        // hold is GONE (2026-08-07): a fixed sync->broadcast delay is an identifiable pattern in
+        // its own right — the same reasoning that deleted the SDK's post-broadcast buffer — so
+        // pacing by the clock is no longer how either direction of the adjacency is handled.
+        // Sequencing still is: `broadcastOneTransfer` stops a running sync before it submits, and
+        // the SDK refuses a start while its own submission is in flight. A live sync is therefore
+        // only worth a note here, never a refusal — refusing on it would let an unrelated
+        // background sync stall a run indefinitely.
+        if sdkSynchronizer.isSyncing() {
+            LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
         }
 
         for accountUUID in accountUUIDs {
@@ -3371,26 +3313,18 @@ enum MigrationDerivations {
 
     /// P4 (outlook adoption, #2936): the engine outlook's arming candidate — the pure half.
     ///
-    /// Height→date through the same measured clock every other candidate uses. The KIND is
-    /// consulted for exactly one thing: a `.broadcast` outlook takes the same privacy clamp the
-    /// row-derived send window does — a poke must not invite a send the gate would refuse. Every
-    /// other kind is a sync- or user-shaped visit, which is what the buffer separates sends FROM,
-    /// so it arms unclamped. The caller min-folds the result: an outlook can only make the poke
-    /// EARLIER, never later.
+    /// Height→date through the same measured clock every other candidate uses. 2026-08-07: the
+    /// KIND used to be consulted for one thing — a `.broadcast` outlook took the post-sync privacy
+    /// buffer's clamp so a poke could not invite a send the gate would refuse. With that buffer
+    /// deleted there is no gate to refuse it, so every kind arms at its own window. The caller
+    /// min-folds the result: an outlook can only make the poke EARLIER, never later.
     static func outlookCandidateDate(
         outlook: MigrationNextWork?,
         clock: MigrationChainClock,
-        now: Date,
-        sendGate: MigrationSendGate
+        now: Date
     ) -> Date? {
         guard let outlook else { return nil }
-        var date = clock.notificationDate(atHeight: outlook.height, now: now)
-        if outlook.kind == MigrationStepKind.broadcast,
-            case let MigrationSendGate.waitUntil(gateUntil) = sendGate,
-            gateUntil > date {
-            date = gateUntil
-        }
-        return date
+        return clock.notificationDate(atHeight: outlook.height, now: now)
     }
 
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is
@@ -4785,13 +4719,13 @@ enum MigrationDerivations {
     }
 }
 
-// MARK: - Persistence + sync<->send privacy gate
+// MARK: - Persistence
 
-/// `UserDefaults`-backed persistence for every app-owned migration flag, plus the app-owned half
-/// of the sync<->send privacy gate math (MOB-1496 W3): a completed sync briefly disables migration
-/// sends, for `SDKSynchronizerClient.migrationPrivacySyncBufferDuration()`. The OTHER direction — a
-/// broadcast briefly disabling sync — is enforced by the SDK itself now
-/// (`isMigrationSyncBlocked`/`migrationSyncBlockedStream`), not this class. Every method that
+/// `UserDefaults`-backed persistence for every app-owned migration flag. It used to carry the
+/// app-owned half of the sync<->send privacy gate math (MOB-1496 W3) as well — a completed sync
+/// briefly disabling migration sends — but both timed halves of that gate were deleted 2026-08-07,
+/// so nothing here measures a window any more. The surviving hold is the SDK's own present-tense
+/// one (`isMigrationSyncBlocked`/`migrationSyncBlockedStream`), not this class. Every method that
 /// depends on "now" takes it as a parameter — never reads `Date()` internally — so tests can drive
 /// the clock explicitly. Injectable `UserDefaults` (default `.standard`) lets tests use an isolated
 /// named suite.
@@ -4857,44 +4791,12 @@ final class MigrationGateStorage: @unchecked Sendable {
         )
     }
 
-    // MARK: Gate
-
-    /// Persists the sync-completion timestamp `sendGate(now:buffer:)`'s window is measured from.
-    /// Called once per completed sync (`MigrationManagerImpl.recordSyncCompleted()`, fed by Root's
-    /// sync-completion edge in `RootInitialization.swift`) — never per tick.
-    func recordSyncCompleted(at now: Date) {
-        userDefaults.set(now.timeIntervalSince1970, forKey: .migrationLastSyncCompletedAt)
-    }
-
-    /// The (b) half of `sendGate()` — see `MigrationManagerImpl.sendGate()` for the (a) "actively
-    /// syncing right now" half, which needs a live SDK read this storage has no access to.
-    /// Precedence: no sync ever recorded (fresh install, never synced) -> `.allowed`; `now <
-    /// lastSyncCompletedAt + buffer` -> `.waitUntil(gateUntil)`; else `.allowed`.
-    func sendGate(now: Date, buffer: TimeInterval) -> MigrationSendGate {
-        guard let lastSyncCompletedAt = storedLastSyncCompletedAt() else {
-            return MigrationSendGate.allowed
-        }
-
-        let gateUntil = lastSyncCompletedAt.addingTimeInterval(buffer)
-        guard now < gateUntil else {
-            return MigrationSendGate.allowed
-        }
-
-        return MigrationSendGate.waitUntil(gateUntil)
-    }
-
-    private func storedLastSyncCompletedAt() -> Date? {
-        guard let interval = userDefaults.object(forKey: .migrationLastSyncCompletedAt) as? Double else {
-            return nil
-        }
-
-        return Date(timeIntervalSince1970: interval)
-    }
-
-    /// R13 (refinement 3): the stored sync-completion timestamp, exposed as the snapshot's
-    func lastSyncCompletedAt() -> Date? {
-        storedLastSyncCompletedAt()
-    }
+    // (The gate section — `recordSyncCompleted(at:)`, `sendGate(now:buffer:)` and the
+    // `migrationLastSyncCompletedAt` timestamp they shared — was deleted 2026-08-07 with the
+    // app-side post-sync privacy buffer. Nothing measures a window from a completed sync any
+    // more, so there is no timestamp left to persist; see `MigrationManagerInterface`'s header
+    // for the ruling. `wipeEverything()` below still clears the stale key by prefix sweep, which
+    // is how an upgraded install sheds it.)
 
     // MARK: Mode / network privacy / acknowledge / dust-lock
 
@@ -4996,9 +4898,6 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// `MigrationManagerImpl.resetPersistedFlags()`, which knows the account set this storage does
     /// not. Backs the test-only "Reset app migration flags" reset (`MigrationManagerTests`/
     /// `MigrationFailureRoutingTests`).
-    /// Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
-    /// window is a short-lived value, not a durable app flag, and expires (the buffer elapses) on
-    /// its own — same reasoning the retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
     /// MOB-1496 (W-A): no longer touches `.migrationDustLocked` — "Lock balance" is now a genuine
     /// SDK-side lock (`PoolBalance.lockedValue`), not app-persisted storage, so there is no local
     /// dust-locked flag left to clear.
@@ -5019,11 +4918,9 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// nobody thinks about while adding one. A reset that misses a key does not fail loudly; it
     /// hands the next wallet a stranger's state.
     ///
-    /// This DOES clear `migrationLastSyncCompletedAt`, which `resetPersistedFlags()` deliberately
-    /// leaves alone. That reasoning ("a short-lived timing value that expires on its own") is right
-    /// for a flags reset and wrong here: across a wallet boundary the stamp describes a sync that,
-    /// as far as the new wallet is concerned, never happened — and leaving it makes the new
-    /// wallet's first send gate answer a question about someone else's traffic.
+    /// The prefix sweep is also what sheds `migrationLastSyncCompletedAt`, the stamp the retired
+    /// post-sync send buffer measured from: nothing writes it any more, so an upgraded install
+    /// simply carries a dead key until some wipe collects it.
     ///
     /// Same shape as the voting wipe in `Root.clearDeviceScopedWalletState`, and for the same
     /// stated reason: nothing from the previous owner of this device may survive the reset

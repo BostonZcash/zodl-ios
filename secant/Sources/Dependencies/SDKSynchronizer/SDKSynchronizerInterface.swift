@@ -150,9 +150,6 @@ struct SDKSynchronizerClient: Sendable {
     /// Wallet-scope stream of `isMigrationSyncBlocked()`. Root subscribes this to drive the
     /// stop/resume pair — see `stopSyncBeforeMigrationBroadcast()` below.
     var migrationSyncBlockedStream: @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() }
-    /// The post-broadcast privacy buffer duration (the SDK's own 600 s gate), mirrored app-side by
-    /// `MigrationSendGate` on the send side.
-    var migrationPrivacySyncBufferDuration: @Sendable () -> TimeInterval = { 0 }
     /// The run's live progress (completed/total transfers), or `nil` when no run is stored. Feeds
     /// the in-progress banner variant and the re-entry route.
     let getMigrationProgress: @Sendable (AccountUUID) async throws -> MigrationProgress?

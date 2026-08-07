@@ -52,11 +52,11 @@
 //
 //  A tick is safe to broadcast from for the exact reason a `.beforeSync` open is: NEITHER runs a
 //  sync first. The manager's broadcast lane (`MigrationManagerImpl.broadcastOneTransfer`) stops
-//  sync before it ever touches the wire (`stopSyncBeforeMigrationBroadcast`), and the privacy
-//  buffer (`sendGate`) that separates a sync from a send does not care WHY the app is asking,
-//  only whether one happened recently — so a
-//  tick reproduces an app-open's network shape one-for-one rather than inventing a new correlation
-//  the buffer was never built to prevent. That is why the tick column below sends `.broadcast`
+//  sync before it ever touches the wire (`stopSyncBeforeMigrationBroadcast`), and that sequencing
+//  does not care WHY the app is asking — so a
+//  tick reproduces an app-open's network shape one-for-one rather than inventing a new correlation.
+//  (This used to lean on a post-sync privacy buffer too; it was deleted 2026-08-07 as an
+//  identifiable pattern in its own right, which changes nothing about the argument here.) That is why the tick column below sends `.broadcast`
 //  straight to the SAME action `.beforeSync` produces, not a variant of it: as far as the wire is
 //  concerned, the two are indistinguishable.
 //

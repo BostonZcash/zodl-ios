@@ -223,24 +223,14 @@ extension MigrationManagerImpl {
         // schedules arrive compressed at commit time (the interim spacing-floor knob on the
         // advance call left the SDK with the librustzcash rebase). The old app-side rewrite also
         // re-ran per session (its once-latch was per driver instance), desyncing scheds from
-        // anchors — campaign 9's F-C9-3. `MigrationFastLane.isActive` remains solely the
-        // privacy-buffer zero switch.
+        // anchors — campaign 9's F-C9-3. `MigrationFastLane` is gone entirely with the privacy
+        // buffer it existed to zero.
 
-        // MOB-1466: THE TICK FAST PATH — before any candidate/engine reads, consult the same
-        // privacy-buffer source `executeBroadcast` uses below. A tick fires every 30s; spending a
-        // per-account engine read on every one of them just to re-learn "the buffer is holding",
-        // which this cheap, wallet-wide, no-SDK-read check already knows, would make an idle tick
-        // far from free. `executeBroadcast` still re-checks the same gate once a broadcast is
-        // actually due (this is a fast REJECT, not a replacement for that check) — harmless and
-        // cheap either way.
-        if phase == MigrationOpenPhase.tick {
-            let gate = await sendGate()
-            if case let MigrationSendGate.waitUntil(gateUntil) = gate {
-                let reason = "privacy buffer until \(gateUntil) (\(Int(gateUntil.timeIntervalSinceNow))s)"
-                LoggerProxy.debug("\(Self.logTag) ▸ session verdict (\(phase)): held(\(reason))")
-                return MigrationStepVerdict.held(reason: reason)
-            }
-        }
+        // MOB-1466's TICK FAST PATH was deleted 2026-08-07. It was a cheap wallet-wide reject that
+        // answered "the post-sync privacy buffer is still holding" without paying for a per-account
+        // engine read — and with that buffer gone there is no wallet-wide timed answer to give.
+        // A tick now goes straight to the engine reads below, which is the only thing that can
+        // actually say whether a step is due.
 
         // ONE read of the engine, for every candidate account, feeding BOTH the wallet-wide session
         // decision and the per-account discharge below. The old code read `migrationAdvanceStep`
@@ -670,21 +660,12 @@ extension MigrationManagerImpl {
         // (The manual-delivery hold that lived here was REMOVED 2026-08-07 with the whole
         // manual-tap send surface — every account is auto-delivery now.)
 
-        // AUD-3: the post-sync buffer is scoped to TRANSFERS by ZIP 318 ("a preparation
-        // transaction is a fully shielded send-to-self") — a prep's own wake-up IS a sync
-        // session, so consulting the buffer here held every single prep by construction.
-        if !isPreparation {
-            let gate = await sendGate()
-            if case let MigrationSendGate.waitUntil(gateUntil) = gate {
-                return MigrationStepVerdict.held(
-                    reason: "privacy buffer until \(gateUntil) (\(Int(gateUntil.timeIntervalSinceNow))s)"
-                )
-            }
-        } else {
-            LoggerProxy.event(
-                "\(Self.logTag) preparation \(id) delivery — ZIP-exempt from the buffer and session separation (AUD-3)"
-            )
-        }
+        // AUD-3's post-sync buffer hold stood here, transfer-only (ZIP 318 exempts a preparation:
+        // it is a fully shielded send-to-self whose own wake-up IS a sync session, so consulting
+        // the buffer held every single prep by construction). Deleted 2026-08-07 with the buffer —
+        // a fixed sync->broadcast delay is an identifiable pattern, so nothing times this lane now.
+        // `isPreparation` still governs the mode belt above and the session-separation cell in
+        // `MigrationStepPlan`, so it stays a parameter.
 
         // The account THIS discharge vetted (mode belt, manual delivery, send gate above) is the
         // one the session delivers — see `runBroadcastSession(vettedAccountUUID:)`'s doc for the

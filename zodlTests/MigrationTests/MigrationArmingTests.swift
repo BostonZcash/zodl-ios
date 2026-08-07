@@ -1,43 +1,33 @@
 //
-//  MigrationSendGateAndArmingTests.swift
+//  MigrationArmingTests.swift
 //  zodlTests
 //
-//  MOB-1466 (N1 + N2), field-caught 2026-08-01 on a from-scratch restore.
+//  MOB-1466 (N1), field-caught 2026-08-01 on a from-scratch restore: the notification arming
+//  derived its send date from `migrationTransfers` alone, which filters to `.transfer`-kind
+//  statuses. A note-split PREPARATION's broadcast window contributed nothing. With the run in
+//  `splitPendingConfirmation` the arm predicted the first TRANSFER's window — an event that cannot
+//  happen until the preparations mine — while preparation 0's window was already open and unpoked.
+//  The run moved only because the tester opened the app manually.
 //
-//  Two findings, one shape: THE APP KNOWS WHEN THINGS HAPPENED AND WHEN THEY ARE DUE, AND THE
-//  AUTOMATIC LANE DOES NOT ASK.
+//  These pin the pure halves: the row selection the arm feeds on, and the engine outlook's arming
+//  candidate. The lanes that consume them are integration-shaped and covered by the field sheet.
 //
-//  N1 — the notification arming derived its send date from `migrationTransfers` alone, which filters
-//  to `.transfer`-kind statuses. A note-split PREPARATION's broadcast window contributed nothing.
-//  With the run in `splitPendingConfirmation` the arm predicted the first TRANSFER's window — an
-//  event that cannot happen until the preparations mine — while preparation 0's window was already
-//  open and unpoked. The run moved only because the tester opened the app manually.
+//  2026-08-07: this file also held N2, the persisted cross-session sync->send privacy buffer
+//  (`MigrationGateStorage.sendGate(now:buffer:)` and its `migrationLastSyncCompletedAt` stamp),
+//  plus the buffer clamp on the outlook candidate. All of it is deleted with the buffer itself — a
+//  fixed delay between a sync and a send is an identifiable pattern rather than a defense against
+//  one, the same ruling that removed the SDK's post-broadcast buffer. Nothing replaced it, so
+//  there is nothing left here to pin: the tests went with the behavior.
 //
-//  N2 — `runBroadcastSession` broadcast without consulting `sendGate()`. The gate is persisted
-//  (`migrationLastSyncCompletedAt`) and therefore CROSS-SESSION by construction, which is the whole
-//  point: an observer watching one circuit sees a restore finish and a transfer go out minutes
-//  later, and the app having been backgrounded in between hides nothing. Sync→send separation is
-//  600 s on mainnet, 180 s on testnet.
-//
-//  These pin the pure halves — the storage gate's own arithmetic, and the row selection the arm
-//  feeds on. The lanes that consume them are integration-shaped and covered by the field sheet.
-//
-
 import Foundation
 import Testing
 import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationSendGateAndArmingTests {
+@Suite struct MigrationArmingTests {
     // MARK: - Fixtures
 
     private static let clock = MigrationChainClock(tip: 3_000_000)
-
-    private static func storage() -> MigrationGateStorage {
-        let suiteName = "MigrationSendGateAndArmingTests.\(UUID().uuidString)"
-        // swiftlint:disable:next force_unwrapping
-        return MigrationGateStorage(userDefaults: UserDefaults(suiteName: suiteName)!)
-    }
 
     private static func status(
         id: UInt32,
@@ -72,61 +62,6 @@ import ZcashLightClientKit
             // MOB-1466: mirrors the production ordering — a row with no ETA (unknown tip) sorts
             // LAST, so it can never be picked as the soonest.
             .min { ($0.forwardETAMinutes ?? Int.max) < ($1.forwardETAMinutes ?? Int.max) }
-    }
-
-    // MARK: - N2: the persisted, cross-session privacy buffer
-
-    /// A fresh wallet that has never completed a sync has nothing to be adjacent TO.
-    @Test func aWalletThatNeverSyncedIsAllowedToSend() {
-        let gate = Self.storage().sendGate(now: Date(), buffer: 600)
-        #expect(gate == .allowed)
-    }
-
-    /// THE field sequence, at mainnet's buffer. Restore completes, the app is backgrounded, the user
-    /// foregrounds five minutes later and the engine says a broadcast is due. Backgrounding is not
-    /// separation: the gate must still hold.
-    @Test func aBroadcastFiveMinutesAfterASyncIsHeldOnMainnet() {
-        let storage = Self.storage()
-        let syncedAt = Date(timeIntervalSince1970: 1_000_000)
-        storage.recordSyncCompleted(at: syncedAt)
-
-        let gate = storage.sendGate(now: syncedAt.addingTimeInterval(300), buffer: 600)
-        #expect(gate == .waitUntil(syncedAt.addingTimeInterval(600)))
-    }
-
-    /// The same sequence on testnet cleared by two minutes — which is why the field run showed no
-    /// violation and is exactly why it was not evidence of correctness.
-    @Test func theSameSequenceClearsOnTestnetsShorterBuffer() {
-        let storage = Self.storage()
-        let syncedAt = Date(timeIntervalSince1970: 1_000_000)
-        storage.recordSyncCompleted(at: syncedAt)
-
-        #expect(storage.sendGate(now: syncedAt.addingTimeInterval(300), buffer: 180) == .allowed)
-    }
-
-    /// The gate opens at the boundary, not after it.
-    @Test func theGateOpensExactlyAtTheBuffersExpiry() {
-        let storage = Self.storage()
-        let syncedAt = Date(timeIntervalSince1970: 1_000_000)
-        storage.recordSyncCompleted(at: syncedAt)
-
-        #expect(storage.sendGate(now: syncedAt.addingTimeInterval(599), buffer: 600) != .allowed)
-        #expect(storage.sendGate(now: syncedAt.addingTimeInterval(600), buffer: 600) == .allowed)
-    }
-
-    /// The stamp is a plain UserDefaults write, so it outlives the process — the property the whole
-    /// finding turns on. A gate that only remembered the current session would have answered
-    /// "allowed" to the field sequence and been useless.
-    @Test func theStampSurvivesAFreshStorageInstance() {
-        let suiteName = "MigrationSendGateAndArmingTests.\(UUID().uuidString)"
-        // swiftlint:disable:next force_unwrapping
-        let defaults = UserDefaults(suiteName: suiteName)!
-        let syncedAt = Date(timeIntervalSince1970: 1_000_000)
-
-        MigrationGateStorage(userDefaults: defaults).recordSyncCompleted(at: syncedAt)
-
-        let reread = MigrationGateStorage(userDefaults: defaults)
-        #expect(reread.sendGate(now: syncedAt.addingTimeInterval(60), buffer: 600) == .waitUntil(syncedAt.addingTimeInterval(600)))
     }
 
     // MARK: - N1: the arm sees the whole run
@@ -206,68 +141,39 @@ import ZcashLightClientKit
 
     // MARK: - P4: the engine outlook's arming candidate (pure half)
 
-    /// A `.prove` outlook is a sync visit — the buffer separates sends FROM syncs, so no clamp
-    /// applies even while the gate is closed.
-    @Test func aProveOutlookArmsUnclampedInsideTheBuffer() {
+    /// A `.prove` outlook arms at its own window.
+    @Test func aProveOutlookArmsAtItsWindow() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let date = MigrationDerivations.outlookCandidateDate(
             outlook: MigrationNextWork(height: 3_000_010, kind: .prove),
             clock: Self.clock,
-            now: now,
-            sendGate: .waitUntil(now.addingTimeInterval(100_000))
+            now: now
         )
         #expect(date == Self.clock.notificationDate(atHeight: 3_000_010, now: now))
     }
 
-    /// A `.broadcast` outlook inside the buffer is clamped to the gate's expiry — the poke must
-    /// not invite a send the gate would refuse.
-    @Test func aBroadcastOutlookInsideTheBufferClampsToTheGate() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let unclamped = Self.clock.notificationDate(atHeight: 3_000_001, now: now)
-        let gateUntil = unclamped.addingTimeInterval(500)
-        let date = MigrationDerivations.outlookCandidateDate(
-            outlook: MigrationNextWork(height: 3_000_001, kind: .broadcast),
-            clock: Self.clock,
-            now: now,
-            sendGate: .waitUntil(gateUntil)
-        )
-        #expect(date == gateUntil)
-    }
-
-    /// A gate that expires before the window changes nothing — the clamp is a max, not an add.
-    @Test func aBroadcastOutlookPastTheGatesExpiryIsUnclamped() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let window = Self.clock.notificationDate(atHeight: 3_000_100, now: now)
-        let date = MigrationDerivations.outlookCandidateDate(
-            outlook: MigrationNextWork(height: 3_000_100, kind: .broadcast),
-            clock: Self.clock,
-            now: now,
-            sendGate: .waitUntil(now.addingTimeInterval(1))
-        )
-        #expect(date == window)
-    }
-
-    /// An open gate arms the broadcast outlook at its own window.
-    @Test func aBroadcastOutlookWithAnOpenGateArmsAtItsWindow() {
+    /// A `.broadcast` outlook arms at its own window too. 2026-08-07: this is the case that used
+    /// to be special — a broadcast outlook took the post-sync buffer's clamp so a poke could not
+    /// invite a send the gate would refuse. With no timed gate left to refuse it, every kind arms
+    /// alike, and this pins that the clamp really is gone rather than merely unreachable.
+    @Test func aBroadcastOutlookArmsAtItsWindow() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let date = MigrationDerivations.outlookCandidateDate(
             outlook: MigrationNextWork(height: 3_000_050, kind: .broadcast),
             clock: Self.clock,
-            now: now,
-            sendGate: .allowed
+            now: now
         )
         #expect(date == Self.clock.notificationDate(atHeight: 3_000_050, now: now))
     }
 
-    /// `.rebuild`/`.replan` are user-shaped visits: plain candidates, no clamp.
-    @Test func userShapedOutlookKindsArmUnclamped() {
+    /// `.rebuild`/`.replan` arm at their own windows as well — every kind is a plain candidate.
+    @Test func userShapedOutlookKindsArmAtTheirWindows() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         for kind in [MigrationStepKind.rebuild, MigrationStepKind.replan] {
             let date = MigrationDerivations.outlookCandidateDate(
                 outlook: MigrationNextWork(height: 3_000_020, kind: kind),
                 clock: Self.clock,
-                now: now,
-                sendGate: .waitUntil(now.addingTimeInterval(100_000))
+                now: now
             )
             #expect(date == Self.clock.notificationDate(atHeight: 3_000_020, now: now))
         }
@@ -279,8 +185,7 @@ import ZcashLightClientKit
             MigrationDerivations.outlookCandidateDate(
                 outlook: nil,
                 clock: Self.clock,
-                now: Date(timeIntervalSince1970: 1_000_000),
-                sendGate: .allowed
+                now: Date(timeIntervalSince1970: 1_000_000)
             ) == nil
         )
     }

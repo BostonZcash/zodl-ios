@@ -161,9 +161,6 @@ extension SDKSynchronizerClient: DependencyKey {
             migrationSyncBlockedStream: {
                 synchronizer.migrationSyncBlockedStream
             },
-            migrationPrivacySyncBufferDuration: {
-                synchronizer.migrationPrivacySyncBufferDuration
-            },
             getMigrationProgress: { accountUUID in
                 try await synchronizer.migrationProgress(accountUUID: accountUUID)
             },

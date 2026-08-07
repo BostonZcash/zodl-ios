@@ -83,7 +83,7 @@ import ComposableArchitecture
 
     /// A single pending `.transfer` row at `scheduledHeight` — proved, not yet on the wire — the
     /// minimal fixture `armNextWindowNotifications`'s row-derived send-window candidate needs.
-    /// Mirrors `MigrationSendGateAndArmingTests.status(...)`'s shape; this suite only ever needs
+    /// Mirrors `MigrationArmingTests.status(...)`'s shape; this suite only ever needs
     /// this one kind/state combination, so the fuller helper's extra parameters are inlined away.
     private static func pendingTransferStatus(scheduledHeight: BlockHeight) -> MigrationTransactionStatus {
         MigrationTransactionStatus(
@@ -114,7 +114,7 @@ import ComposableArchitecture
     }
 
     /// A freshly-scoped, isolated gate storage (own `UserDefaults` suite, never `.standard`) with
-    /// `accountUUID`'s mode pre-set — mirrors `MigrationSendGateAndArmingTests`'s `storage()` helper.
+    /// `accountUUID`'s mode pre-set.
     private static func freshGateStorage(mode: MigrationMode) -> MigrationGateStorage {
         let suiteName = "MigrationTickDriverTests.\(UUID().uuidString)"
         // swiftlint:disable:next force_unwrapping
@@ -385,40 +385,16 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 0)
     }
 
-    /// F1: the post-sync privacy buffer is a TRANSFER rule — a prep's wake-up IS a sync session,
-    /// so the buffer would otherwise hold every prep by construction. Stamped gate + 600 s buffer:
-    /// the transfer arm holds, the prep arm delivers.
-    @Test func beforeSyncPreparationDeliveryBypassesThePrivacyBuffer() async {
-        Self.installCandidateAccount()
-        let submissionCalls = LockIsolated<Int>(0)
-
-        let verdict = await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.activatedState() },
-                isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
-                migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
-                    submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "prep-past-buffer"))
-                },
-                migrationPrivacySyncBufferDuration: { 600 }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-            Self.stubUserNotifications(&$0)
-        } operation: {
-            let storage = Self.freshGateStorage(mode: .privateScheduled)
-            storage.recordSyncCompleted(at: Date())
-            let manager = MigrationManagerImpl(gateStorage: storage, sessionOrdinalProvider: { 1 })
-            return await manager.advance(phase: .beforeSync)
-        }
-
-        #expect(verdict == .broadcast(id: 9), "the buffer never holds a preparation, got \(verdict)")
-        #expect(submissionCalls.value == 1)
-    }
-
-    /// The buffer's transfer arm is untouched: same stamped gate, transfer kind → held.
-    @Test func beforeSyncTransferBroadcastStaysHeldByThePrivacyBuffer() async {
+    /// 2026-08-07 REVERSAL PIN. A transfer broadcast used to be HELD here: a sync had just
+    /// completed, and the app's post-sync privacy buffer refused any send for 600 s after one.
+    /// That buffer is deleted — a fixed sync->broadcast delay is an identifiable pattern rather
+    /// than a defense against one, the same ruling that removed the SDK's post-broadcast buffer —
+    /// so the very same setup must now DELIVER. If a timed hold ever comes back, this goes red.
+    ///
+    /// (Its sibling, `beforeSyncPreparationDeliveryBypassesThePrivacyBuffer`, pinned AUD-3's
+    /// carve-out exempting preparations from that buffer. With nothing left to be exempt from,
+    /// there is no distinction to pin and the test went with it.)
+    @Test func beforeSyncTransferBroadcastIsNotHeldByARecentSync() async {
         Self.installCandidateAccount()
         let submissionCalls = LockIsolated<Int>(0)
 
@@ -430,24 +406,19 @@ import ComposableArchitecture
                 migrationTransactionStatuses: { _ in [] },
                 executeNextPendingMigrationTransfer: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "must-not-run"))
-                },
-                migrationPrivacySyncBufferDuration: { 600 }
+                    return .executed(.success(txId: "transfer-right-after-a-sync"))
+                }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
         } operation: {
             let storage = Self.freshGateStorage(mode: .privateScheduled)
-            storage.recordSyncCompleted(at: Date())
             let manager = MigrationManagerImpl(gateStorage: storage, sessionOrdinalProvider: { 1 })
             return await manager.advance(phase: .beforeSync)
         }
 
-        guard case .held = verdict else {
-            Issue.record("a transfer inside the buffer must hold, got \(verdict)")
-            return
-        }
-        #expect(submissionCalls.value == 0)
+        #expect(verdict == .broadcast(id: 9), "a just-completed sync must not hold a transfer, got \(verdict)")
+        #expect(submissionCalls.value == 1)
     }
 
     /// F4: the mode belt is transfer pacing — an `.immediate` run's due PREPARATION still
@@ -927,38 +898,6 @@ import ComposableArchitecture
         )
     }
 
-    // MARK: - The privacy-buffer fast path
-
-    /// A tick that arrives while the buffer holds must say so WITHOUT spending a per-account engine
-    /// read — the whole point of checking the buffer first.
-    @Test func tickHeldByThePrivacyBufferReadsNoEngineStep() async {
-        Self.installCandidateAccount()
-        let engineReadCount = LockIsolated<Int>(0)
-
-        let verdict = await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.activatedState() },
-                isSyncing: { false },
-                migrationAdvanceStep: { _ in
-                    engineReadCount.withValue { $0 += 1 }
-                    return MigrationAdvance(step: .broadcast(id: 1), next: nil)
-                },
-                migrationPrivacySyncBufferDuration: { 600 }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-            Self.stubUserNotifications(&$0)
-        } operation: {
-            let gateStorage = Self.freshGateStorage(mode: .privateScheduled)
-            // A sync "just completed" moments ago — well inside the 600s buffer.
-            gateStorage.recordSyncCompleted(at: Date())
-            let manager = MigrationManagerImpl(gateStorage: gateStorage)
-            return await manager.advance(phase: .tick)
-        }
-
-        #expect(Self.isHeld(verdict), "expected .held while the privacy buffer holds, got \(verdict)")
-        #expect(engineReadCount.value == 0, "the fast path must return before any per-account engine read")
-    }
-
     // MARK: - Single-flight
 
     /// A `.tick` arriving mid-advance yields immediately: `.skipped`, and it must never have touched
@@ -1310,7 +1249,7 @@ import ComposableArchitecture
 
     /// P4: the fold's WINNING direction for a row-bearing run — `outlookCandidateDate`'s own doc
     /// promises the outlook "can only make the poke EARLIER, never later"; this is that promise
-    /// exercised through the full arm, not just the pure helper `MigrationSendGateAndArmingTests`
+    /// exercised through the full arm, not just the pure helper `MigrationArmingTests`
     /// already pins.
     @Test func anOutlookEarlierThanTheRowWindowWins() async {
         Self.installCandidateAccount()
