@@ -63,8 +63,26 @@ struct MigrationPrepareBalanceSheet: View {
                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
                 .padding(.bottom, 16)
 
-            ForEach(Array(steps.enumerated()), id: \.element.id) { position, step in
-                stepRow(step, isLast: position == steps.count - 1)
+            // THE 104-STEP SHEET (Lukas, 2026-08-07, from nuttycom's wallet): a run's split can be
+            // far longer than the four-to-six steps this sheet was drawn for, and a `VStack` of 104
+            // rows is ~5,000 pt tall. `zashiSheet` measures its content and hands that height to
+            // `.presentationDetents([.height(…)])`, which UIKit clamps to the screen — but the
+            // VStack still LAYS OUT at its ideal height and gets CENTRED in the clamped container.
+            // The result on his device: rows 45–59 of 104 visible (dead centre of the ladder), the
+            // title and "Steps" heading clipped off the top, and the total and the "Got it" button
+            // clipped off the bottom — a sheet with no way to read it and no way to dismiss it by
+            // its own CTA.
+            //
+            // Only the ROWS scroll. The card's heading, the total, and the sheet's own title, body
+            // and button stay put — scrolling the whole sheet instead would bury the CTA 104 rows
+            // down, which is the same bug wearing a scroll bar.
+            if let windowHeight = Self.scrollWindowHeight(forStepCount: steps.count) {
+                ScrollView {
+                    stepRows
+                }
+                .frame(height: windowHeight)
+            } else {
+                stepRows
             }
 
             if let amountBeingSplit {
@@ -94,6 +112,38 @@ struct MigrationPrepareBalanceSheet: View {
                         .strokeBorder(Design.Surfaces.strokeTertiary.color(colorScheme))
                 }
         }
+    }
+
+    @ViewBuilder private var stepRows: some View {
+        ForEach(Array(steps.enumerated()), id: \.element.id) { position, step in
+            stepRow(step, isLast: position == steps.count - 1)
+        }
+    }
+
+    private enum Constants {
+        /// At or below this many steps the ladder sizes the sheet, exactly as it always has —
+        /// Lukas's own rule ("<5 splits = keep .zashiSheet to resolve its height but >=5 splits,
+        /// set max height"). The designed sheet (5207:16024) draws four.
+        static let scrollThreshold = 5
+        /// The scrolling window — about five rows at 48 pt (badge 24 + connector 20 + gap 4).
+        ///
+        /// A FIXED height, not a screen fraction and not a measurement: `zashiSheet` re-measures
+        /// its content and re-derives its detent whenever that height changes, and on the pre-iOS
+        /// 26 path it also re-keys the subtree by that height (`.id(sheetHeight)`) — so a window
+        /// that measured itself from inside the sheet would reset its own `@State` and oscillate.
+        /// 240 pt also fits the smallest supported screen with the sheet's ~340 pt of chrome
+        /// (title, body, card heading, divider, total, CTA, drag indicator) still on screen.
+        static let scrollWindowHeight: CGFloat = 240
+    }
+
+    /// The window height for `count` steps, or `nil` when the ladder should size itself.
+    ///
+    /// `internal static` so the threshold is table-testable without a view host — the same reason
+    /// `stateCaption(for:)` is. Chosen so the window is ALWAYS full when it applies: the first
+    /// scrolling case (6 steps ≈ 288 pt) already exceeds 240 pt, so no count can leave slack
+    /// inside the scroller.
+    static func scrollWindowHeight(forStepCount count: Int) -> CGFloat? {
+        count > Constants.scrollThreshold ? Constants.scrollWindowHeight : nil
     }
 
     @ViewBuilder private func stepRow(_ step: MigrationPrepareBalanceRow, isLast: Bool) -> some View {
@@ -238,6 +288,17 @@ struct MigrationPrepareBalanceSheet: View {
             MigrationPrepareBalanceRow(id: "2", index: 2, state: .waitsOn([1, 2]), minutesFromNow: 120),
             MigrationPrepareBalanceRow(id: "3", index: 3, state: .waitsOn([3]), minutesFromNow: 180)
         ],
+        amountBeingSplit: Zatoshi(1_245_000_000),
+        gotItTapped: { }
+    )
+    .screenHorizontalPadding()
+}
+
+/// nuttycom's shape (2026-08-07): a run whose split is far longer than the sheet was drawn for.
+/// The ladder scrolls inside its card; the total and "Got it" stay reachable.
+#Preview("Long ladder (104 steps)") {
+    MigrationPrepareBalanceSheet(
+        steps: MigrationPrepareBalanceRow.interimLadder(count: 104),
         amountBeingSplit: Zatoshi(1_245_000_000),
         gotItTapped: { }
     )
