@@ -63,8 +63,8 @@ extension MigrationState {
     /// |---|---|
     /// | `.notStarted` | no advance step AND no progress |
     /// | `.splitPendingConfirmation` | statuses exist and the preparation phase is not complete |
-    /// | `.inProgress` | `.prove` / `.broadcast` / `.waiting`, with `progress` for the N-of-M |
-    /// | `.requiresAttention(.invalidTransfer)` | the engine's own `.requiresAttention(id:)`, or `hasInvalid` |
+    /// | `.inProgress` | `.prove` / `.broadcast` / `.waiting` / `.reevaluate`, with `progress` for the N-of-M |
+    /// | `.requiresAttention(.invalidTransfer)` | the engine's `.replan`, its collapsed attention answer, or `hasInvalid` |
     /// | `.requiresAttention(.transferExpired)` | `.rebuild(id:)` |
     /// | `.complete` | `.complete` — but ONLY when every `.transfer` status is mined (or none
     ///   exist); a terminal run with an unmined transfer TERMINATED UNFINISHED and derives
@@ -108,7 +108,26 @@ extension MigrationState {
         /// behaviour and this can only ever ADD a path, never change one.
         wasCancelledByUser: Bool = false
     ) -> MigrationState {
-        guard let advanceStep else {
+        derive(
+            answer: advanceStep.map(MigrationEngineAnswer.init(step:)),
+            progress: progress,
+            statuses: statuses,
+            hasInvalidTransfers: hasInvalidTransfers,
+            wasCancelledByUser: wasCancelledByUser
+        )
+    }
+
+    /// The recipe itself, over the app's answer vocabulary — so the `.replan` and `.reevaluate`
+    /// arms are reachable (and pinned) before the SDK splits them out of `.requiresAttention`.
+    /// See `MigrationEngineAnswer`.
+    static func derive(
+        answer: MigrationEngineAnswer?,
+        progress: MigrationProgress?,
+        statuses: [MigrationTransactionStatus],
+        hasInvalidTransfers: Bool,
+        wasCancelledByUser: Bool = false
+    ) -> MigrationState {
+        guard let advanceStep = answer else {
             // No run stored. `progress` can still be non-nil for the immediate send-max sweep,
             // which is a live migration the user should see as in progress even though the engine
             // tracks no run for it.
@@ -123,8 +142,45 @@ extension MigrationState {
         }
 
         switch advanceStep {
-        case .requiresAttention:
+        case .attentionCollapsed:
             return .requiresAttention(.invalidTransfer)
+        case .replan:
+            // The engine says the PLAN needs replacing. `MigrationAttentionReason` names the
+            // REMEDY, not the cause — `.invalidTransfer`'s remedy is "re-plan the remaining
+            // balance" and `.transferExpired`'s is "rebuild this transfer in place" — so a replan
+            // belongs here, alongside the funding-note case whose recovery is the same lane. That
+            // is also why it needs no new copy: the banner already says "Update migration plan" and
+            // the recovery screen already says "pre-signed for a balance that has since changed",
+            // which is a replan's cause described exactly.
+            //
+            // A distinct reason would only be justified if the two ever diverged in what the app
+            // SHOWS or DOES. They do not; what differs is which engine answer got us here, and the
+            // step plan and the driver's trace both keep that distinction where it is actionable.
+            return .requiresAttention(.invalidTransfer)
+        case .reevaluate:
+            // NOT an attention state. A rejected broadcast means our chain view is behind the
+            // rejecting node's; the run is alive, every transfer is intact, and the user has
+            // nothing to decide. Rendering it as attention would put "Update migration plan" over a
+            // run that needs one more sync — so it reads as whatever the rows say, exactly like
+            // `.waiting`, via the live arm below.
+            fallthrough
+        case .prove, .broadcast, .waiting:
+            if !statuses.isEmpty && !statuses.isPreparationPhaseComplete {
+                return .splitPendingConfirmation
+            }
+            if let progress {
+                return .inProgress(progress)
+            }
+            // A live step with no progress row: treat as in progress with an empty count rather
+            // than as not-started, which would hide a run that is demonstrably running.
+            return .inProgress(
+                MigrationProgress(
+                    completedTransfers: 0,
+                    totalTransfers: 0,
+                    remainingOrchard: .zero,
+                    nextTransferReadyAtHeight: nil
+                )
+            )
         case .complete:
             // M1 (E2E harness F#2, A/B-sealed 2026-08-04): the advance step's `.complete` is the
             // step machine's "nothing left to drive", and the engine folds FAILED runs into it
@@ -157,23 +213,6 @@ extension MigrationState {
             return wasCancelledByUser ? .notStarted : .requiresAttention(.invalidTransfer)
         case .rebuild:
             return .requiresAttention(.transferExpired)
-        case .prove, .broadcast, .waiting:
-            if !statuses.isEmpty && !statuses.isPreparationPhaseComplete {
-                return .splitPendingConfirmation
-            }
-            if let progress {
-                return .inProgress(progress)
-            }
-            // A live step with no progress row: treat as in progress with an empty count rather
-            // than as not-started, which would hide a run that is demonstrably running.
-            return .inProgress(
-                MigrationProgress(
-                    completedTransfers: 0,
-                    totalTransfers: 0,
-                    remainingOrchard: .zero,
-                    nextTransferReadyAtHeight: nil
-                )
-            )
         }
     }
 }

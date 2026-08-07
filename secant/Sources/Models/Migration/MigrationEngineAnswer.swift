@@ -1,0 +1,105 @@
+//
+//  MigrationEngineAnswer.swift
+//  zodl
+//
+//  The engine's next-step answer, in the vocabulary the APP routes on — and the ONE place that
+//  translates `MigrationAdvanceStep` into it.
+//
+//  WHY THIS TYPE EXISTS. Upstream `zcash_pool_migration` retired `AdvanceStep::Attend` and replaced
+//  it with two steps that share nothing but their inability to be discharged automatically:
+//
+//  | upstream step | contracted response | names a transaction? |
+//  |---|---|---|
+//  | `Replan` | `mark_superseded`, persist, re-plan the remaining balance | NO |
+//  | `Reevaluate` | SYNC to at least the tip a rejecting node reported, then ask again | NO |
+//
+//  `Replan` is an ORDINARY outcome, not a fault: upstream's own words are that a migration whose
+//  plan has been undercut — "most often by an ordinary wallet spend consuming notes it had
+//  allocated" — surfaces it. `Reevaluate` is not a user-facing state at all; it is the engine
+//  saying "your chain view is behind the one that rejected my broadcast, go look again".
+//
+//  The libzcashlc conduit still speaks the retired vocabulary: `zcashlc_migration_advance_step`
+//  folds BOTH into `ZCASHLC_ADVANCE_STEP_ATTEND` and, because neither upstream step names a
+//  transaction, SYNTHESISES an id — scanning the status rows for a matching blocker and falling
+//  back to transfer `0` when none matches. The SDK decodes that to `.requiresAttention(id:)`.
+//  Two engine answers with opposite remedies arrive as one app-facing case carrying an id at
+//  least one of them never had. nuttycom is splitting them SDK-side (Lukas ↔ nuttycom,
+//  2026-08-07); this type is what lets the app's lanes be built, tested and reviewed before that
+//  lands, rather than after.
+//
+//  WHAT CHANGES WHEN IT LANDS. Exactly one function below — `init(step:)` — gains two arms, and
+//  `.attentionCollapsed` is deleted. Every consumer (the step plan's decision table, the driver's
+//  executors, the state derivation, the re-entry route, and their tests) already speaks `.replan`
+//  and `.reevaluate` today. Nothing downstream moves.
+//
+//  WHY THE INTERIM ARM STAYS AMBIGUOUS RATHER THAN GUESSING. It would be easy to map today's
+//  `.requiresAttention` to `.replan` — replan is the commoner cause, and it would make the new
+//  lane live immediately. That trade is wrong in the one direction that costs the user something:
+//  reading a `Reevaluate` as a replan tears down a live run over a rejection the very next sync
+//  would have adjudicated, and the run's remaining transfers are pre-signed artifacts that a
+//  re-plan discards. Reading a `Replan` as an ambiguous attention costs one wasted sync pass and
+//  lands on the same screen a beat later. So the ambiguous arm keeps the existing
+//  sync-then-escalate behaviour verbatim, and the precision arrives with the SDK, not before.
+//
+
+import Foundation
+@preconcurrency import ZcashLightClientKit
+
+/// What the engine answered, as the app routes on it. A verbatim re-expression of
+/// `MigrationAdvanceStep` — no case here means anything the engine did not say.
+///
+/// `nil` (no stored run) is deliberately NOT a case: both consumers already handle "no run"
+/// ahead of this type, and with different answers (`MigrationStepPlan` holds `.noRun`,
+/// `MigrationState.derive` falls back to the immediate send-max sweep). Folding them together
+/// would flatten a distinction that matters.
+enum MigrationEngineAnswer: Equatable, Sendable {
+    /// The whole provable set, earliest-ready first. Never empty (SDK contract).
+    case prove(transactions: [MigrationProveTarget])
+    /// This proven transaction is due for delivery.
+    case broadcast(id: UInt32)
+    /// This transfer expired unmined and must be re-signed in place.
+    case rebuild(id: UInt32)
+    /// The PLAN needs replacing — its unsatisfiable share passed the engine's replan threshold, or
+    /// dead value would otherwise be stranded. Names no transaction: the verdict is about the run,
+    /// not about any one row. The app's remedy is the re-plan lane (Figma C5 → B4 → scheduled).
+    case replan
+    /// A broadcast this app made was REJECTED by the node it went to, and the engine cannot yet say
+    /// why: its answer rests on chain state above what this wallet has scanned. Names no
+    /// transaction, and asks for nothing but a sync. NOT an attention state — the run is alive and
+    /// the user has nothing to decide.
+    case reevaluate
+    /// Nothing actionable at this height.
+    case waiting
+    /// The stored run is terminal — every transaction mined, or cancelled/failed/superseded.
+    case complete
+    /// INTERIM, DELETE WITH THE SDK SPLIT: the conduit's collapsed `Attend` bucket, which is either
+    /// a `.replan` or a `.reevaluate` and carries a synthesised id that at most one of them ever
+    /// had. Consumers must treat it as the CONSERVATIVE reading (see the file header) — never as a
+    /// confirmed replan.
+    case attentionCollapsed(id: UInt32)
+}
+
+extension MigrationEngineAnswer {
+    /// The ONE translation from the SDK's step to the app's vocabulary.
+    ///
+    /// When the SDK grows `.replan` / `.reevaluate`, add the two arms here and delete
+    /// `.attentionCollapsed` — that is the whole migration of this change.
+    init(step: MigrationAdvanceStep) {
+        switch step {
+        case let MigrationAdvanceStep.prove(transactions):
+            self = MigrationEngineAnswer.prove(transactions: transactions)
+        case let MigrationAdvanceStep.broadcast(id):
+            self = MigrationEngineAnswer.broadcast(id: id)
+        case let MigrationAdvanceStep.rebuild(id):
+            self = MigrationEngineAnswer.rebuild(id: id)
+        case MigrationAdvanceStep.waiting:
+            self = MigrationEngineAnswer.waiting
+        case MigrationAdvanceStep.complete:
+            self = MigrationEngineAnswer.complete
+        case let MigrationAdvanceStep.requiresAttention(id):
+            // The collapsed bucket. NOT `.replan`: see the file header for why guessing here is
+            // the one guess that can destroy pre-signed work.
+            self = MigrationEngineAnswer.attentionCollapsed(id: id)
+        }
+    }
+}

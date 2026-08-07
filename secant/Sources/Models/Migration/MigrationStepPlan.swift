@@ -120,6 +120,14 @@ enum MigrationStepAction: Equatable, Sendable {
     /// Attention SURVIVED a full sync: the obstruction is not transient and the run needs a
     /// decision only the user can take. Surface it; never sit on it.
     case escalateAttention(id: UInt32)
+    /// The engine says the PLAN needs replacing (`MigrationEngineAnswer.replan`). Hand off to the
+    /// re-plan lane immediately — no sync first, and NO transaction id, because the verdict is
+    /// about the run rather than any one row.
+    case replan
+    /// A broadcast was rejected by a node whose chain view is ahead of this wallet's
+    /// (`MigrationEngineAnswer.reevaluate`). Sync; the engine adjudicates on the next ask. Carries
+    /// no id and never involves the user — the run is alive and there is nothing to decide.
+    case reevaluate
     /// Nothing is actionable. Register the wake-ups and end the session honestly.
     case armWakeups
     /// The stored run is terminal. Stop polling it.
@@ -151,6 +159,11 @@ enum MigrationStepBlocker: Equatable, Sendable {
     /// `.requiresAttention` survived a full sync: a funding note left the wallet, or a broadcast was
     /// rejected outright. Amounts change, so a new plan needs the user's consent.
     case attentionNeedsNewPlan(id: UInt32)
+    /// The engine answered `.replan` outright: the plan's unsatisfiable share passed its replan
+    /// threshold, or dead value would be stranded. Amounts change, so the new plan needs the
+    /// user's consent — same lane as `attentionNeedsNewPlan`, but named by the engine rather than
+    /// inferred from a survived sync, and carrying NO id (the verdict names no transaction).
+    case runNeedsReplan
     /// The engine reports rows as ready-to-prove and the sweep proves none of them, repeatedly.
     /// Staying in the app does not help, so the app must stop asking the user to.
     case provingStalled
@@ -183,8 +196,29 @@ enum MigrationStepPlan {
     ) -> MigrationStepAction {
         guard let step else { return MigrationStepAction.nothing(MigrationStepHold.noRun) }
 
-        switch step {
-        case let MigrationAdvanceStep.broadcast(id):
+        return action(
+            for: MigrationEngineAnswer(step: step),
+            phase: phase,
+            isPreparationBroadcast: isPreparationBroadcast
+        )
+    }
+
+    /// The decision table itself, over the APP's answer vocabulary rather than the SDK's step.
+    ///
+    /// The indirection buys one thing and costs nothing: `MigrationEngineAnswer` distinguishes
+    /// upstream's `Replan` and `Reevaluate`, which the conduit currently folds into a single
+    /// `.requiresAttention(id:)` (see `MigrationEngineAnswer`'s header). Their two rows below are
+    /// therefore REAL and TESTED now, and go live the moment the SDK splits the case — no table
+    /// change, no new tests, nothing to remember.
+    ///
+    /// Still exhaustive with no `default:`, for the same reason as ever.
+    static func action(
+        for answer: MigrationEngineAnswer,
+        phase: MigrationOpenPhase,
+        isPreparationBroadcast: Bool = false
+    ) -> MigrationStepAction {
+        switch answer {
+        case let MigrationEngineAnswer.broadcast(id):
             switch phase {
             case MigrationOpenPhase.beforeSync:
                 // ZIP 318: a proven transfer is delivered in a session that does not sync.
@@ -207,7 +241,7 @@ enum MigrationStepPlan {
                 return MigrationStepAction.broadcast(id: id)
             }
 
-        case let MigrationAdvanceStep.prove(transactions):
+        case let MigrationEngineAnswer.prove(transactions):
             // The engine offers the WHOLE provable set (#2939) — earliest-ready first, never empty
             // (SDK contract; `transactions[0]` below leans on it, and a breached contract must
             // crash here rather than read as "no run"). The action still carries ONE id: the HEAD,
@@ -243,7 +277,7 @@ enum MigrationStepPlan {
                 return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             }
 
-        case let MigrationAdvanceStep.rebuild(id):
+        case let MigrationEngineAnswer.rebuild(id):
             switch phase {
             case MigrationOpenPhase.afterSync:
                 return MigrationStepAction.rebuild(id: id)
@@ -253,13 +287,54 @@ enum MigrationStepPlan {
                 return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             }
 
-        case let MigrationAdvanceStep.requiresAttention(id):
+        case MigrationEngineAnswer.replan:
+            // NO SYNC FIRST, and this is the whole point of telling replan apart. Upstream decides
+            // a replan against state it has ALREADY persisted — the unsatisfiable share of planned
+            // transfer value strictly exceeds the committed replan threshold, or dead value would
+            // be stranded — so the answer cannot change because the wallet scanned more blocks.
+            // Routed through the collapsed attention bucket it cost the user a whole sync pass
+            // staring at a run that was already finished deciding.
+            //
+            // Every phase answers the same, tick included. The tick deferral that `.rebuild` and
+            // the collapsed bucket below use exists to keep a 30s timer from re-anchoring work or
+            // ambushing the user with an escalation the next open would make anyway; neither
+            // applies here. The banner is ALREADY saying "Update migration plan" (the state
+            // derivation reads the same answer), so a deferring tick would not spare the user
+            // anything — it would only leave the driver's own record of WHY the run stopped
+            // un-written until the next open.
+            return MigrationStepAction.replan
+
+        case MigrationEngineAnswer.reevaluate:
+            switch phase {
+            case MigrationOpenPhase.beforeSync:
+                // The engine's entire contracted response: sync to at least the tip the rejecting
+                // node reported, then ask again. Nothing else is offered while a rejection report
+                // stands, so there is no other work to race.
+                return MigrationStepAction.reevaluate
+            case MigrationOpenPhase.afterSync, MigrationOpenPhase.tick:
+                // DELIBERATELY NOT AN ESCALATION — the one behaviour a reevaluate must never get.
+                // Upstream surfaces it unconditionally and keeps surfacing it until the wallet's
+                // scan reaches the tip that rejected the broadcast, which may take more than one
+                // session; treating "still reevaluating after a sync" as an attention state would
+                // tell the user to re-plan a live run over a rejection the engine has not even
+                // finished adjudicating. So this session ends honestly and the next open asks
+                // again. (What SHOULD happen if it never resolves is a real question with no
+                // designed answer yet — flagged for Lukas/nuttycom, 2026-08-07. Silence is the
+                // conservative placeholder, and the driver traces every occurrence.)
+                return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
+            }
+
+        case let MigrationEngineAnswer.attentionCollapsed(id):
             switch phase {
             case MigrationOpenPhase.beforeSync:
                 // The SDK's own discharge, in two beats: SYNC and re-ask, because the engine
                 // adjudicates against scanned data and the obstruction is often transient; only if
                 // it survives that sync does the user get involved. Doing the cheap automatic half
                 // first is what keeps an attention state from becoming a support ticket.
+                //
+                // Under the collapse this is also the SAFE reading of an ambiguous answer: a
+                // reevaluate gets exactly what it asked for, and a replan pays one wasted pass.
+                // The reverse guess would discard a live run's pre-signed transfers.
                 return MigrationStepAction.resync(id: id)
             case MigrationOpenPhase.afterSync:
                 return MigrationStepAction.escalateAttention(id: id)
@@ -270,10 +345,10 @@ enum MigrationStepPlan {
                 return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             }
 
-        case MigrationAdvanceStep.waiting:
+        case MigrationEngineAnswer.waiting:
             return MigrationStepAction.armWakeups
 
-        case MigrationAdvanceStep.complete:
+        case MigrationEngineAnswer.complete:
             return MigrationStepAction.finish
         }
     }

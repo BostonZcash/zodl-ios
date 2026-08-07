@@ -519,7 +519,8 @@ extension Root {
                 // already sends after a manual delivery (see `RootCoordinator.swift`) — harmless
                 // when nothing visibly changed, since the re-read just returns the same variant.
                 case MigrationStepVerdict.broadcast, MigrationStepVerdict.rebuilt, MigrationStepVerdict.needsUser,
-                     MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved:
+                     MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved,
+                     MigrationStepVerdict.reevaluating:
                     return .send(.home(.smartBanner(.migrationReevaluationRequested)))
                 // Quiet: nothing changed, and arming/logging already handled the rest inside the
                 // driver — see `advance(phase:)`'s tick-specific hygiene. `.notApplicable` sits

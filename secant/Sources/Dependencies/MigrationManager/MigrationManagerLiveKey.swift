@@ -3762,6 +3762,29 @@ enum MigrationDerivations {
         isCompleteAcknowledged: Bool,
         progress: MigrationProgress?
     ) -> MigrationReentryRoute {
+        reentryRoute(
+            isIronwoodActivated: isIronwoodActivated,
+            state: state,
+            answer: advanceStep.map(MigrationEngineAnswer.init(step:)),
+            hasInvalid: hasInvalid,
+            hasOverdue: hasOverdue,
+            isCompleteAcknowledged: isCompleteAcknowledged,
+            progress: progress
+        )
+    }
+
+    /// The route table itself, over the app's answer vocabulary — so the `.replan` and
+    /// `.reevaluate` arms are reachable (and pinned) before the SDK splits them out of
+    /// `.requiresAttention`. See `MigrationEngineAnswer`.
+    static func reentryRoute(
+        isIronwoodActivated: Bool,
+        state: MigrationState,
+        answer: MigrationEngineAnswer?,
+        hasInvalid: Bool,
+        hasOverdue: Bool,
+        isCompleteAcknowledged: Bool,
+        progress: MigrationProgress?
+    ) -> MigrationReentryRoute {
         guard isIronwoodActivated else { return MigrationReentryRoute.entry }
 
         if hasInvalid {
@@ -3779,11 +3802,23 @@ enum MigrationDerivations {
         // the state arms happened to derive — usually "in progress" — while the engine waited
         // forever for a screen nothing routed to. Automatic discharge (`MigrationStepDriver`)
         // handles the cases it can; this is the route for the cases it cannot.
-        switch advanceStep {
-        case MigrationAdvanceStep.rebuild?:
+        switch answer {
+        case MigrationEngineAnswer.rebuild?:
             return MigrationReentryRoute.recovery(isExpired: true)
-        case MigrationAdvanceStep.requiresAttention?:
+        case MigrationEngineAnswer.replan?:
+            // THE RE-PLAN LANE, named by the engine. Never `isExpired` — a replan is about the
+            // plan's coverage, not about any transfer's expiry, so it lands on the notes-spent
+            // screen (Figma C5) whose Continue discharges the run and re-plans. No
+            // `isTransferExpired` consultation: that read exists to disambiguate the COLLAPSED
+            // answer below, and there is nothing to disambiguate here.
+            return MigrationReentryRoute.recovery(isExpired: false)
+        case MigrationEngineAnswer.attentionCollapsed?:
             return MigrationReentryRoute.recovery(isExpired: isTransferExpired(state))
+        case MigrationEngineAnswer.reevaluate?:
+            // DELIBERATELY NOT A ROUTE. The engine wants a sync, not a user — routing here would
+            // hand the user a "re-plan this run" button for a live run whose transfers are all
+            // intact. Falls through to the state arms, which read it as the in-progress run it is.
+            break
         default:
             break
         }
@@ -3820,7 +3855,7 @@ enum MigrationDerivations {
         // (The `reviewManual` arm that followed this one was REMOVED 2026-08-07 with the whole
         // manual-tap send surface.)
         let isBroadcastOffered: Bool
-        if case MigrationAdvanceStep.broadcast? = advanceStep { isBroadcastOffered = true } else { isBroadcastOffered = false }
+        if case MigrationEngineAnswer.broadcast? = answer { isBroadcastOffered = true } else { isBroadcastOffered = false }
 
         if hasOverdue && isBroadcastOffered {
             return MigrationReentryRoute.statusResume
