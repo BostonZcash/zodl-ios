@@ -93,16 +93,6 @@ struct MigrationStatus {
         /// `AlertState.migrationTorOffWarning` the Sending lane presents (its exact `@Presents`
         /// + scoped-`.alert` shape).
         @Presents var alert: AlertState<Action>?
-        /// MOB-1466: true while the rows on screen are not this app-open's answer and a fresh
-        /// derivation is still in flight — the "Updating…" label (spinner plus "Updating…").
-        ///
-        /// R13 Brick 2: the pre-first-frame source is now the PUBLISHED snapshot
-        /// (`currentMigrationSnapshot` — the channel's own last value), primed synchronously in
-        /// `onAppear`; staleness is judged by the same `isMigrationViewFresh` signal the banner's
-        /// `.checkingStatus` reads (a value published in an earlier session is real, merely from a
-        /// moment ago — the screen says so rather than passing it off as current). Every live
-        /// emission clears it: an emission IS this session's fresh derivation landing.
-        var isUpdating = false
         /// Handover O2 (the QA force-quit): true when the screen was presented before ANY session
         /// ever published a snapshot — the coordinator's hydration read a `nil` published window
         /// (typically: first open of the process while a prove sweep holds the DB actor). The
@@ -358,8 +348,10 @@ struct MigrationStatus {
                 // screen drew nothing until an async read returned — measured at 4.75 s on a quiet
                 // open and 18.3 s while the prove sweep held the wallet database. So it paints the
                 // channel's LAST PUBLISHED value synchronously, before the first frame — that is
-                // painting THE source, not a side cache — and `isUpdating` says when that value is
-                // an earlier session's answer rather than passing it off as current.
+                // painting THE source, not a side cache. (Until 2026-08-07 an `isUpdating` flag
+                // also labelled that value as an earlier session's answer, and an `asOfSyncedAt`
+                // age line sat beside it. Neither was ever in a design; both are gone. The screen
+                // states what IS, and says nothing about the freshness of its own plumbing.)
                 //
                 // Guarded on `rows.isEmpty` so it never clobbers fresher rows the coordinator's own
                 // re-entry hydration already put in state.
@@ -369,19 +361,18 @@ struct MigrationStatus {
                     state.rows = IdentifiedArrayOf(uniqueElements: published.transfers)
                     state.totalDurationHours = published.summary.estimatedDurationHours
                     state.isTorHoldActive = published.isTorHoldActive
-                    state.isUpdating = !migrationManager.isMigrationViewFresh()
                     // The render half of the pipeline audit: this line's figures must echo the
                     // manager's own "SNAPSHOT: published" line — DB → loader → channel → pixels,
                     // confirmable by grep.
                     MigrationTrace.event(
-                        "SNAPSHOT applied @ status (primed, updating \(state.isUpdating))"
+                        "SNAPSHOT applied @ status (primed)"
                         + " — done \(published.doneTransfers)/\(published.totalTransfers)"
                         + " · rows \(published.transfers.count)"
                         + " · iw \(published.ironwoodHeld.decimalString())"
                     )
                 }
                 // R3 in channel form: every open re-verifies — one coalesced rebuild lands as the
-                // subscription's first live emission and clears `isUpdating`.
+                // subscription's first live emission and replaces the primed value.
                 migrationManager.refreshMigrationSnapshot(accountUUID)
                 return .merge(
                     .publisher {
@@ -470,7 +461,6 @@ struct MigrationStatus {
                 return .send(.delegate(.reschedule))
 
             case .snapshotUpdated(let snapshot):
-                state.isUpdating = false
                 state.isEvaluating = false
                 state.poolFlow = snapshot
                 state.rows = IdentifiedArrayOf(uniqueElements: snapshot.transfers)

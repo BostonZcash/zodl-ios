@@ -39,8 +39,7 @@ import ComposableArchitecture
             isTorHoldActive: false,
             needsTorFirstRunChoice: false,
             isSubmitting: false,
-            sessionOrdinal: 1,
-            asOfSyncedAt: nil
+            sessionOrdinal: 1
         )
     }
 
@@ -96,7 +95,6 @@ import ComposableArchitecture
             client.currentMigrationSnapshot = { _ in published }
             client.refreshMigrationSnapshot = { _ in }
             client.migrationSnapshotEvents = { _ in Empty().eraseToAnyPublisher() }
-            client.isMigrationViewFresh = { true }
             $0.migrationManager = client
 
             $0.sdkSynchronizer = .mocked(

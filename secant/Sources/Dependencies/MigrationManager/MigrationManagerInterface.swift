@@ -264,13 +264,6 @@ struct MigrationManagerClient: Sendable {
     // required macro default, not a test fallback (see the `recordCommittedSchedule` note above).
     var isMigrationTorHoldActive: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
 
-    /// ONE DERIVATION, TWO RENDERINGS: whether the cached migration view was produced by the LIVE
-    /// session. Read by the smart banner AND by the migration screen, so the two can no longer
-    /// disagree about whether what they are showing is this app-open's answer.
-    ///
-    /// Defaults `true` so no test or preview accidentally renders a permanent "checking" state.
-    var isMigrationViewFresh: @Sendable () -> Bool = { true }
-
     /// GROUND_RULES R3: whether the CURRENT app-open's first engine verdict has been heard. The
     /// smart banner holds `.checkingStatus` (Figma 5679-8225) until this is `true` — the state
     /// ends on the verdict, never on a timer. Defaults `true` for the same reason as above.

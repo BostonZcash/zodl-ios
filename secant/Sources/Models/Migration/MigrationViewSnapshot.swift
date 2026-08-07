@@ -123,13 +123,6 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// each surface deciding for itself. That is the simplification the single source buys.
     let sessionOrdinal: Int?
 
-    /// R13 (refinement 3): when the wallet's store last finished a sync — the AGE of every
-    /// wallet-derived fact in this snapshot (`ironwoodHeld`, the `.sent` greens behind
-    /// `doneTransfers`). During a deliberate send-visit hold (ZIP-318) the store is frozen by
-    /// design; old truth may be shown ONLY labeled with its age, and this is the label's source.
-    /// `nil` when no sync has ever completed. Brick 3 renders it; carried from Brick 1 so the
-    /// derivation pass is complete before any surface asks.
-    let asOfSyncedAt: Date?
 
     /// Whether this snapshot was produced by the live app-open.
     func isFresh(currentSessionOrdinal: Int?) -> Bool {
@@ -167,6 +160,5 @@ struct MigrationViewSnapshot: Equatable, Sendable {
         needsTorFirstRunChoice: false,
         isSubmitting: false,
         sessionOrdinal: nil,
-        asOfSyncedAt: nil
     )
 }

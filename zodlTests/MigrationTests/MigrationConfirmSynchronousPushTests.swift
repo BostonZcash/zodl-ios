@@ -102,8 +102,7 @@ import Testing
             isTorHoldActive: false,
             needsTorFirstRunChoice: false,
             isSubmitting: false,
-            sessionOrdinal: 1,
-            asOfSyncedAt: nil
+            sessionOrdinal: 1
         )
     }
 

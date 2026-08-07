@@ -173,7 +173,6 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
-            isMigrationViewFresh: { impl.isMigrationViewFresh },
             isMigrationSessionVerdictKnown: { impl.isMigrationSessionVerdictKnown() },
             migrationViewSnapshot: { accountUUID in await impl.migrationViewSnapshot(accountUUID: accountUUID) },
             overrideTorForRun: { accountUUID, useTor in
@@ -817,7 +816,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // "keep Zodl open" and the timeline's spinner turn on and off together.
             isSubmitting: broadcastsInFlight.withLock { $0.contains(resolved) },
             sessionOrdinal: MigrationTrace.currentSessionOrdinal,
-            asOfSyncedAt: gateStorage.lastSyncCompletedAt()
         )
         // Goal #6: both header figures, every derivation, so the claim can be READ rather than
         // eyeballed on a device. `settled false` is the destination trailing the checkmarks and is
@@ -1047,23 +1045,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     var isMigrationWorkInFlight: Bool { migrationWorkInFlight.withLock { $0 } }
-
-    /// ONE DERIVATION, TWO RENDERINGS — whether the PUBLISHED migration snapshot was produced by
-    /// the LIVE session, and so whether any surface rendering it is showing this app-open's answer
-    /// or the last one's.
-    ///
-    /// Both the banner and the migration screen read this. That is the entire point: they can no
-    /// longer disagree about freshness, because there is one answer and they share it.
-    ///
-    /// `false` before the first publish of a session — which is correct, and is what lets a
-    /// surface show "checking" instead of last session's conclusion.
-    var isMigrationViewFresh: Bool {
-        guard let current = MigrationTrace.currentSessionOrdinal else { return false }
-        return viewSnapshotSession.withLock { $0 } == current
-    }
-
-    /// The session ordinal the snapshot pipeline last published in — see `isMigrationViewFresh`.
-    private let viewSnapshotSession = OSAllocatedUnfairLock<Int?>(initialState: nil)
 
     /// GOAL 1: whether the wallet is caught up enough to be ASKED about migrating — see the gate in
     /// `bannerVariantUntimed`.
@@ -3313,10 +3294,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// changed nothing says so, and a published value prints the exact figures every surface's own
     /// "SNAPSHOT applied" line must echo. DB → loader → channel → pixels, confirmable by grep.
     private func publishSnapshot(_ snapshot: MigrationViewSnapshot, for accountUUID: AccountUUID) {
-        // The session-freshness stamp lives at the publish point now (the rows cache it used
-        // to ride on is retired): a build that completed THIS session is what "fresh" means.
-        viewSnapshotSession.withLock { $0 = MigrationTrace.currentSessionOrdinal }
-
         let subject = snapshotSubjects.withLock { subjects -> CurrentValueSubject<MigrationViewSnapshot?, Never> in
             if let existing = subjects[accountUUID] {
                 return existing
@@ -4846,7 +4823,6 @@ final class MigrationGateStorage: @unchecked Sendable {
     }
 
     /// R13 (refinement 3): the stored sync-completion timestamp, exposed as the snapshot's
-    /// `asOfSyncedAt` — the age label for every wallet-derived fact on screen.
     func lastSyncCompletedAt() -> Date? {
         storedLastSyncCompletedAt()
     }

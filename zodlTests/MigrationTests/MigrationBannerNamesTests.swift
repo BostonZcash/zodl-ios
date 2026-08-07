@@ -113,3 +113,36 @@ import Testing
         #expect(Self.idle.contains("notify"))
     }
 }
+
+/// F6 (Lukas, 2026-08-07): the Status footer follows the BANNER, not a condition of its own —
+/// "the info is tied to what banner says or is doing… the info should not have independent
+/// conditions." Three sentences, one per state family. Pinned so the mapping cannot quietly
+/// collapse back to one string the way it stood before today.
+@Suite struct MigrationStatusFooterForkTests {
+    private static let preparing = String(localizable: .migrationStatusFooterPreparing)
+    private static let broadcasting = String(localizable: .migrationStatusFooterBroadcasting)
+    private static let idle = String(localizable: .migrationStatusFooterIdle)
+
+    @Test func theThreeSentencesAreDistinct() {
+        #expect(Self.preparing != Self.broadcasting)
+        #expect(Self.preparing != Self.idle)
+        #expect(Self.broadcasting != Self.idle)
+    }
+
+    /// The two WORKING states warn that leaving pauses the run; the idle one must not — nothing is
+    /// running to pause, and saying otherwise would make the warning meaningless where it matters.
+    @Test func onlyTheWorkingSentencesWarnAboutLeaving() {
+        #expect(Self.preparing.contains("pause if you leave"))
+        #expect(Self.broadcasting.contains("pause if you leave"))
+        #expect(!Self.idle.contains("pause if you leave"))
+    }
+
+    /// The footer no longer borrows the banner's terse line. That stand-in was correct in exactly
+    /// two states and wrong in the rest, which is the defect this fork exists to close.
+    @Test func noSentenceIsTheBorrowedBannerString() {
+        let borrowed = String(localizable: .migrationBannerKeepOpenInfo)
+        #expect(Self.preparing != borrowed)
+        #expect(Self.broadcasting != borrowed)
+        #expect(Self.idle != borrowed)
+    }
+}

@@ -107,8 +107,7 @@ import ZcashLightClientKit
             isTorHoldActive: false,
             needsTorFirstRunChoice: false,
             isSubmitting: true,
-            sessionOrdinal: 1,
-            asOfSyncedAt: nil
+            sessionOrdinal: 1
         )
 
         #expect(submitting.isSubmitting)

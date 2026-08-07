@@ -12949,40 +12949,6 @@
         }
       }
     },
-    "migrationStatus.asOfHours" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Balances as of ~%1$lld h ago — updates on next sync"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Saldos de hace ~%1$lld h — se actualizan en la próxima sincronización"
-          }
-        }
-      }
-    },
-    "migrationStatus.asOfMins" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Balances as of ~%1$lld min ago — updates on next sync"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Saldos de hace ~%1$lld min — se actualizan en la próxima sincronización"
-          }
-        }
-      }
-    },
     "migrationStatus.desc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13052,6 +13018,39 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Evaluando el estado…"
+          }
+        }
+      }
+    },
+    "migrationStatus.footerBroadcasting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open until the transaction is sent. The process will pause if you leave the app."
+          }
+        }
+      }
+    },
+    "migrationStatus.footerIdle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open in the background. We'll notify you when it's time to take the next action."
+          }
+        }
+      }
+    },
+    "migrationStatus.footerPreparing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open until transfers are prepared. The process will pause if you leave the app."
           }
         }
       }
@@ -13256,23 +13255,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Progreso de la migración"
-          }
-        }
-      }
-    },
-    "migrationStatus.updating" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Updating…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Actualizando…"
           }
         }
       }

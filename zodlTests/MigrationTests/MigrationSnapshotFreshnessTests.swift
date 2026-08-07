@@ -186,60 +186,8 @@ import ComposableArchitecture
         }
     }
 
-    /// `isMigrationViewFresh` flips when a snapshot PUBLISHES — the stamp moved from the
-    /// retired rows-cache population site to the publish point.
-    @Test func viewFreshnessStampsOnPublish() async throws {
-        Self.installCandidateAccount()
-
-        await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.atTipState() },
-                migrationTransactionStatuses: { _ in [Self.oneTransferStatus()] },
-                getMigrationProgress: { _ in Self.someProgress() }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-        } operation: {
-            let manager = MigrationManagerImpl()
-
-            #expect(!manager.isMigrationViewFresh)
-
-            let received = LockIsolated<MigrationViewSnapshot?>(nil)
-            var cancellables = Set<AnyCancellable>()
-            manager.migrationSnapshotEvents(accountUUID: Self.accountUUID)
-                .sink { snapshot in received.setValue(snapshot) }
-                .store(in: &cancellables)
-
-            // `MigrationTrace`'s session is PROCESS-GLOBAL — Root begins one on cold launch and on
-            // foreground (RootInitialization.swift) — and sibling suites run in parallel, so one can
-            // roll the ordinal between the publish below and this test's own read of
-            // `currentSessionOrdinal`. That race can only produce a false FAILURE, never a false
-            // pass: rolling makes the equality check compare two different numbers, it can never
-            // make a missing stamp look present. One bounded retry covers the narrow window: reclaim
-            // the session, redrive the publish, and trust the result only once the ordinal it was
-            // driven under is still current at the moment of the check — ending only the session
-            // this test itself began, never a sibling's that a roll left current instead.
-            var isFresh = false
-            for attempt in 0..<2 {
-                received.setValue(nil)
-                MigrationTrace.beginSession(cause: MigrationTrace.Cause.foreground, tip: Self.tip)
-                let drivenOrdinal = MigrationTrace.currentSessionOrdinal
-                defer {
-                    if MigrationTrace.currentSessionOrdinal == drivenOrdinal {
-                        MigrationTrace.endSession(reason: "test cleanup")
-                    }
-                }
-
-                manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
-                await Self.waitUntil { received.value != nil }
-
-                isFresh = manager.isMigrationViewFresh
-                let ordinalStillCurrent = drivenOrdinal != nil && MigrationTrace.currentSessionOrdinal == drivenOrdinal
-                if ordinalStillCurrent || attempt == 1 {
-                    break
-                }
-            }
-
-            #expect(isFresh)
-        }
-    }
+    // (`viewFreshnessStampsOnPublish` — the pin for `isMigrationViewFresh` — was REMOVED
+    // 2026-08-07 with the probe itself. Its only production consumers were the migration
+    // screen's `isUpdating` writes, and that label was never in any design — nor was the
+    // `asOfSyncedAt` age line that went with it on the same day.)
 }

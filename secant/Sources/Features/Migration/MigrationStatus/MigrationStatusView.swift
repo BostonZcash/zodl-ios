@@ -41,9 +41,9 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationStatusView: View {
-    /// Passed to every `.color(_:)` on this screen. The `updatingNote` spinner shipped with a
-    /// hardcoded `.light` and was invisible in dark mode — same defect as the pool header's bubbles,
-    /// same fix: the token holds both values, the caller supplies the appearance.
+    /// Passed to every `.color(_:)` on this screen. The retired `updatingNote` spinner shipped
+    /// with a hardcoded `.light` and was invisible in dark mode — same defect as the pool header's
+    /// bubbles, same fix: the token holds both values, the caller supplies the appearance.
     @Environment(\.colorScheme) private var colorScheme
 
     /// The header's fiat lines — the same app-wide shared rate the timeline rows self-read
@@ -75,22 +75,16 @@ struct MigrationStatusView: View {
                                 .zFont(size: 14, style: Design.Text.tertiary)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .padding(.bottom, asOfLine == nil ? 24 : 4)
-                        }
-
-                        // R13-3 (Brick 3, the VISIBLE BLINDFOLD): during a deliberate no-sync hold
-                        // (ZIP 318's send visit) the wallet-derived facts on this screen — greens,
-                        // pool values — are frozen by design, and R13's charter permits showing
-                        // old truth ONLY labeled with its age. `asOfSyncedAt` (Brick 1) is that
-                        // label's source; this line renders it once the age is old enough to
-                        // matter. Re-derives on every snapshot publish — between publishes the
-                        // stated age can lag, which errs stale-looking, never fresh-looking.
-                        if let asOfLine {
-                            Text(asOfLine)
-                                .zFont(size: 12, style: Design.Text.tertiary)
-                                .multilineTextAlignment(.leading)
                                 .padding(.bottom, 24)
                         }
+
+                        // (R13-3's "Balances as of ~N min ago" age line stood here until
+                        // 2026-08-07. Lukas: "asOfLine is wrong and never requested." It was our
+                        // answer to a charter question — how to show frozen facts honestly during
+                        // ZIP 318's no-sync hold — not a designed element, and it put the freshness
+                        // of our own reads in front of a reader who can only act on the facts
+                        // themselves. Removed alongside `updatingNote`, the other never-designed
+                        // staleness label, in the same wave.)
 
                         // The ORCHARD→IRONWOOD pool header, RESTORED per Andrea's final design
                         // (Figma 5139-34627) after R9's same-day arc (dropped → record corrected →
@@ -114,10 +108,6 @@ struct MigrationStatusView: View {
                                 currencyConversion: currencyConversion
                             )
                             .padding(.bottom, 24)
-                        }
-
-                        if store.isUpdating {
-                            updatingNote
                         }
 
                         MigrationTransferTimeline(
@@ -301,20 +291,6 @@ struct MigrationStatusView: View {
         }
     }
 
-    /// R13-3: the wallet-facts age label, from the snapshot's own `asOfSyncedAt` (see the render
-    /// site's comment). `nil` — line hidden — when no sync has ever completed (nothing honest to
-    /// state) or when the age is under the threshold (fresh enough that a label is noise; 2 min,
-    /// a couple of minutes). Bucketed to minutes then hours, floored — a floored age errs
-    /// stale-looking, never fresh-looking.
-    private var asOfLine: String? {
-        guard let syncedAt = store.poolFlow.asOfSyncedAt else { return nil }
-        let ageMinutes = Int(Date().timeIntervalSince(syncedAt) / 60)
-        guard ageMinutes >= 2 else { return nil }
-        return ageMinutes < 60
-            ? String(localizable: .migrationStatusAsOfMins(ageMinutes))
-            : String(localizable: .migrationStatusAsOfHours(ageMinutes / 60))
-    }
-
     // MARK: - Caption
 
     private func caption(for row: MigrationTransferRow) -> String {
@@ -438,27 +414,6 @@ struct MigrationStatusView: View {
         }
     }
 
-    // MARK: - Updating note
-
-    /// Shown while the rows on screen came from the cache and a fresh read is still running — see
-    /// `MigrationStatus.State.isUpdating`.
-    ///
-    /// The screen draws instantly now, which is only honest if it also says the data is from a
-    /// moment ago. This is that sentence, and it is small on purpose: the rows below it are real,
-    /// not a placeholder, and the note is a caveat rather than a state of its own.
-    @ViewBuilder private var updatingNote: some View {
-        HStack(spacing: 6) {
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: Design.Text.tertiary.color(.light)))
-                .scaleEffect(0.6)
-                .frame(width: 12, height: 12)
-
-            Text(localizable: .migrationStatusUpdating)
-                .zFont(size: 12, style: Design.Text.tertiary)
-        }
-        .padding(.bottom, 12)
-    }
-
     // MARK: - Evaluating note
 
     /// Handover O2: the data zone's stand-in when the screen was presented before any session
@@ -495,25 +450,50 @@ struct MigrationStatusView: View {
     }
 
     /// The `.progress` presentation's info footer — the final frame (Figma 5139-34627) pins one
-    /// between the timeline and the "Got it" button, and until this slot existed the progress
-    /// presentation had no footer at all (only `.resume` carried one). Same row shape as
-    /// `footerNote` above: info icon + 12pt tertiary caption.
+    /// between the timeline and the "Got it" button. Same row shape as `torHoldNote` above: info
+    /// icon + 12pt tertiary caption.
     ///
-    /// PENDING DESIGN COPY (Figma 5139-34627): "Keep Zodl open until transfers are prepared. The process
-    /// will pause if you leave the app." — no existing key carries it, and no new user-visible
-    /// strings may be minted here (R1; keys are Andrea's/the strings pass's to add).
-    /// `migrationBannerKeepOpenInfo` ("Keep Zodl open on active phone screen") is the closest
-    /// existing key — same keep-the-app-open ask, banner-terse — standing in until the designed
-    /// sentence lands in the catalogue.
+    /// F6 (Lukas, 2026-08-07) — STATE-DRIVEN, off `poolFlow.banner`, the same
+    /// `MigrationBannerVariant` the banner renders from and the same signal the header paragraph
+    /// forks on. The rule he set: "the info is tied to what banner says or is doing… the info
+    /// should not have independent conditions." Until today this slot rendered ONE borrowed
+    /// banner string (`migrationBanner.keepOpenInfo`) for the entire presentation — right in the
+    /// two states where the banner also said keep-open, wrong in every other.
+    ///
+    /// Header and footer are not duplicates: the header states what is happening, the footer what
+    /// happens if you leave. The C5 frame draws both.
+    ///
+    /// `default` is the idle sentence, and that is safe by construction — only four variants reach
+    /// `.progress` (see `description`'s own note): `.checkingStatus` no longer opens this screen,
+    /// and `hasInvalid` routes to `.recovery` ahead of every state arm.
     @ViewBuilder private var progressFooterNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Text.tertiary)
 
-            Text(localizable: .migrationBannerKeepOpenInfo)
+            Text(footerSentence)
                 .zFont(size: 12, style: Design.Text.tertiary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// One sentence per banner state — see `progressFooterNote`. Whole sentences rather than a
+    /// shared stem with a swapped verb, for the reason the header's fork records: a verb slotted
+    /// into a sentence does not survive a language that reorders clauses.
+    private var footerSentence: String {
+        switch store.poolFlow.banner {
+        case .preparing:
+            // Covers the split's PROVE and its BROADCAST alike: a preparation submit deliberately
+            // wears the preparing costume (`preparationBroadcastsInFlight`), never "Transfer N is
+            // sending", so both halves of the split lane land here. Lukas accepted the imprecision
+            // — "it's kinda weird to say prepared while it's sending split.. but it's what it is
+            // in Figma" — and the ask itself stays correct either way.
+            return String(localizable: .migrationStatusFooterPreparing)
+        case .transferSending:
+            return String(localizable: .migrationStatusFooterBroadcasting)
+        default:
+            return String(localizable: .migrationStatusFooterIdle)
         }
     }
 

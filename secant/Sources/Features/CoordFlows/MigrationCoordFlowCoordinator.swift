@@ -1310,9 +1310,6 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot
         )
         state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
-        // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
-        // signal the banner's `.checkingStatus` reads.
-        state.isUpdating = snapshot != nil && !migrationManager.isMigrationViewFresh()
         state.isEvaluating = snapshot == nil
         if let snapshot {
             state.poolFlow = snapshot
@@ -1330,7 +1327,6 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot
         )
         state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
-        state.isUpdating = snapshot != nil && !migrationManager.isMigrationViewFresh()
         state.isEvaluating = snapshot == nil
         if let snapshot {
             state.poolFlow = snapshot
