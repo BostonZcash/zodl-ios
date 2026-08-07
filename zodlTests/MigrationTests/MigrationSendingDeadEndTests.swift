@@ -28,7 +28,7 @@ import ComposableArchitecture
 
 @Suite(.serialized) @MainActor struct MigrationSendingDeadEndTests {
     private static func store() -> TestStoreOf<MigrationSending> {
-        var state = MigrationSending.State(totalCount: 1, isManualStepLane: true)
+        var state = MigrationSending.State(totalCount: 1)
         state.phase = .sending
         state.isFailurePresented = true
         state.failureKind = .plainRetry

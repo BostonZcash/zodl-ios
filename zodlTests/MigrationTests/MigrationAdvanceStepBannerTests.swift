@@ -61,8 +61,6 @@ import ZcashLightClientKit
         progress: MigrationProgress? = nil,
         statuses: [MigrationTransactionStatus] = [],
         hasInvalid: Bool = false,
-        isManualDelivery: Bool = false,
-        isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
         orchardBalance: Zatoshi = Zatoshi(500_000_000),
         isCompleteAcknowledged: Bool = false,
@@ -77,8 +75,6 @@ import ZcashLightClientKit
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            isManualDelivery: isManualDelivery,
-            isNextTransferDue: isNextTransferDue,
             orchardBalance: orchardBalance,
             isCompleteAcknowledged: isCompleteAcknowledged,
             isMigrationRemainderPending: false,
@@ -257,19 +253,6 @@ import ZcashLightClientKit
             isBroadcastInFlight: true
         )
         #expect(variant == .transferSending(number: 2))
-    }
-
-    /// The same engine answer in a MANUAL-delivery run: the driver deliberately does not broadcast,
-    /// so the banner asks the user to, and its button reads "Review" rather than "More".
-    @Test func aManualBroadcastAsksTheUserToReview() {
-        let variant = Self.banner(
-            advanceStep: .broadcast(id: 1),
-            progress: Self.progress(),
-            isManualDelivery: true,
-            isNextTransferDue: true
-        )
-        #expect(variant == .transferReady(number: 2))
-        #expect(variant?.buttonLabel == String(localizable: .sendReview))
     }
 
     // MARK: - Coverage

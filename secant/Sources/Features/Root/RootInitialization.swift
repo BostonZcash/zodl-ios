@@ -600,12 +600,12 @@ extension Root {
                 // instead of freeing it.
                 let tickLoopCanConsumeTheStop = migrationTickInterval > Swift.Duration.zero
                 let stopEffect: Effect<Action>
-                // Short-circuited deliberately, not pre-computed: `migrationMode`/
-                // `isManualDelivery` must only be READ when a stop is otherwise on the table.
-                // Suites that drive `.migrationSyncGateChanged` without a `.privateScheduled`
-                // scenario in mind (e.g. `RootMigrationGateRefusalTests`) never stub either
-                // closure — calling them unconditionally would trap on every gate emission,
-                // not just the ones this handler's stop half actually cares about.
+                // Short-circuited deliberately, not pre-computed: `migrationMode` must only be
+                // READ when a stop is otherwise on the table. Suites that drive
+                // `.migrationSyncGateChanged` without a `.privateScheduled` scenario in mind
+                // (e.g. `RootMigrationGateRefusalTests`) never stub the closure — calling it
+                // unconditionally would trap on every gate emission, not just the ones this
+                // handler's stop half actually cares about.
                 if isGenuineChange && isBlocked && tickLoopCanConsumeTheStop {
                     let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
                         selectedAccountUUID: state.selectedWalletAccount?.id,
@@ -613,7 +613,6 @@ extension Root {
                     )
                     let stoppableCandidateUUIDs = accountUUIDs.filter { accountUUID in
                         migrationManager.migrationMode(accountUUID) == MigrationMode.privateScheduled
-                            && !migrationManager.isManualDelivery(accountUUID)
                     }
                     stopEffect = stoppableCandidateUUIDs.isEmpty
                         ? .none
@@ -709,18 +708,8 @@ extension Root {
                 guard sdkSynchronizer.latestState().syncStatus.isPrepared else {
                     return .none
                 }
-                // Audit 2026-08-03 (#19, unblocked by #8): the Send-now silence-window fence's
-                // promised reader — the fence was written (set while `.waiting`, cleared on
-                // broadcast-start/cancel/close) but nothing ever read it, and with the Send-now
-                // lane now actually armed a foreground trigger routing through here could restart
-                // sync mid-wait, re-stamping the very quiet-period the wait exists to let pass.
-                // Defer WITHOUT alerting and WITHOUT consuming the resume flags — the wait's own
-                // exit paths clear the fence and sync resumes through the normal roads.
-                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
-                if migrationSendWaitActive {
-                    LoggerProxy.event("\(MigrationManagerImpl.logTag) retryStart deferred — Send-now silence window active")
-                    return .none
-                }
+                // (The Send-now silence-window fence read that lived here was REMOVED 2026-08-07
+                // with the Send-now lanes — nothing sets the fence anymore.)
                 // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
                 // #12 — see the gate-resume comment above). An early return above leaves them
                 // armed so the gate's next emission can retry the whole resume.

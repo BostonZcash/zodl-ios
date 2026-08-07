@@ -115,7 +115,8 @@ struct MigrationTransferPlan {
     struct State: Equatable {
         enum Variant: Equatable {
             case scheduled
-            case manual
+            // (`.manual` — the manual-delivery plan variant — was REMOVED 2026-08-07 with the
+            // whole manual-tap send surface. Its only constructor was a #Preview.)
             case recreated
         }
 

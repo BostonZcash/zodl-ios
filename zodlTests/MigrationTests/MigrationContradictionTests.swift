@@ -58,15 +58,11 @@ import ZcashLightClientKit
         state: MigrationState,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        isManualDelivery: Bool = false,
-        isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            isManualDelivery: isManualDelivery,
-            isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -76,15 +72,12 @@ import ZcashLightClientKit
         )
     }
 
-    /// Extracts the transfer number out of the per-transfer "actionable" variant that carries one
-    /// (`.transferReady` — the waiting flavor retired with THE BANNER MAP, 2026-08-06), or `nil`
-    /// for every other variant.
+    /// Extracts the transfer number out of a per-transfer "actionable" variant that carries one,
+    /// or `nil` for every other variant. (No remaining variant carries one — the ready flavor was
+    /// removed 2026-08-07 with the manual-tap send surface — so this now answers `nil` for every
+    /// input; kept so invariant 1 keeps its shape.)
     private static func actionableNumber(_ variant: MigrationBannerVariant?) -> Int? {
-        guard let variant else { return nil }
-        if case let .transferReady(number) = variant {
-            return number
-        }
-        return nil
+        nil
     }
 
     /// True iff `variant` is `.transferSending`, for ANY number — invariant 2 needs this because
@@ -172,8 +165,6 @@ import ZcashLightClientKit
             state: .inProgress(Self.progress(completed: sentCount, total: transferRows.count)),
             transferRows: transferRows,
             preparationRows: preparationRows,
-            isManualDelivery: false,
-            isNextTransferDue: false,
             isBroadcastInFlight: false
         )
 
@@ -208,7 +199,7 @@ import ZcashLightClientKit
     /// also be broadcast-and-unmined. Rather than pin that one shape, this generates a bounded
     /// matrix of row sets — 3..6 rows, an overdue row at every position, every sent-prefix length
     /// that position allows, and 0/1/2 broadcasting rows ahead of it — and checks the GENERAL
-    /// property the fix promised: whichever transfer `.transferWaiting`/`.transferReady` names,
+    /// property the fix promised: whichever transfer the retired waiting/ready flavors named,
     /// that row exists and is genuinely actionable (not sent, not already broadcasting).
     @Test func bannerNeverNamesANonActionableTransfer() {
         for count in 3...6 {
@@ -279,30 +270,21 @@ import ZcashLightClientKit
                 Self.row(index: 2, status: .active, isBroadcasting: true)
             ]
         ]
-        let flagCombos: [(isManualDelivery: Bool, isNextTransferDue: Bool)] = [
-            (false, false),
-            (true, true)
-        ]
-
         for state in states {
             for rows in rowConfigs {
-                for flags in flagCombos {
-                    let variant = Self.variant(
-                        state: state,
-                        transferRows: rows,
-                        isManualDelivery: flags.isManualDelivery,
-                        isNextTransferDue: flags.isNextTransferDue,
-                        isBroadcastInFlight: false
-                    )
+                let variant = Self.variant(
+                    state: state,
+                    transferRows: rows,
+                    isBroadcastInFlight: false
+                )
 
-                    let variantDescription = String(describing: variant)
-                    let stateDescription = String(describing: state)
-                    let rowStatuses = String(describing: rows.map { $0.status })
-                    #expect(
-                        !Self.isTransferSending(variant),
-                        "isBroadcastInFlight was false but got \(variantDescription) for state=\(stateDescription) rows=\(rowStatuses)"
-                    )
-                }
+                let variantDescription = String(describing: variant)
+                let stateDescription = String(describing: state)
+                let rowStatuses = String(describing: rows.map { $0.status })
+                #expect(
+                    !Self.isTransferSending(variant),
+                    "isBroadcastInFlight was false but got \(variantDescription) for state=\(stateDescription) rows=\(rowStatuses)"
+                )
             }
         }
     }
@@ -314,7 +296,7 @@ import ZcashLightClientKit
     /// mirror, the merely-provable-but-not-due rows that flipped a whole run's banner to
     /// `.preparing` although nothing the user was waiting on was actually blocked (see
     /// `MigrationBannerRowTruthTests.aPendingRowThatIsMerelyProvableDoesNotClaimTheRunIsPreparing`).
-    /// Scoped to `.inProgress` with `isManualDelivery`/`isBroadcastInFlight` held
+    /// Scoped to `.inProgress` with `isBroadcastInFlight` held
     /// false throughout, so the production branch has exactly two possible answers and the row
     /// predicate below is the exact mirror of `MigrationTransferRow.isInFlight` under that
     /// restriction: `.preparing` if and only if some row (transfer OR preparation) is `isPreparing`
@@ -369,8 +351,6 @@ import ZcashLightClientKit
                 let maybeVariant = Self.variant(
                     state: .inProgress(progress),
                     transferRows: rows,
-                    isManualDelivery: false,
-                    isNextTransferDue: false,
                     isBroadcastInFlight: false
                 )
 

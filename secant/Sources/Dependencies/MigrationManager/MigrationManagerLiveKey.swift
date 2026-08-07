@@ -160,8 +160,6 @@ extension MigrationManagerClient: DependencyKey {
             refreshMigrationSnapshot: { accountUUID in impl.refreshMigrationSnapshot(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
-            isManualDelivery: { impl.isManualDelivery(accountUUID: $0) },
-            setManualDelivery: { impl.setManualDelivery(accountUUID: $0, isManual: $1) },
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
             formNetworkSnapshot: { accountUUID in await impl.formNetworkSnapshot(accountUUID: accountUUID) },
             networkSnapshot: { accountUUID in await impl.networkSnapshot(accountUUID: accountUUID) },
@@ -603,8 +601,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
-            isManualDelivery: gateStorage.isManualDelivery(for: resolvedAccountUUID),
-            isNextTransferDue: isNextTransferDue(progress: progress, clock: clock),
             orchardBalance: balance,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
@@ -729,8 +725,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             advanceStep: advanceStep,
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
-            isManualDelivery: gateStorage.isManualDelivery(for: accountUUID),
-            isNextTransferDue: isNextTransferDue(progress: progress, clock: clock),
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
             progress: progress
         )
@@ -1452,16 +1446,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.setMigrationMode(mode, for: resolvedAccountUUID)
     }
 
-    func isManualDelivery(accountUUID: AccountUUID?) -> Bool {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
-        return gateStorage.isManualDelivery(for: resolvedAccountUUID)
-    }
-
-    func setManualDelivery(accountUUID: AccountUUID?, isManual: Bool) {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
-        gateStorage.setManualDelivery(isManual, for: resolvedAccountUUID)
-    }
-
     /// MOB-1496: per-account replacement for the old wallet-wide `migrationStateStream`. `nil`
     /// resolves the selected account; a genuinely unresolvable account (neither passed in nor
     /// selected) gets an inert, never-emitting stream rather than a crash.
@@ -1881,8 +1865,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// MOB-1496 (W3): blocked when EITHER (a) the synchronizer is actively syncing right now, or
     /// (b) a sync completed less than `migrationPrivacySyncBufferDuration()` ago. (a) is checked
-    /// first — an active sync is the more specific/urgent state of the two, and mirrors the old
-    /// stub's own precedence (sync-required-outright before the timing window).
+    /// first — an active sync is the more specific/urgent state of the two. 2026-08-07: the manual
+    /// Send-now lanes that consulted this are gone; the one remaining consumer is the step
+    /// driver's transfer privacy-buffer hold (AUD-3).
     func sendGate() async -> MigrationSendGate {
         if sdkSynchronizer.isSyncing() {
             return MigrationSendGate.syncRequired
@@ -2543,15 +2528,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // The user asked to press Send themselves. `visitKind()` still suppressed sync for this
             // session — the engine says a broadcast is due, and that is what makes the session a
             // send one regardless of who presses the button — so the transfer stays deliverable the
-            // moment they tap. This lane simply never taps for them.
-            //
-            // AUD-3: manual delivery is a TRANSFER contract — there is no user button for a
-            // note-PREPARATION, so holding one here wedged a manual account's preps forever. A
-            // vetted prep delivery skips the hold.
-            guard vettedPreparationDelivery || !gateStorage.isManualDelivery(for: accountUUID) else {
-                LoggerProxy.event("\(Self.logTag) broadcast \(id) is due but delivery is manual — leaving it to the user")
-                continue
-            }
             // Re-entrancy: a driver call arriving while this account is already mid-broadcast (a
             // second foreground trigger, a raced scene-phase flip) must not submit twice.
             guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
@@ -3070,7 +3046,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.clearAcknowledgedComplete(for: accountUUID)
             gateStorage.clearRemainderPending(for: accountUUID)
             gateStorage.clearMigrationMode(for: accountUUID)
-            gateStorage.clearManualDelivery(for: accountUUID)
             gateStorage.clearCompletedRounds(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
@@ -3096,23 +3071,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let secondsPerBlock = await rateTask ?? MigrationChainClock.targetSecondsPerBlock
 
         return MigrationChainClock(tip: tip, secondsPerBlock: secondsPerBlock)
-    }
-
-    /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
-    /// R8-T3 (#23): takes an already-fetched `progress` instead of reading it itself — `bannerVariant`/
-    /// `reentryRoute` both already have one in hand by the time they need this.
-    ///
-    /// P3: measured against the caller's `clock` — the ESTIMATED tip — rather than the scanned one.
-    /// This is a DUE-NESS decision, and every due-ness decision the SDK makes for the app already
-    /// passes `useEstimatedTip: true`; on a session that deliberately did not sync, the scanned tip
-    /// is stale by construction and would report "not due yet" for a transfer the engine is about
-    /// to broadcast.
-    private func isNextTransferDue(progress: MigrationProgress?, clock: MigrationChainClock) -> Bool {
-        guard let readyAtHeight = progress?.nextTransferReadyAtHeight else {
-            return false
-        }
-
-        return readyAtHeight <= clock.tip
     }
 
     /// MOB-1483: "Ironwood (NU6.3) activated on the current network." `tip > 0` is the fail-safe
@@ -3456,8 +3414,6 @@ enum MigrationDerivations {
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
-        isManualDelivery: Bool,
-        isNextTransferDue: Bool,
         orchardBalance: Zatoshi,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
@@ -3723,10 +3679,8 @@ enum MigrationDerivations {
             // MAP, Lukas 2026-08-06: overdue auto-serves at the next open/tick, so "tap to
             // reschedule or send now" had no trigger left. An overdue-but-unserved instant now
             // reads as the at-open idle below; the trace's reason line still says "window
-            // passed".)
-            if isManualDelivery && isNextTransferDue {
-                return MigrationBannerVariant.transferReady(number: nextTransferNumber(transferRows: transferRows, progress: progress))
-            }
+            // passed". The `.transferReady` manual arm that followed it was REMOVED 2026-08-07
+            // with the whole manual-tap send surface — its variant is deleted, not orphaned.)
             // IDLE 2 — THE BANNER MAP (Lukas, 2026-08-06): the nothing-actionable arm is the
             // AT-OPEN idle, the engine's `.waiting` rendered as a status readout — counts + ring,
             // Figma 5139:34962. The notify line (`.idle`, 35439) is TERMINATION-only and therefore
@@ -3805,8 +3759,6 @@ enum MigrationDerivations {
         advanceStep: MigrationAdvanceStep?,
         hasInvalid: Bool,
         hasOverdue: Bool,
-        isManualDelivery: Bool,
-        isNextTransferDue: Bool,
         isCompleteAcknowledged: Bool,
         progress: MigrationProgress?
     ) -> MigrationReentryRoute {
@@ -3860,20 +3812,18 @@ enum MigrationDerivations {
         }
 
         // Both of the routes below end in a SEND button, so both now require the engine to actually
-        // be offering a broadcast. `hasOverdue` and `isNextTransferDue` are app-side height
-        // comparisons: they can tell you a window has opened, but not whether the transfer inside it
-        // is proved, whether its dependencies mined, or whether the engine considers it deliverable
-        // at all. Only `.broadcast` means "deliverable right now" — everything else that looks
-        // overdue is a run doing its job, and falls through to the honest progress screen below.
+        // be offering a broadcast. `hasOverdue` is an app-side height comparison: it can tell you
+        // a window has opened, but not whether the transfer inside it is proved, whether its
+        // dependencies mined, or whether the engine considers it deliverable at all. Only
+        // `.broadcast` means "deliverable right now" — everything else that looks overdue is a run
+        // doing its job, and falls through to the honest progress screen below.
+        // (The `reviewManual` arm that followed this one was REMOVED 2026-08-07 with the whole
+        // manual-tap send surface.)
         let isBroadcastOffered: Bool
         if case MigrationAdvanceStep.broadcast? = advanceStep { isBroadcastOffered = true } else { isBroadcastOffered = false }
 
         if hasOverdue && isBroadcastOffered {
             return MigrationReentryRoute.statusResume
-        }
-
-        if isManualDelivery && isNextTransferDue && isBroadcastOffered, let progress {
-            return MigrationReentryRoute.reviewManual(step: progress.completedTransfers + 1, total: progress.totalTransfers)
         }
 
         if case let MigrationState.inProgress(inFlightProgress) = state {
@@ -4833,10 +4783,9 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// on the transfer plan and the Home banner for multi-round (sequential-run) migrations.
     private let completedRoundsStorage: PerAccountCodableStorage<Int>
     /// MOB-1509: per-account — two concurrently migrating accounts (software + Keystone) choose
-    /// their migration mode and delivery style independently; the old wallet-wide keys let the
-    /// second account's choice clobber the first's. Same legacy-key-as-prefix idiom as above.
+    /// their migration mode independently; the old wallet-wide keys let the second account's
+    /// choice clobber the first's. Same legacy-key-as-prefix idiom as above.
     private let modeStorage: PerAccountCodableStorage<MigrationMode>
-    private let manualDeliveryStorage: PerAccountCodableStorage<Bool>
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -4858,11 +4807,6 @@ final class MigrationGateStorage: @unchecked Sendable {
         self.modeStorage = PerAccountCodableStorage<MigrationMode>(
             keyPrefix: .migrationMode,
             corruptLogTag: "MigrationGateStorage.modeStorage",
-            userDefaults: userDefaults
-        )
-        self.manualDeliveryStorage = PerAccountCodableStorage<Bool>(
-            keyPrefix: .migrationManualDelivery,
-            corruptLogTag: "MigrationGateStorage.manualDeliveryStorage",
             userDefaults: userDefaults
         )
     }
@@ -4901,13 +4845,13 @@ final class MigrationGateStorage: @unchecked Sendable {
         return Date(timeIntervalSince1970: interval)
     }
 
-    /// R13 (refinement 3): the same stored timestamp `sendGate(now:buffer:)` measures from, exposed
-    /// as the snapshot's `asOfSyncedAt` — the age label for every wallet-derived fact on screen.
+    /// R13 (refinement 3): the stored sync-completion timestamp, exposed as the snapshot's
+    /// `asOfSyncedAt` — the age label for every wallet-derived fact on screen.
     func lastSyncCompletedAt() -> Date? {
         storedLastSyncCompletedAt()
     }
 
-    // MARK: Mode / manual delivery / network privacy / acknowledge / dust-lock
+    // MARK: Mode / network privacy / acknowledge / dust-lock
 
     func migrationMode(for accountUUID: AccountUUID) -> MigrationMode? {
         modeStorage.read(for: accountUUID)
@@ -4919,18 +4863,6 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     func clearMigrationMode(for accountUUID: AccountUUID) {
         modeStorage.clear(for: accountUUID)
-    }
-
-    func isManualDelivery(for accountUUID: AccountUUID) -> Bool {
-        manualDeliveryStorage.read(for: accountUUID) ?? false
-    }
-
-    func setManualDelivery(_ isManual: Bool, for accountUUID: AccountUUID) {
-        manualDeliveryStorage.write(isManual, for: accountUUID)
-    }
-
-    func clearManualDelivery(for accountUUID: AccountUUID) {
-        manualDeliveryStorage.clear(for: accountUUID)
     }
 
     /// Only `useTor` is persisted — see `PersistedNetworkPrivacyOptions`'s doc.
@@ -5027,7 +4959,6 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// dust-locked flag left to clear.
     func resetPersistedFlags() {
         userDefaults.removeObject(forKey: .migrationMode)
-        userDefaults.removeObject(forKey: .migrationManualDelivery)
         userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
     }

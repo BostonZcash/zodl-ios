@@ -113,7 +113,6 @@ import ZcashLightClientKit
             .idleCounts(done: 1, total: 4),
             .updatePlan,
             .transfersExpired(first: 1, last: 2),
-            .transferReady(number: 1),
             .complete,
             .idle,
             .checkingStatus

@@ -640,11 +640,8 @@ extension MigrationManagerImpl {
             return MigrationStepVerdict.held(reason: "immediate-mode run — ticks leave it to the open lanes")
         }
 
-        // AUD-3: manual delivery is likewise a TRANSFER contract — no user button exists for a
-        // preparation, so the hold would wedge a manual account's preps forever.
-        if !isPreparation, gateStorage.isManualDelivery(for: accountUUID) {
-            return MigrationStepVerdict.held(reason: "delivery is manual — transfer \(id) is left for the user to send")
-        }
+        // (The manual-delivery hold that lived here was REMOVED 2026-08-07 with the whole
+        // manual-tap send surface — every account is auto-delivery now.)
 
         // AUD-3: the post-sync buffer is scoped to TRANSFERS by ZIP 318 ("a preparation
         // transaction is a fully shielded send-to-self") — a prep's own wake-up IS a sync

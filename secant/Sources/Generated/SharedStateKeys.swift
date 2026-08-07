@@ -44,12 +44,10 @@ public extension String {
     /// shared transaction list (which now presents those rows as labeled in-flight history), so
     /// the figure and the list can never disagree.
     static let unminedMigrationPendingValue = "sharedStateKey_unminedMigrationPendingValue"
-    static let migrationManualDelivery = "sharedStateKey_migrationManualDelivery"
     static let migrationNetworkPrivacyOptions = "sharedStateKey_migrationNetworkPrivacyOptions"
     static let migrationNetworkSnapshot = "sharedStateKey_migrationNetworkSnapshot"
     static let migrationCommittedSchedule = "sharedStateKey_migrationCommittedSchedule"
     static let migrationStoppedSyncForBroadcast = "sharedStateKey_migrationStoppedSyncForBroadcast"
-    static let migrationSendWaitActive = "sharedStateKey_migrationSendWaitActive"
     static let migrationHadBroadcast = "sharedStateKey_migrationHadBroadcast"
     static let migrationBroadcastEpisode = "sharedStateKey_migrationBroadcastEpisode"
     static let migrationTorHold = "sharedStateKey_migrationTorHold"

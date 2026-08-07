@@ -73,11 +73,6 @@ struct MigrationReviewTransferView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 24)
 
-                        if isThisTransferVisible {
-                            thisTransferBlock
-                                .padding(.bottom, 16)
-                        }
-
                         detailRows
                     }
                     .screenHorizontalPadding()
@@ -134,8 +129,6 @@ struct MigrationReviewTransferView: View {
         switch store.mode {
         case .immediate:
             return String(localizable: .migrationReviewTitleImmediate)
-        case .manualStep(let number, let total):
-            return String(localizable: .migrationReviewTitleManual(number, total))
         }
     }
 
@@ -143,74 +136,11 @@ struct MigrationReviewTransferView: View {
         switch store.mode {
         case .immediate:
             return String(localizable: .migrationReviewDescImmediate)
-        case .manualStep:
-            // MOB-1513 (iteration B, 3491:11612): back to a single sentence — `reviewAndConfirm` and
-            // `cannotBeUndone` no longer fold in here (MOB-1497 T7's three-sentence composition is
-            // reverted); `cannotBeUndone` now renders as its own caption inside `thisTransferBlock`.
-            return String(localizable: .migrationReviewDescManual)
         }
     }
 
-    // MARK: - This Transfer
-
-    /// The "This Transfer" summary block is manual-mode only — immediate mode is untouched.
-    private var isThisTransferVisible: Bool {
-        store.mode != .immediate
-    }
-
-    private var stepNumber: Int {
-        guard case .manualStep(let number, _) = store.mode else { return 0 }
-        return number
-    }
-
-    private var stepTotal: Int {
-        guard case .manualStep(_, let total) = store.mode else { return 0 }
-        return total
-    }
-
-    @ViewBuilder private var thisTransferBlock: some View {
-        // MOB-1513 (iteration B, 3491:11612): `migrationReviewCannotBeUndone` moves back to its own
-        // caption line here, directly under the heading — reverting MOB-1497 (T7)'s fold into the
-        // top `description` paragraph (see that property's comment). Spacing/typography mirror
-        // `thisTransferRow`'s own heading+caption pair below.
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizable: .migrationReviewThisTransferTitle)
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
-
-                Text(localizable: .migrationReviewCannotBeUndone)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-            }
-
-            thisTransferRow
-        }
-    }
-
-    @ViewBuilder private var thisTransferRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            MigrationStepBadge(number: stepNumber, style: .active, size: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizable: .migrationReviewTransferOfTotal(stepNumber, stepTotal))
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                Text(localizable: .migrationReviewSendsNow)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(store.amount.decimalString()) ZEC")
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                if let currencyConversion {
-                    Text(currencyConversion.convert(store.amount))
-                        .zFont(size: 13, style: Design.Text.tertiary)
-                }
-            }
-        }
-    }
+    // (The manual-mode "This Transfer" block — `thisTransferBlock`/`thisTransferRow` and the
+    // `stepNumber`/`stepTotal` readers — was REMOVED 2026-08-07 with `.manualStep`.)
 
     // MARK: - Detail rows
 
@@ -323,18 +253,3 @@ private extension View {
     }
 }
 
-#Preview("Manual step 3 of 5") {
-    NavigationView {
-        MigrationReviewTransferView(
-            store: StoreOf<MigrationReviewTransfer>(
-                initialState: MigrationReviewTransfer.State(
-                    mode: .manualStep(number: 3, total: 5),
-                    amount: Zatoshi(243_100_000),
-                    fee: Zatoshi(100_000)
-                )
-            ) {
-                MigrationReviewTransfer()
-            }
-        )
-    }
-}

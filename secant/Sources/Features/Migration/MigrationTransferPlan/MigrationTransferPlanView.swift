@@ -176,8 +176,6 @@ struct MigrationTransferPlanView: View {
         switch store.variant {
         case .scheduled, .recreated:
             return String(localizable: .migrationPlanTitleConfirm)
-        case .manual:
-            return String(localizable: .migrationPlanTitleManual)
         }
     }
 
@@ -187,8 +185,6 @@ struct MigrationTransferPlanView: View {
         switch store.variant {
         case .scheduled:
             return String(localizable: .migrationPlanDescScheduled(store.totalDurationHours))
-        case .manual:
-            return String(localizable: .migrationPlanDescManual(transferCount, store.totalDurationHours))
         case .recreated:
             return String(localizable: .migrationPlanDescRecreated(transferCount, store.totalDurationHours))
         }
@@ -345,22 +341,6 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
             store: StoreOf<MigrationTransferPlan>(
                 initialState: MigrationTransferPlan.State(
                     variant: .scheduled,
-                    rows: .previewRows,
-                    totalDurationHours: 36
-                )
-            ) {
-                MigrationTransferPlan()
-            }
-        )
-    }
-}
-
-#Preview("Manual") {
-    NavigationView {
-        MigrationTransferPlanView(
-            store: StoreOf<MigrationTransferPlan>(
-                initialState: MigrationTransferPlan.State(
-                    variant: .manual,
                     rows: .previewRows,
                     totalDurationHours: 36
                 )

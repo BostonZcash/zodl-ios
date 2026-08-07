@@ -241,12 +241,9 @@ struct MigrationCoordFlow {
         /// Audit 2026-08-03 (#17): the reschedule effect's landing pad — a COORDINATOR action so
         /// the reducer can check the target element still exists before forwarding (the parent-
         /// level effect survives the element's removal, so a back-tap mid-reschedule used to
-        /// deliver into a missing element). Replaces the dead `sendNowCompleted` — and D3
-        /// (2026-08-03) later revived its SCENARIO in a different shape: a software-account
-        /// Send-now now runs IN PLACE on the Status screen (`MigrationStatusStore`'s own lane —
-        /// no navigation, no completion delegate), so this stack action still has no send-now
-        /// caller; only the manual-delivery arm still pushes the Sending screen, whose close
-        /// ends the whole flow as before.
+        /// deliver into a missing element). Replaces the dead `sendNowCompleted`. (2026-08-07:
+        /// the Send-now surface is gone entirely, so this stack action can never gain a send-now
+        /// caller; the Sending screen's close ends the whole flow as before.)
         case rescheduleResultReady(id: StackElementID, rows: [MigrationTransferRow], totalDurationHours: Int?)
         /// The Tor sheet's "switch server" escape — `Root` opens Server Setup and tears the flow
         /// down (N6: a manual switch mid-run is a privacy decision, not a silent one).

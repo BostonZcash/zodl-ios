@@ -53,8 +53,6 @@ import ZcashLightClientKit
             advanceStep: advanceStep,
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
-            isManualDelivery: false,
-            isNextTransferDue: false,
             isCompleteAcknowledged: false,
             progress: progress()
         )
@@ -78,8 +76,6 @@ import ZcashLightClientKit
         let banner = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(10_000_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -188,8 +184,6 @@ import ZcashLightClientKit
         let stalled = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress()),
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(10_000_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,

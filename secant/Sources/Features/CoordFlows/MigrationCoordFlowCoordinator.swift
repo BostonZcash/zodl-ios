@@ -223,30 +223,20 @@ extension MigrationCoordFlow {
                 // MARK: - ReviewTransfer (#1930 :651)
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed)))):
-                // Both `Mode` cases delegate this SAME action, so the element still on top of the
-                // path (peeked BEFORE the push — `StackState.append` never pops) is the only place
-                // left to tell a manual-STEP confirm apart from an immediate one-shot sweep, which
-                // selects the pushed screen's success wording.
-                //
                 // `totalCount: 1` — a send-max proposal is a single transaction BY CONSTRUCTION
                 // (`Proposal.transactionCount() == 1`). The proposal is guaranteed populated for the
                 // immediate lane: the guard chain in `MigrationReviewTransferStore.confirmTapped`
-                // never reaches this delegate with a nil one.
-                let isManualStepLane: Bool
+                // never reaches this delegate with a nil one. (The manual-STEP peek that lived
+                // here was REMOVED 2026-08-07 with the manual-delivery lane — every confirm is
+                // the immediate one-shot sweep now.)
                 var immediateProposal: ImmediateMigrationProposal?
-                if case .reviewTransfer(let reviewState) = state.path.last, case .manualStep = reviewState.mode {
-                    isManualStepLane = true
-                } else {
-                    isManualStepLane = false
-                    if case .reviewTransfer(let reviewState) = state.path.last {
-                        immediateProposal = reviewState.immediateProposal
-                    }
+                if case .reviewTransfer(let reviewState) = state.path.last {
+                    immediateProposal = reviewState.immediateProposal
                 }
                 state.path.append(
                     .sending(
                         MigrationSending.State(
                             totalCount: 1,
-                            isManualStepLane: isManualStepLane,
                             immediateProposal: immediateProposal
                         )
                     )
@@ -762,23 +752,8 @@ extension MigrationCoordFlow {
 
                 // MARK: - Status (#1930 :1232 / :1262)
 
-            case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
-                // D3 (Figma 5217:36636): this delegate is now the MANUAL-DELIVERY arm only. The
-                // status store forks at `.sendNowAuthenticated`: every other account sends IN
-                // PLACE (the store runs the silence window + the manager's own broadcast session
-                // on the status screen itself — see `MigrationStatusStore`'s D3 header paragraph)
-                // and never delegates; a manual-delivery account still lands here, because
-                // `runBroadcastSession` refuses to press Send for a manual account by contract and
-                // the dedicated Sending screen is the one lane that can serve that tap. For that
-                // arm the old behavior stands verbatim:
-                // Audit 2026-08-03 (#8): `entersViaSendNow: true` — this push is the Send-now
-                // lane, yet the only place that flag was ever set was a #Preview, so the R8-T6
-                // silence-window wait (and the app-side `sendGate()` consult the status screen's
-                // doc promises happens "later, inside the Send-now lane") was dead code in
-                // production. `isManualStepLane` was also wrong here — that flag belongs to the
-                // manual-delivery step lane and only skewed the success subtitle.
-                state.path.append(.sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true)))
-                return .none
+            // (The `.status(.delegate(.sendNow))` arm — the manual-delivery Send-now push — was
+            // REMOVED 2026-08-07 with the whole manual-tap send surface.)
 
             case .path(.element(id: let id, action: .status(.delegate(.reschedule)))):
                 // An overdue transfer the user chose to reschedule rather than send now: ask the
@@ -1043,14 +1018,9 @@ extension MigrationCoordFlow {
                 await migrationManager.armNextWindowNotifications(accountUUID)
                 migrationManager.refreshMigrationSnapshot(accountUUID)
             }
-        case .manual:
-            // The manual-delivery run's FIRST transfer — same "sent" wording as every subsequent
-            // manual-step confirm.
-            state.path.append(.sending(MigrationSending.State(totalCount: 1, isManualStepLane: true)))
-            return .run { [migrationManager] _ in
-                await migrationManager.armNextWindowNotifications(accountUUID)
-            }
         }
+        // (The `.manual` arm — the manual-delivery run's first-transfer push — was REMOVED
+        // 2026-08-07 with the manual-delivery lane; the plan variant itself is gone too.)
     }
 
     // MARK: - PHASE 7: Keystone ceremony (#1930 :2024-2542)
@@ -1339,11 +1309,6 @@ extension MigrationCoordFlow {
             stalledHoursAgo: stalledRow?.hoursFromNow ?? 0,
             isFlowRoot: isFlowRoot
         )
-        // Hydrated here rather than left to `onAppear`, so the footer does not read "about 0 mins"
-        // for a frame at re-entry.
-        state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
-            from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
-        )
         state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
         // MOB-1466: the screen admits it when showing an earlier session's answer, from the SAME
         // signal the banner's `.checkingStatus` reads.
@@ -1363,9 +1328,6 @@ extension MigrationCoordFlow {
             rows: IdentifiedArrayOf(uniqueElements: snapshot?.transfers ?? []),
             totalDurationHours: snapshot?.summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot
-        )
-        state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
-            from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         state.isTorHoldActive = snapshot?.isTorHoldActive ?? false
         state.isUpdating = snapshot != nil && !migrationManager.isMigrationViewFresh()
@@ -1389,8 +1351,8 @@ extension MigrationCoordFlow {
         case .statusProgress:
             return .status(statusProgressState(accountUUID: accountUUID, isFlowRoot: true))
 
-        case .reviewManual(let step, let total):
-            return .reviewTransfer(MigrationReviewTransfer.State(mode: .manualStep(number: step, total: total), isFlowRoot: true))
+        // (`.reviewManual` — the manual-delivery per-transfer re-entry — was REMOVED 2026-08-07
+        // with the whole manual-tap send surface.)
 
         // PHASE 5 / PHASE 6: these two used to fall through to Entry because their screens did not
         // exist. They exist now, and re-entry lands on them directly — which is the whole point: a

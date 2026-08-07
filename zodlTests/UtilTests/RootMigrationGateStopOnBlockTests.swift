@@ -107,7 +107,6 @@ import Testing
         stopCalls: LockIsolated<Int>,
         syncStatus: SyncStatus,
         mode: MigrationMode?,
-        isManualDelivery: Bool,
         advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance?,
         tickInterval: Swift.Duration = .seconds(30),
         lastMigrationSyncGateBlocked: Bool = false,
@@ -159,7 +158,6 @@ import Testing
                 }
                 return mode
             }
-            $0.migrationManager.isManualDelivery = { _ in isManualDelivery }
 
             $0.sdkSynchronizer = .mocked(
                 stateStream: { Empty().eraseToAnyPublisher() },
@@ -223,9 +221,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
@@ -262,9 +258,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 let callNumber = stepReads.withValue { value -> Int in
                     value += 1
                     return value
@@ -303,9 +297,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .waiting, next: nil)
             },
@@ -332,9 +324,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .waiting, next: nil)
             },
@@ -379,9 +369,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 await withCheckedContinuation { continuation in
                     stepContinuation.setValue(continuation)
                 }
@@ -423,9 +411,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.immediate,
-            isManualDelivery: false,
-            advanceStep: { accountUUID in
+            mode: MigrationMode.immediate,            advanceStep: { accountUUID in
                 queriedAccountUUIDs.withValue { $0.append(accountUUID) }
                 return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
@@ -456,9 +442,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.immediate,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.immediate,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             }
@@ -469,32 +453,6 @@ import Testing
 
         #expect(stopCalls.value == 0, "an immediate-mode run must keep today's behavior — no stop")
         #expect(stepReads.value == 0, "a non-deliverable wallet must never read the engine at all")
-
-        await teardown(store)
-    }
-
-    /// A manual-delivery run broadcasts by hand (the Send-now lane does its own stop) — same
-    /// never-reads-the-engine contract as the immediate case above.
-    @Test func manualDeliveryWalletNeverReadsTheEngine() async {
-        resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
-        let store = makeStore(
-            stopCalls: stopCalls,
-            syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: true,
-            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
-            }
-        )
-
-        await store.send(.migrationSyncGateChanged(true))
-        try? await Task.sleep(nanoseconds: 150_000_000)
-
-        #expect(stopCalls.value == 0, "a manual-delivery run must keep today's behavior — no stop")
-        #expect(stepReads.value == 0, "a manual-delivery wallet must never read the engine at all")
 
         await teardown(store)
     }
@@ -510,7 +468,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — a
             // stop-eligible candidate merges in the tick-loop re-spawn, which needs a `TestClock`.
@@ -535,7 +492,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
             lastMigrationSyncGateBlocked: true
         )
@@ -560,9 +516,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.stopped,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
@@ -598,9 +552,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
-            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(id: 9), next: nil)
             },
@@ -630,7 +582,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
@@ -660,7 +611,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
@@ -690,7 +640,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
@@ -722,7 +671,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )
@@ -754,7 +702,6 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.syncing(0.5, false),
             mode: MigrationMode.privateScheduled,
-            isManualDelivery: false,
             advanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
             testClock: testClock
         )

@@ -57,10 +57,9 @@ extension MigrationManagerClient: TestDependencyKey {
         client.lockMigrationDust = unimplemented("MigrationManagerClient.lockMigrationDust")
         client.runBroadcastSession = unimplemented("MigrationManagerClient.runBroadcastSession", placeholder: false)
 
-        // User choices. Silently rewriting the mode, the delivery preference or the acknowledged
-        // flag would make a later assertion about any of them meaningless.
+        // User choices. Silently rewriting the mode or the acknowledged flag would make a later
+        // assertion about either meaningless.
         client.setMigrationMode = unimplemented("MigrationManagerClient.setMigrationMode", placeholder: {}())
-        client.setManualDelivery = unimplemented("MigrationManagerClient.setManualDelivery", placeholder: {}())
         client.acknowledgeComplete = unimplemented("MigrationManagerClient.acknowledgeComplete", placeholder: {}())
 
         // The run's pinned network identity, and the reset that wipes every persisted flag.

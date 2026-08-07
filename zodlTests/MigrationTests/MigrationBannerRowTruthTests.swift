@@ -73,8 +73,6 @@ import ZcashLightClientKit
         state: MigrationState,
         transferRows: [MigrationTransferRow],
         preparationRows: [MigrationTransferRow] = [],
-        isManualDelivery: Bool = false,
-        isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
         activeBroadcastTxId: UInt32? = nil,
         progressCompleted: Int = 0,
@@ -83,8 +81,6 @@ import ZcashLightClientKit
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            isManualDelivery: isManualDelivery,
-            isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -219,19 +215,6 @@ import ZcashLightClientKit
         #expect(variant == .idleCounts(done: 1, total: 2))
     }
 
-    @Test func theReadyNumberFollowsTheRowsNotTheMinedCount() {
-        let variant = Self.variant(
-            state: .inProgress(Self.progress(completed: 0, total: 6)),
-            transferRows: [
-                Self.row(index: 0, status: .sent),
-                Self.row(index: 1, status: .active)
-            ],
-            isManualDelivery: true,
-            isNextTransferDue: true
-        )
-        #expect(variant == .transferReady(number: 2))
-    }
-
     // (`withoutRowsTheMinedCountStillDrivesTheNumber` retired with `.transferWaiting` — THE
     // BANNER MAP, 2026-08-06. The mined-count fallback for per-transfer numbering survives in the
     // sending arm and is pinned by the sending tests above.)
@@ -263,9 +246,7 @@ import ZcashLightClientKit
     @Test func preparingBeatsReady() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 0, total: 6)),
-            transferRows: [Self.row(index: 0, status: .active, isPreparing: true)],
-            isManualDelivery: true,
-            isNextTransferDue: true
+            transferRows: [Self.row(index: 0, status: .active, isPreparing: true)]
         )
         #expect(variant?.isPreparingVariant == true)
     }
@@ -550,8 +531,6 @@ import ZcashLightClientKit
         let omitted = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -635,8 +614,6 @@ import ZcashLightClientKit
                     isImmediate: false
                 )
             ),
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(9_999_760_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -784,8 +761,6 @@ import ZcashLightClientKit
                 let banner = MigrationDerivations.bannerVariant(
                     isIronwoodActivated: true,
                     state: .inProgress(Self.progress(total: combo.statuses.count)),
-                    isManualDelivery: false,
-                    isNextTransferDue: false,
                     orchardBalance: Zatoshi(500_000_000),
                     isCompleteAcknowledged: false,
                     isMigrationRemainderPending: false,
@@ -829,8 +804,6 @@ import ZcashLightClientKit
         let banner = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(total: 1)),
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,

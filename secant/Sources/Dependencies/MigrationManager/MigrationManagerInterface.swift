@@ -165,13 +165,13 @@ struct MigrationManagerClient: Sendable {
     /// kicks one coalesced rebuild. R3 in channel form: every open re-verifies; also the belt after
     /// a lane finishes (the lane's own pokes already republish — this guards the no-op exits).
     var refreshMigrationSnapshot: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
-    // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
-    // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
-    // accounts choose independently.
+    // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode is
+    // per-account (`nil` resolves the selected account) — concurrently migrating accounts choose
+    // independently. (`isManualDelivery`/`setManualDelivery` removed 2026-08-07 with the whole
+    // manual-tap send surface — Lukas: "send is driven only by .broadcast(id) next_step, never
+    // waiting on manual tap"; the flag never had a production setter.)
     var migrationMode: @Sendable (_ accountUUID: AccountUUID?) -> MigrationMode?
     var setMigrationMode: @Sendable (_ accountUUID: AccountUUID?, _ mode: MigrationMode) -> Void
-    var isManualDelivery: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
-    var setManualDelivery: @Sendable (_ accountUUID: AccountUUID?, _ isManual: Bool) -> Void
     // MOB-1496 (W4): ensure-or-read the run's atomic network snapshot (Tor + sync provider/endpoint +
     // broadcast provider/endpoint — see `MigrationNetworkSnapshot`) for `accountUUID` (`nil` resolves
     // the selected account, same convention as `migrationSummary`/`migrationTransfers` above), mapped
@@ -382,10 +382,10 @@ struct MigrationManagerClient: Sendable {
     // coordinator test in the suite, and from several Root-level teardown sites.
     var setMigrationFlowPresented: @Sendable (_ accountUUID: AccountUUID?, _ isPresented: Bool) -> Void = { _, _ in }
     // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
-    // (W3): re-keyed off observed sync completions + the SDK's own buffer duration — the OTHER
-    // direction (broadcast briefly disables sync) is now enforced by the SDK itself
-    // (`SDKSynchronizerClient.isMigrationSyncBlocked`/`migrationSyncBlockedStream`); this client no
-    // longer duplicates it.
+    // (W3): re-keyed off observed sync completions + the SDK's own buffer duration. 2026-08-07:
+    // the manual Send-now lanes that also consulted this are gone; the remaining consumer is the
+    // STEP DRIVER's transfer privacy-buffer hold (AUD-3 — a transfer due shortly after a completed
+    // sync waits the buffer out; preparations are exempt by ZIP 318).
     var sendGate: @Sendable () async -> MigrationSendGate = { .allowed }
     // MOB-1496 (W3): written once per completed sync from Root's existing sync-completion edge
     // (`RootInitialization.swift`'s `.synchronizerStateChanged`, the same place `reconcile()` fires
@@ -435,8 +435,8 @@ struct MigrationManagerClient: Sendable {
     // fire-and-forget from the coordinator's `.flowFinished` handler. `= { _ in }` mirrors
     // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
-    // Test-only utility: clears every persisted migration flag this client owns (mode, manual
-    // delivery, network privacy, complete-acknowledged). Its former UI caller (the migration
+    // Test-only utility: clears every persisted migration flag this client owns (mode, network
+    // privacy, complete-acknowledged). Its former UI caller (the migration
     // simulator debug panel) was removed by MOB-1458; today it's exercised solely by
     // `MigrationManagerTests`/`MigrationFailureRoutingTests`. MOB-1496 (W-A): no longer includes
     // dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
@@ -449,10 +449,11 @@ struct MigrationManagerClient: Sendable {
 
 enum MigrationSendGate: Equatable, Sendable {
     case allowed
-    // MOB-1496 (W3): `sdkSynchronizer.isSyncing()` == true right now — CTA disabled.
+    // MOB-1496 (W3): `sdkSynchronizer.isSyncing()` == true right now.
     case syncRequired
-    // MOB-1496 (W3): a sync completed < `migrationPrivacySyncBufferDuration()` ago — CTA disabled,
-    // `Date` is when the gate clears (sync-completion timestamp + buffer).
+    // MOB-1496 (W3): a sync completed < `migrationPrivacySyncBufferDuration()` ago; `Date` is when
+    // the gate clears (sync-completion timestamp + buffer). 2026-08-07: consumed by the step
+    // driver's transfer privacy-buffer hold only — the manual Send-now lanes are gone.
     case waitUntil(Date)
 }
 
@@ -461,7 +462,7 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case statusResume                    // row 2
     case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
-    case reviewManual(step: Int, total: Int)  // row 6 — manual delivery, next transfer due
+    // (row 6 `reviewManual` removed 2026-08-07 with the manual-delivery lane.)
     case entry                           // row 7 (notStarted)
 }
 

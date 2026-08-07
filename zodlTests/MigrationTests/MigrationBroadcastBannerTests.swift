@@ -5,11 +5,11 @@
 //  Covers A13's pure seam: `MigrationDerivations.bannerVariant`'s `isBroadcastInFlight` arm, which
 //  raises `.transferSending` while `MigrationManagerImpl.runBroadcastSession` is submitting.
 //
-//  The precedence is the whole point and is what these pin. During a headless broadcast, a
-//  manual-delivery run's `isNextTransferDue` is simultaneously true — whichever arm is checked
-//  first wins, so the ordering is load-bearing, not incidental: a banner offering "Review" while
-//  the transfer is going out over the wire invites a second tap, when the one thing this session
-//  actually needs is for the user to keep the app open. THE BANNER MAP (Lukas, 2026-08-06) adds
+//  The precedence is the whole point and is what these pin. During a headless broadcast, other
+//  banner arms' inputs can be simultaneously live — whichever arm is checked first wins, so the
+//  ordering is load-bearing, not incidental: any competing banner while the transfer is going out
+//  over the wire misleads, when the one thing this session actually needs is for the user to keep
+//  the app open. THE BANNER MAP (Lukas, 2026-08-06) adds
 //  the KIND fork: a note-PREPARATION submit wears keep-open (`.preparing`), never
 //  "Transfer N is sending".
 //
@@ -35,16 +35,12 @@ import ZcashLightClientKit
     /// signal that moved.
     private static func variant(
         state: MigrationState,
-        isManualDelivery: Bool = false,
-        isNextTransferDue: Bool = false,
         isBroadcastInFlight: Bool = false,
         isPreparationBroadcastInFlight: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: state,
-            isManualDelivery: isManualDelivery,
-            isNextTransferDue: isNextTransferDue,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
@@ -81,8 +77,6 @@ import ZcashLightClientKit
     @Test func sendingBeatsReadyInAManualRun() {
         let variant = Self.variant(
             state: .inProgress(Self.progress(completed: 1, total: 4)),
-            isManualDelivery: true,
-            isNextTransferDue: true,
             isBroadcastInFlight: true
         )
         #expect(variant == .transferSending(number: 2))
@@ -108,23 +102,12 @@ import ZcashLightClientKit
         #expect(variant == .idleCounts(done: 0, total: 0))
     }
 
-    @Test func readyIsUnchangedWhenNothingIsInFlight() {
-        let variant = Self.variant(
-            state: .inProgress(Self.progress(completed: 1, total: 4)),
-            isManualDelivery: true,
-            isNextTransferDue: true
-        )
-        #expect(variant == .transferReady(number: 2))
-    }
-
     /// The parameter defaults to `false`, so every pre-A13 call site — none of which know the flag
     /// exists — derives exactly what it derived before.
     @Test func omittingTheFlagMatchesPassingItFalse() {
         let omitted = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
-            isManualDelivery: false,
-            isNextTransferDue: false,
             orchardBalance: Zatoshi(500_000_000),
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,

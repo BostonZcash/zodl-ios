@@ -15,11 +15,12 @@
 //  and `isBroadcasting` ("Sending now") ahead of the `.active` ETA caption — both fall back to
 //  today's copy when unset/false.
 //
-//  MOB-1513 (C5, Figma resume frame 3491:10311): the `.plain` `ZashiInfoCallout` ("Transfer window
-//  missed" / "Send now or reschedule to the next window.") that MOB-1497 (T8) added below the
-//  timeline is REMOVED again — the resume frame shows only description, timeline, the sync-delay
-//  footer note, and the buttons. `windowMissedNote` (the existing "Sending now will delay…" footer)
-//  and the conditional Tor-hold note are unchanged: same copy, same position, same `.resume` gate.
+//  2026-08-07 (Lukas): the Send-now surface is GONE — "send is driven only by .broadcast(id)
+//  next_step, never waiting on manual tap." The `.resume` presentation keeps the timeline + the
+//  Tor-hold note as the overdue re-entry READOUT; its Send-now CTA, the `windowMissedNote`
+//  footer ("Sending now will delay…") and the resume description (which instructed "Send it
+//  now.") retired with the lane. The B8 frame family's remaining shape is with product
+//  (ERROR_HANDLING thread).
 //
 //  MOB-1513 (A2): the shared timeline no longer relabels `store.rows`' own index 0 as "Split
 //  Balance" — an ordinary transfer could be `index == 0` too (and, once actually sent, would have
@@ -28,10 +29,7 @@
 //  1..N, its own status/caption untouched) — always COMPLETED, since post-commit the split has
 //  definitely already broadcast.
 //
-//  D3 (Figma 5217:36636) + the final progress frame (5139-34627): "Send now" sends IN PLACE — the
-//  buttons below render the in-flight treatment (spinner-prefix, both CTAs down) instead of
-//  pushing the old blocking Sending screen; see `MigrationStatusStore`'s D3 header paragraph for
-//  the lane itself. The final frame also pins an info footer on `.progress` between the timeline
+//  The final progress frame (5139-34627) pins an info footer on `.progress` between the timeline
 //  and "Got it" (`progressFooterNote` — stand-in key, see its TODO) and reads the row ETAs as
 //  "in ~12 hours" where this screen renders the bare "~12 hours" (`MigrationETA` `.bare` vs
 //  `.inPrefixed`, both existing keys) — that swap is a copy decision left with Andrea, not taken
@@ -158,17 +156,12 @@ struct MigrationStatusView: View {
                     .padding(.vertical, 1)
                 }
 
-                // O2: footers and CTAs make claims about data ("Send now", ETAs, Tor holds) — while
-                // evaluating there is no data to make claims about, and the back arrow is the exit.
-                if store.presentation == .resume && !store.isEvaluating {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if store.isTorHoldActive {
-                            torHoldNote
-                        }
-                        footerNote
-                    }
-                    .screenHorizontalPadding()
-                    .padding(.top, 16)
+                // O2: footers make claims about data (ETAs, Tor holds) — while evaluating there
+                // is no data to make claims about, and the back arrow is the exit.
+                if store.presentation == .resume && !store.isEvaluating && store.isTorHoldActive {
+                    torHoldNote
+                        .screenHorizontalPadding()
+                        .padding(.top, 16)
                 }
 
                 if store.presentation == .progress && !store.isEvaluating {
@@ -270,9 +263,11 @@ struct MigrationStatusView: View {
                 localizable: .migrationStatusDesc(store.rows.count, totalDurationHours, store.remainingCount)
             )
         case .resume:
-            return String(
-                localizable: .migrationStatusResumeDesc(store.stalledNumber, store.rows.count, store.stalledHoursAgo)
-            )
+            // 2026-08-07: the resume description ("…wasn't sent. Send it now.") retired with the
+            // Send-now surface — the copy instructed a control that no longer exists. The
+            // timeline's own "Overdue · Nh ago" row caption carries the why; what (if anything)
+            // replaces this line is product's (ERROR_HANDLING / B8-fate thread).
+            return nil
         case .rescheduleConfirmed(let first, let last):
             return String(localizable: .migrationStatusRescheduledDesc(first, last))
         }
@@ -455,31 +450,16 @@ struct MigrationStatusView: View {
 
     // MARK: - Tor-hold note
 
-    /// R7 final review, Important-1 (spec §G): shown ABOVE `footerNote` when `store.isTorHoldActive`
-    /// — reuses `footerNote`'s exact row shape (info icon + tertiary caption) rather than inventing
-    /// a new visual, per the fix's own "reuse the existing footerNote-style row" instruction.
-    /// Flagged for the product/design pass — no Figma exists for this line (same caveat the
-    /// `migrationFailure.*` failure-sheet copy carries).
+    /// R7 final review, Important-1 (spec §G): shown when `store.isTorHoldActive` — the info-icon
+    /// + tertiary-caption row shape (the retired `footerNote`'s). Flagged for the product/design
+    /// pass — no Figma exists for this line (same caveat the `migrationFailure.*` failure-sheet
+    /// copy carries).
     @ViewBuilder private var torHoldNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Text.tertiary)
 
             Text(localizable: .migrationFailureTorHoldStatusNote)
-                .zFont(size: 12, style: Design.Text.tertiary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // MARK: - Footer note
-
-    @ViewBuilder private var footerNote: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
-
-            Text(localizable: .migrationStatusWindowMissedNote(store.syncPrivacyBufferMinutes))
                 .zFont(size: 12, style: Design.Text.tertiary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -520,37 +500,13 @@ struct MigrationStatusView: View {
                 store.send(.gotItTapped)
             }
         case .resume:
-            VStack(spacing: 8) {
-                // RESCHEDULE CTA WITHHELD (AUD-2b interim, 2026-08-05, the never-lie ruling: "the
-                // false confirmation must not survive either way"). No production reschedule API
-                // exists yet — the old button's effect was a pure engine READ whose result was
-                // discarded, followed by a screen claiming "successfully rescheduled". The real
-                // re-spread lands with the engine stack (librustzcash #2927/#2932); wire-vs-remove
-                // is a Lukas+Andrea decision AFTER that. The store's reschedule machinery
-                // (`rescheduleTapped`/`rescheduleCompleted`/`isRescheduling`) stays for that
-                // wiring — this screen just no longer offers an action it cannot perform.
-                if store.isSendNowInFlight {
-                    // D3 (Figma 5217:36636): the in-place send's own CTA treatment — the exact
-                    // in-flight shape the reschedule button above already established on this
-                    // screen (tertiary + leading spinner + disabled), with the label unchanged: the
-                    // work the spinner stands for is the silence-window wait plus the submit, and
-                    // the row's own "Sending now" caption names the moment the submit is actually
-                    // on the wire.
-                    ZashiButton(
-                        String(localizable: .migrationStatusSendNow),
-                        type: .tertiary,
-                        prefixView: ProgressView()
-                    ) {
-                        store.send(.sendNowTapped)
-                    }
-                    .disabled(true)
-                } else {
-                    ZashiButton(String(localizable: .migrationStatusSendNow)) {
-                        store.send(.sendNowTapped)
-                    }
-                    .disabled(store.isSendNowDisabled)
-                }
-            }
+            // NO BUTTONS, twice over. The Reschedule CTA is WITHHELD (AUD-2b interim, 2026-08-05,
+            // the never-lie ruling — no production reschedule API exists yet; the store's
+            // machinery stays for the #2927/#2932 wiring). The Send-now CTA was REMOVED
+            // 2026-08-07 with the whole manual-tap send surface (Lukas: "send is driven only by
+            // .broadcast(id) next_step"). The presentation is a READOUT: back is the exit; what
+            // action (if any) this screen regains is product's (ERROR_HANDLING / B8-fate thread).
+            EmptyView()
         }
     }
 }

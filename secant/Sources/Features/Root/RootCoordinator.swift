@@ -276,11 +276,9 @@ extension Root {
                 // it must disarm the flow-presented guard and re-run the re-arms the other close
                 // path always had (the banner poke, and the tick respawn a mid-session commit
                 // relies on), or a tick loop that self-cancelled earlier stays dead until the
-                // next app-open. The Send-now fence dies with the flow for the same reason as at
-                // `flowFinished`.
+                // next app-open. (The Send-now fence clear that lived here was REMOVED 2026-08-07
+                // with the Send-now lanes.)
                 migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, false)
-                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
-                $migrationSendWaitActive.withLock { $0 = false }
                 return .merge(
                     .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
@@ -337,11 +335,8 @@ extension Root {
                 // Audit 2026-08-03 (#15): the flow-presented guard's disarm — see the coordinator
                 // `.onAppear` arm for the plan-cache race this pair closes.
                 migrationManager.setMigrationFlowPresented(state.selectedWalletAccount?.id, false)
-                // (#19) The Send-now silence-window fence dies with the flow: with `.retryStart`
-                // now honouring it, a fence leaked past a mid-wait teardown would defer every
-                // sync restart for the rest of the session.
-                @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
-                $migrationSendWaitActive.withLock { $0 = false }
+                // (The Send-now fence clear that lived here was REMOVED 2026-08-07 with the
+                // Send-now lanes.)
                 // A finished run has usually changed what there is to migrate — after the manual
                 // lane, to nothing at all. Poke the banner to re-derive rather than waiting for a
                 // sync transition to do it: on an already-`.upToDate` wallet no transition is

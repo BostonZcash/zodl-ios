@@ -96,7 +96,11 @@ enum MigrationBannerVariant: Equatable {
     case transferSending(number: Int)
     case updatePlan
     case transfersExpired(first: Int, last: Int)
-    case transferReady(number: Int)
+    /// (`.transferReady` — the manual lane's "Transfer N is ready · Review" pre-consent state —
+    /// was REMOVED 2026-08-07 with the whole manual-tap send surface, Lukas: "there is no send
+    /// now anymore… never waiting on manual tap". Its sole setter was the derivation's manual
+    /// arm, and the manual-delivery flag never had a production setter; the ready frames' fate
+    /// closes ad-2 the same way.)
     case complete
     /// IDLE 1 — TERMINATION (THE BANNER MAP, Lukas 2026-08-06). Figma `5139:35439` / `10639`:
     /// coins-swap glyph, "Migration Progress" / `We'll notify you when to send`
@@ -200,8 +204,6 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerUpdatePlanTitle)
         case .transfersExpired(let first, let last):
             return String(localizable: .migrationBannerExpiredTitle(first, last))
-        case .transferReady(let number):
-            return String(localizable: .migrationBannerReadyTitle(number))
         case .complete:
             return String(localizable: .migrationBannerCompleteTitle)
         }
@@ -249,8 +251,6 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerUpdatePlanInfo)
         case .transfersExpired:
             return String(localizable: .migrationBannerExpiredInfo)
-        case .transferReady:
-            return String(localizable: .migrationBannerReadyInfo)
         case .complete:
             return String(localizable: .migrationBannerCompleteInfo)
         case .checkingStatus:
@@ -260,10 +260,10 @@ enum MigrationBannerVariant: Equatable {
         }
     }
 
-    /// "More" everywhere except `transferReady`, which reads "Review".
+    /// "More" everywhere except `transferSending`, which reads "Review".
     var buttonLabel: String {
         switch self {
-        case .transferReady, .transferSending:
+        case .transferSending:
             return String(localizable: .sendReview)
         default:
             return String(localizable: .generalMore)
@@ -374,7 +374,7 @@ struct MigrationBannerContentView: View {
         case .updatePlan, .transfersExpired:
             Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, color: titleStyle)
-        case .transferReady, .complete:
+        case .complete:
             Asset.Assets.infoCircle.image
                 .zImage(size: 20, color: titleStyle)
         }

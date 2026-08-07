@@ -104,7 +104,8 @@ struct MigrationReviewTransfer {
     struct State: Equatable {
         enum Mode: Equatable {
             case immediate
-            case manualStep(number: Int, total: Int)
+            // (`.manualStep(number:total:)` — the manual-delivery per-transfer review — was
+            // REMOVED 2026-08-07 with the whole manual-tap send surface.)
         }
 
         /// MOB-1458 (round 2): what a Confirm/Retry tap will actually commit to — decided
@@ -115,8 +116,6 @@ struct MigrationReviewTransfer {
         /// after the authentication `await` returned. See the file header's MOB-1458 paragraph for
         /// why that reordering is a real bug and not a harmless refactor.
         enum ConfirmIntent: Equatable {
-            /// Manual step: the transfer was already signed at plan commit — just acknowledge.
-            case manualStep
             /// Immediate mode, non-Keystone account: nothing left to commit locally — the
             /// coordinator threads `immediateProposal` into the pushed Sending screen.
             case immediateSoftware
@@ -183,7 +182,6 @@ struct MigrationReviewTransfer {
         /// mode with no proposal yet (propose still in flight, or failed) or no selected account —
         /// either way, the tap must not open the authentication prompt at all.
         var confirmIntent: ConfirmIntent? {
-            guard case .immediate = mode else { return ConfirmIntent.manualStep }
             guard let immediateProposal, let selectedWalletAccount else { return nil }
             return selectedWalletAccount.vendor == WalletAccount.Vendor.keystone
                 ? ConfirmIntent.immediateKeystone(proposal: immediateProposal, account: selectedWalletAccount)
@@ -345,11 +343,9 @@ struct MigrationReviewTransfer {
                 state.failureReason = nil
 
                 switch intent {
-                case .manualStep, .immediateSoftware:
-                    // Manual step: the transfer was already signed at plan commit. Immediate
-                    // software: nothing left to commit locally — the actual create+sign+submit
-                    // happens on the Sending screen, which the coordinator threads
-                    // `immediateProposal` into. Both cases just acknowledge.
+                case .immediateSoftware:
+                    // Nothing left to commit locally — the actual create+sign+submit happens on
+                    // the Sending screen, which the coordinator threads `immediateProposal` into.
                     return .send(.delegate(.confirmed))
 
                 case .immediateKeystone(let proposal, let account):

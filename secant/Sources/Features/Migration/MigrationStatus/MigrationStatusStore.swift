@@ -26,34 +26,14 @@
 //  today pushes a fresh `TransferPlan` screen on completion instead — wiring it to send
 //  `rescheduleCompleted` here is a later phase.
 //
-//  R8-T6 (V8 fix): the Send-now CTA no longer consults `manager.sendGate()` — the 600s app-side
-//  sync<->send privacy gate re-arms on EVERY sync completion, and the SDK re-emits a syncing-
-//  >upToDate edge every ~10-30s while foregrounded, so the gate was almost never `.allowed` in
-//  normal use (chicken-and-egg: sync only stops AFTER a "Send now" tap). `isSendNowDisabled` is now
-//  computed straight off `rows` — an `.overdue` row is the SAME "there's a stalled transfer" signal
-//  `reentryRoute`/`statusResumeState` already use to route to this screen's `.resume` presentation
-//  in the first place, so due-ness alone (not the gate) governs the CTA. The gate is still
-//  enforced — just later, inside the Send-now lane itself (see the D3 paragraph below).
-//
-//  D3 (Figma 5217:36636 — in-place Send now): tapping "Send now" no longer navigates anywhere.
-//  Field report: the tap opened a blocking "Preparing a private send window" screen for minutes —
-//  a modal whose only content was a countdown for work the user cannot influence, covering the
-//  live timeline that actually answers "what is happening to my money". The design sends IN PLACE
-//  instead: after biometrics, this store runs the same two-phase lane the old screen ran — the
-//  R8-T6 silence window (stop sync, read `sendGate()`, hold sync stopped behind the
-//  `migrationSendWaitActive` fence until the privacy buffer clears), then THE MANAGER'S OWN
-//  broadcast session (`runBroadcastSession()`), the same submit the headless drive loop uses. Going
-//  through the manager is what makes the in-place render work with no view code: the session marks
-//  the account in `broadcastsInFlight` and pokes `stateEvents` at both edges, so the rows this
-//  screen already re-derives flip to their "Sending now" spinner for exactly the submit window,
-//  and on success the broadcast row progresses to `.confirming` (R11) with no navigation at all.
-//  `isSendNowInFlight` disables both CTAs across the whole span. Failure keeps the old lane's
-//  PERSISTENT routing (the session classifies + routes internally: Tor-hold indicator, R16
-//  endpoint rotation, gate nudges) — `.sendNowFinished`'s reload surfaces `torHoldNote`
-//  immediately; the `.resume` presentation's own Send now / Reschedule pair IS the retry surface.
-//  MANUAL-DELIVERY accounts keep the old push lane (`.delegate(.sendNow)` -> the coordinator's
-//  `MigrationSending` push): `runBroadcastSession` refuses to press Send for a manual account by
-//  contract, so the dedicated screen remains the only lane that can serve that tap.
+//  2026-08-07 (Lukas): THE SEND-NOW SURFACE IS GONE — "there is no send now anymore; send is
+//  driven only by .broadcast(id) next_step, never waiting on manual tap." The D3 in-place lane
+//  (biometrics -> silence window -> manager broadcast session), its `.delegate(.sendNow)` manual
+//  push, the `sendGate()` consults, the `migrationSendWaitActive` fence and the windowMissed
+//  footer all left with it. Delivery is exclusively the driver's `.broadcast(id)` discharge (open
+//  lanes + tick); this screen's `.resume` presentation remains as the overdue re-entry READOUT —
+//  timeline + notes, no send affordance. The failed-send retry surface is ERROR_HANDLING's open
+//  product thread.
 //
 
 import Foundation
@@ -102,8 +82,7 @@ struct MigrationStatus {
         /// `.resume` presentation (see `MigrationStatusView.torHoldNote`). Loaded both via
         /// `.statusLoaded` (live, re-derived on every load/state-change tick) and the coordinator's
         /// re-entry hydration (`MigrationCoordFlowCoordinator.statusResumeState`/
-        /// `statusProgressState`). (Rebased onto R8-T6: `isSendNowDisabled` is COMPUTED off `rows`
-        /// now, so this is the one stored per-load flag left here.)
+        /// `statusProgressState`) — the one stored per-load flag left here.
         var isTorHoldActive = false
         /// F#9 (MOB-1497 T5 completion): mirrors `snapshot.needsTorFirstRunChoice` — the
         /// headless-routed first-run Tor choice presents HERE, because the scheduled lane never
@@ -114,11 +93,6 @@ struct MigrationStatus {
         /// `AlertState.migrationTorOffWarning` the Sending lane presents (its exact `@Presents`
         /// + scoped-`.alert` shape).
         @Presents var alert: AlertState<Action>?
-        /// MOB-1496 (W3): the SDK's post-broadcast privacy buffer
-        /// (`sdkSynchronizer.migrationPrivacySyncBufferDuration()`), rounded to whole minutes —
-        /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
-        /// off the SDK's real value instead of a hardcoded "10". `0` until `statusLoaded` arrives.
-        var syncPrivacyBufferMinutes = 0
         /// MOB-1466: true while the rows on screen are not this app-open's answer and a fresh
         /// derivation is still in flight — the "Updating…" label (spinner plus "Updating…").
         ///
@@ -137,56 +111,13 @@ struct MigrationStatus {
         /// spinner. Cleared by the first value that arrives — the `onAppear` prime or any
         /// `snapshotUpdated` emission — never by a timer: the data's arrival IS the state change.
         var isEvaluating = false
-        /// D3: a Send-now is running IN PLACE — armed at `.sendNowAuthenticated` (synchronously,
-        /// before any effect, so a double-tap has nothing to double), cleared by
-        /// `.sendNowFinished`. Spans BOTH halves of the lane: the silence-window wait (minutes,
-        /// when the privacy buffer is live) and the manager's submit itself (~7 s). Deliberately a
-        /// stored flag rather than a mirror of `poolFlow.isSubmitting` — the snapshot's flag only
-        /// covers the submit window; the CTA must stay down for the wait too (R13 Brick 2: the
-        /// snapshot now DOES refresh live mid-screen, which changes nothing about that reason).
-        var isSendNowInFlight = false
         var cancelStateStreamId = UUID()
         /// MOB-1466: the 30s refresh pulse's cancel id — see `onAppear`'s pulse effect.
         var cancelRefreshPulseId = UUID()
-        /// D3: the in-place Send-now WAIT half's cancel id — fixed for this instance's lifetime,
-        /// same idiom as `cancelStateStreamId` (and as `MigrationSending.State.cancelSendNowWaitId`,
-        /// whose lane this replaces for non-manual accounts). Only the WAIT is cancellable: the
-        /// submit half, once started, must run to completion whatever the screen does — cancelling
-        /// a call that may already have put a transaction on the wire is never safe.
-        var cancelSendNowWaitId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var remainingCount: Int {
             rows.filter { $0.status != .sent }.count
-        }
-
-        /// R8-T6 (V8 fix): due-ness alone governs the Send-now CTA now — an `.overdue` row is the
-        /// SAME signal `reentryRoute`'s `hasOverdue` check already uses to route to this screen's
-        /// `.resume` presentation, so this stays consistent with "why am I even seeing this button"
-        /// without a separate gate consult (see this file's header doc for the full V8 writeup).
-        /// Computed off `rows` (same idiom as `remainingCount` above) rather than stored, so it
-        /// can never go stale between a `statusLoaded`/`migrationStateChanged` refresh and a read.
-        var isSendNowDisabled: Bool {
-            // Disabled WHILE RESCHEDULING (field-caught 2026-07-31): the reschedule spinner leaves
-            // its own button disabled but left this one live, so both CTAs for the same transfer
-            // were tappable at once — asking the engine to move a transfer's window and to
-            // broadcast it in the same breath. The two race over one transaction, and the loser's
-            // outcome is whatever ordering the effects happen to take.
-            if isRescheduling { return true }
-            // D3: and disabled while an in-place send is already running — the same one-operation-
-            // per-transfer rule, now that the tap no longer navigates away. The manager's own
-            // `broadcastsInFlight` re-entrancy guard would drop a duplicate session anyway; this
-            // keeps the duplicate from ever being asked for (and from re-prompting Face ID).
-            if isSendNowInFlight { return true }
-            return !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
-        }
-
-        /// D3: the mirror of `isSendNowDisabled`'s reschedule arm, pointing the other way — while
-        /// an in-place send is running, Reschedule must be down for the same field-caught reason
-        /// Send-now is down while rescheduling: two operations racing over one transaction. The
-        /// old lane got this exclusion for free by leaving the screen; staying means saying it.
-        var isRescheduleDisabled: Bool {
-            isSendNowInFlight
         }
 
         /// MOB-1513 (A2): mirrors `MigrationTransferPlan.State.splitRow` for this post-commit
@@ -376,28 +307,12 @@ struct MigrationStatus {
         /// this action is the store-side surface for it (MOB-1478 W7).
         case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int?)
         case rescheduleTapped
-        case sendNowTapped
-        // (R13 Brick 2: `statusLoaded` retired — see `snapshotUpdated`.)
-        /// Face ID / Touch ID passed for "Send now" — see `sendNowTapped`. Reschedule has no
-        /// equivalent on purpose: it re-reads a window and re-renders, signing and moving nothing.
-        case sendNowAuthenticated
-        /// D3: the in-place lane's completion, success or not — clears `isSendNowInFlight` and
-        /// re-derives the screen so the outcome is visible NOW rather than at the next pulse: a
-        /// landed broadcast's row reads `.confirming` off the session's own reconcile, a routed
-        /// Tor failure's `torHoldNote` appears off the fresh `isMigrationTorHoldActive` read.
-        /// `didBroadcast` is the session's honest verdict (false covers a genuine failure AND the
-        /// benign nothing-was-due/raced cases — the reload, not this flag, tells them apart on
-        /// screen), carried for the log line and the tests.
-        case sendNowFinished(didBroadcast: Bool)
-        /// D3: the silence window has been waited out (or was never armed — an `.allowed` gate) —
-        /// time to run the manager's broadcast session. Split from the wait so the two halves can
-        /// have different lifetimes: the wait is cancellable (leaving the screen mid-wait cancels
-        /// the send, the old lane's Cancel semantics), the submit this action starts is not.
-        case sendNowWindowCleared
+        // (R13 Brick 2: `statusLoaded` retired — see `snapshotUpdated`. 2026-08-07: the whole
+        // sendNow action family — tapped/authenticated/windowCleared/finished — and the
+        // `.sendNow` delegate retired with the manual-tap send surface.)
         enum Delegate: Equatable {
             case done
             case reschedule
-            case sendNow
         }
     }
 
@@ -407,18 +322,8 @@ struct MigrationStatus {
     /// pinned by `thePulseStillFiresWithTheTickLoopSwitchedOff`.
     private static let refreshPulseInterval: Swift.Duration = .seconds(30)
 
-    /// D3, carried over verbatim from `MigrationSending`'s Constants: `.syncRequired` immediately
-    /// after our own stop is a settle race (the async SDK teardown hasn't drained `isSyncing()`
-    /// yet), not a genuine block — one short, bounded wait before the single re-read.
-    private static let sendGateSettleDelay: Swift.Duration = .milliseconds(300)
-
     @Dependency(\.continuousClock) var continuousClock
-    @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.migrationManager) var migrationManager
-    // MOB-1496 (W3): `migrationPrivacySyncBufferDuration()` for the resume footer's minutes copy —
-    // hydrated here (the store already reads dependencies) rather than adding a dependency to the
-    // View.
-    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init() { }
 
@@ -475,9 +380,6 @@ struct MigrationStatus {
                         + " · iw \(published.ironwoodHeld.decimalString())"
                     )
                 }
-                state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
-                    from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
-                )
                 // R3 in channel form: every open re-verifies — one coalesced rebuild lands as the
                 // subscription's first live emission and clears `isUpdating`.
                 migrationManager.refreshMigrationSnapshot(accountUUID)
@@ -502,27 +404,10 @@ struct MigrationStatus {
                 )
 
             case .onDisappear:
-                var effects: [Effect<Action>] = [
+                return .merge(
                     .cancel(id: state.cancelStateStreamId),
                     .cancel(id: state.cancelRefreshPulseId)
-                ]
-                // D3: leaving the screen mid-Send-now. Only the WAIT half is cancellable — an
-                // un-elapsed silence window means nothing has been sent, and leaving is exactly the
-                // old lane's Cancel ("nothing broadcasts; nudge Root's gate feed to resume sync").
-                // The fence clears SYNCHRONOUSLY here, before the nudge effect can race Root's
-                // `.retryStart` into deferring against a fence that is about to drop —
-                // `MigrationSending.waitCancelTapped`'s clear-then-nudge ordering, kept. A send
-                // already past the wait (the manager session itself) is NOT cancelled: the submit
-                // may already be on the wire, and the session's own exit paths reopen the sync
-                // gate — the nudge here is then a harmless re-push of the current value.
-                if state.isSendNowInFlight {
-                    setSendWaitActive(false)
-                    effects.append(.cancel(id: state.cancelSendNowWaitId))
-                    effects.append(
-                        .run { _ in await migrationManager.refreshMigrationSyncGate() }
-                    )
-                }
-                return .merge(effects)
+                )
 
             case .refreshPulse:
                 // The wall-clock writer: ask THE pipeline to re-derive (ETA captions age with the
@@ -584,77 +469,6 @@ struct MigrationStatus {
                 state.isRescheduling = true
                 return .send(.delegate(.reschedule))
 
-            case .sendNowTapped:
-                // BIOMETRICS, like every other tap in Zodl that moves money. The transaction was
-                // already signed at commit (behind its own Face ID), so this authenticates a
-                // BROADCAST rather than a signature — and that is deliberate: the user is tapping a
-                // button labelled "Send now", and every other send in the app asks. An exception
-                // here would teach people that migration money moves without asking.
-                //
-                // Honest about what this is NOT: the headless drive loop broadcasts these same
-                // pre-signed transactions with no prompt (it has no UI and cannot have one), so this
-                // is a CONSENT affordance, not a security boundary against someone holding an
-                // unlocked phone. It buys consistency of expectation, which is worth having on its
-                // own — but do not let it be mistaken for a control it isn't.
-                return localAuthentication.gated(success: .sendNowAuthenticated, cancelled: nil)
-
-            case .sendNowAuthenticated:
-                // D3: the fork. A MANUAL-delivery account keeps the old push lane — the manager's
-                // broadcast session refuses to press Send for a manual account by contract ("the
-                // user asked to press the button themselves"), and here the user IS pressing it,
-                // so the only lane that can serve the tap is the dedicated `MigrationSending`
-                // screen the coordinator still pushes for this delegate. Every other account sends
-                // IN PLACE (Figma 5217:36636): the row spins, the CTA disables, the screen stays.
-                if migrationManager.isManualDelivery(state.selectedWalletAccount?.id) {
-                    return .send(.delegate(.sendNow))
-                }
-                // Armed synchronously, before the first effect: the CTA is down from this exact
-                // frame, so a double-tap has nothing to double and Face ID cannot be re-prompted
-                // for a send that is already running.
-                state.isSendNowInFlight = true
-                return sendWindowWaitEffect(waitId: state.cancelSendNowWaitId)
-
-            case .sendNowWindowCleared:
-                // Belt: a duplicate/late delivery (the wait effect fires exactly once, but this
-                // action is the one that MOVES MONEY, so it double-checks) must not start a second
-                // session. The flag is only false here if `.sendNowFinished` already ran.
-                guard state.isSendNowInFlight else { return .none }
-                // NOT cancellable, deliberately: past this point a transaction may be on the wire,
-                // and the session must run to its own end whatever the screen does. The manager's
-                // session is the SAME submit the headless lane runs — it marks `broadcastsInFlight`
-                // (the rows' "Sending now" spinner and the snapshot's `isSubmitting`), pokes
-                // `stateEvents` at both edges (this screen's live refresh), classifies + routes a
-                // failure for its persistent effects (Tor-hold indicator, R16 rotation), records
-                // the broadcast and reconciles on success, and reopens the sync gate on its own
-                // failure paths.
-                return .run { send in
-                    let didBroadcast = await migrationManager.runBroadcastSession()
-                    if !didBroadcast {
-                        // The session's no-op exits (its own gate re-read refusing on a race, a
-                        // step that stopped being `.broadcast`, a duplicate dropped by the
-                        // re-entrancy guard) return before ever reaching ITS stop — but OUR wait
-                        // half already stopped sync for the silence window, and nothing else would
-                        // resume it. The failure paths that did reach a stop nudged already; a
-                        // second push of the current gate value is a read+yield, harmless.
-                        await migrationManager.refreshMigrationSyncGate()
-                    }
-                    await send(.sendNowFinished(didBroadcast: didBroadcast))
-                }
-
-            case .sendNowFinished(let didBroadcast):
-                state.isSendNowInFlight = false
-                if !didBroadcast {
-                    // WHY nothing went out, for the tester — the on-screen answer is the refresh
-                    // below: a still-`.overdue` row with the CTA back up (a genuine failure — the
-                    // Send now / Reschedule pair is the retry surface), a `.confirming` row
-                    // (another lane got there first), or the Tor-hold footer (a routed R15 hold).
-                    LoggerProxy.event("[MOB-1466] in-place Send now: session ended with nothing broadcast")
-                }
-                // The session's own edge pokes already republished; this is the belt for its
-                // no-op exits (a raced gate, a step that stopped being `.broadcast`).
-                migrationManager.refreshMigrationSnapshot(state.selectedWalletAccount?.id)
-                return .none
-
             case .snapshotUpdated(let snapshot):
                 state.isUpdating = false
                 state.isEvaluating = false
@@ -677,92 +491,8 @@ struct MigrationStatus {
         }
     }
 
-    // MARK: - D3: the in-place Send-now lane's silence window
-
-    /// The R8-T6 silence window, run in place: stop sync FIRST, then read the app-side privacy
-    /// gate — the same order as the old lane's `MigrationSending.resolveSendGate()` (reading
-    /// before stopping could catch a stale `.allowed` a moment before our own stop, or race a
-    /// DIFFERENT lane's concurrent sync completion) — then hold sync stopped behind the
-    /// `migrationSendWaitActive` fence until the gate's clear date passes.
-    ///
-    /// The stop is `stopStartedSyncForMigrationGate()`, NOT the broadcast lanes'
-    /// `stopSyncBeforeMigrationBroadcast()` — the field-caught 2026-08-02 wedge applies to this
-    /// wait exactly: an engine idling AT the tip reads `isSyncing() == false`, so the weaker
-    /// stop no-ops there while every per-block completion re-stamps the gate and the target date
-    /// slides forever out of reach. The gate stop's "started" predicate (`.syncing` OR
-    /// `.upToDate`) is the one that actually freezes the clock this wait counts against; its
-    /// resume flag (`migrationStoppedSyncForBroadcast`, set only when something genuinely
-    /// stopped) is what guarantees Root restarts sync afterwards, on every exit path.
-    ///
-    /// One pass, deliberately — no re-enter-wait loop like the old screen's `.waitFired` had:
-    /// with the fence up nothing re-stamps the gate, so the session's own fresh `sendGate()`
-    /// re-read at fire time is `.allowed` in every non-raced run; on the rare race it refuses,
-    /// `.sendNowFinished(didBroadcast: false)` re-arms the CTA, and a re-tap is a better answer
-    /// than a spinner that can extend itself indefinitely.
-    ///
-    /// Cancellation (the screen's `.onDisappear`) throws out of the sleep — the `defer` clears
-    /// the fence on that path too, and `.sendNowWindowCleared` is then never sent: nothing
-    /// broadcasts, which is precisely the old lane's Cancel contract.
-    private func sendWindowWaitEffect(waitId: UUID) -> Effect<Action> {
-        .run { send in
-            await sdkSynchronizer.stopStartedSyncForMigrationGate()
-            var gate = await migrationManager.sendGate()
-            if gate == MigrationSendGate.syncRequired {
-                // Plain `try` (not the old lane's `try?`): the only throw a clock sleep has is
-                // cancellation, and swallowing it here would let a just-cancelled task run one
-                // more stop — re-pausing the sync that `.onDisappear`'s nudge may already have
-                // resumed. Unwinding immediately leaves nothing to undo.
-                try await continuousClock.sleep(for: MigrationStatus.sendGateSettleDelay)
-                await sdkSynchronizer.stopStartedSyncForMigrationGate()
-                gate = await migrationManager.sendGate()
-            }
-
-            let target: Date?
-            switch gate {
-            case MigrationSendGate.allowed:
-                target = nil
-            case MigrationSendGate.waitUntil(let date):
-                target = date
-            case MigrationSendGate.syncRequired:
-                // Still blocked even after the settle retry — never broadcast into it. No date to
-                // wait against, so fall back to the full privacy buffer from now, same as a fresh
-                // sync completion would produce (the old lane's exact fallback).
-                target = Date().addingTimeInterval(sdkSynchronizer.migrationPrivacySyncBufferDuration())
-            }
-
-            if let target {
-                setSendWaitActive(true)
-                defer { setSendWaitActive(false) }
-                let remaining = target.timeIntervalSinceNow
-                if remaining > 0 {
-                    try await continuousClock.sleep(for: .seconds(remaining))
-                }
-            }
-            await send(.sendNowWindowCleared)
-        }
-        .cancellable(id: waitId, cancelInFlight: true)
-    }
-
-    /// D3 — the same MANDATORY TRACE fence `MigrationSending.setSendWaitActive` sets, same
-    /// `@Shared(.inMemory(...))` idiom: while the silence window counts down with sync stopped,
-    /// `RootInitialization`'s `.retryStart` proactive section defers (without alerting), so no
-    /// foreground trigger can restart sync mid-wait and re-stamp the very gate being waited out.
-    /// Set only for the wait; cleared before the session runs (a still-armed fence would defer
-    /// the session's own post-failure resume nudge into a strand), on cancellation via the
-    /// `defer` above, and — belt — synchronously in `.onDisappear` and by Root's flow-teardown
-    /// sites.
-    private func setSendWaitActive(_ isActive: Bool) {
-        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
-        $migrationSendWaitActive.withLock { $0 = isActive }
-    }
-}
-
-extension MigrationStatus {
-    /// MOB-1496 (W3 review fix C): shared formula for `State.syncPrivacyBufferMinutes` — this
-    /// store's own `loadStatus()` and `MigrationCoordFlowCoordinator`'s re-entry hydration
-    /// (`statusResumeState`/`statusProgressState`) both compute it from the SDK's raw
-    /// `migrationPrivacySyncBufferDuration()`; extracted to one spot so the two can't drift.
-    static func syncPrivacyBufferMinutes(from duration: TimeInterval) -> Int {
-        Int((duration / 60).rounded())
-    }
+    // (D3's in-place Send-now silence window — `sendWindowWaitEffect`, the
+    // `migrationSendWaitActive` fence, `setSendWaitActive`, the `sendGate()` consults and the
+    // `syncPrivacyBufferMinutes` footer formula — was REMOVED 2026-08-07 with the whole
+    // manual-tap send surface.)
 }
