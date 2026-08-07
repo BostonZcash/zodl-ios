@@ -55,19 +55,6 @@ jobs:
       - name: Checkout app
         uses: actions/checkout@v4
 
-      # The Xcode project intentionally uses the SDK as a sibling local
-      # package (../zcash-swift-wallet-sdk). Check out the exact TestFlight
-      # SDK revision inside the workspace, then expose it at that path.
-      - name: Checkout SDK
-        uses: actions/checkout@v4
-        with:
-          repository: zcash/zcash-swift-wallet-sdk
-          ref: 0b5e678cedd8ded308ac131934f001448e69717c
-          path: .ci/zcash-swift-wallet-sdk
-
-      - name: Link SDK at project-relative path
-        run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
-
       # Synchronized Xcode groups resolve .app bundle membership from the
       # on-disk file tree *before* build phases run. PartnerKeys.plist is
       # gitignored, so on a clean checkout it isn't present at planning time
@@ -96,7 +83,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-
@@ -125,7 +112,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build/Build/Products/Debug-iphonesimulator
-          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
