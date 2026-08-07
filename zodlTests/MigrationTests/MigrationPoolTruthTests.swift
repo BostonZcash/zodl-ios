@@ -83,7 +83,7 @@ import ZcashLightClientKit
         let unlocked = Zatoshi(2_542_665_000)
         let advisoryLocked = Zatoshi(7_452_000_000)
 
-        let displayed = MigrationDerivations.correctedPoolBalances(
+        let displayed = MigrationDerivations.poolBalancesForDisplay(
             // Production passes `orchardBalance.total()`, which is unlocked + locked.
             orchard: unlocked + advisoryLocked,
             ironwood: .zero,

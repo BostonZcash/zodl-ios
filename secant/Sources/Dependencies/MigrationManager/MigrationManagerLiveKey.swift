@@ -801,16 +801,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // inputs. Consequently only broadcast/mined-but-wallet-unsynced rows need correction.
         let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: derivation.statuses)
         let sdkBalance = balances?[resolved]
-        let correctedPools = MigrationDerivations.correctedPoolBalances(
+        let displayPools = MigrationDerivations.poolBalancesForDisplay(
             orchard: sdkBalance?.orchardBalance.total() ?? .zero,
             ironwood: sdkBalance?.ironwoodBalance.total() ?? .zero,
             correction: correction
         )
-        if correctedPools.wasClamped {
+        if displayPools.wasClamped {
             // A stale/mismatched status read must never create value. The correction is bounded
             // symmetrically by the destination value that can actually be moved back.
             MigrationTrace.event(
-                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(correctedPools.rawIronwood.decimalString())"
+                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(displayPools.rawIronwood.decimalString())"
                 + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
             )
         }
@@ -819,12 +819,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // Use the complete pool balance here, including proposal-scoped advisory locks. The
             // `unlockedForMigration` view remains correct for completion/gating, but using it for
             // display made proved transactions disappear from every pool until broadcast.
-            orchardRemaining: correctedPools.orchard,
+            orchardRemaining: displayPools.orchard,
             // The wallet's OWN per-pool figure (B10), never inferred from the rows — corrected by
             // the in-flight sum above so it renders R11's standard: what has truly crossed. The
             // two agreeing with the greens is the claim; deriving one from the other would make it
             // vacuous, and rendering the raw figure would make it future-tense.
-            ironwoodHeld: correctedPools.ironwood,
+            ironwoodHeld: displayPools.ironwood,
             // M3 Part B: the raw correction rides along so Home's pool sheet applies the SAME
             // figure to its own balance reads — same pass, same clock as the bubbles above.
             poolCorrection: correction,
@@ -3452,7 +3452,7 @@ enum MigrationDerivations {
         let wasClamped: Bool
     }
 
-    static func correctedPoolBalances(
+    static func poolBalancesForDisplay(
         orchard: Zatoshi,
         ironwood: Zatoshi,
         correction: PoolTruthCorrection

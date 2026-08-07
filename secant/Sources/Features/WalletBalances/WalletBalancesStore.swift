@@ -243,21 +243,21 @@ struct WalletBalances {
                 // and the two deltas cancel inside the shielded total (Σpools == total holds).
                 let correction = migrationManager.currentMigrationSnapshot(state.selectedWalletAccount?.id)?.poolCorrection
                     ?? MigrationDerivations.PoolTruthCorrection.none
-                let correctedPools = MigrationDerivations.correctedPoolBalances(
+                let displayPools = MigrationDerivations.poolBalancesForDisplay(
                     orchard: accountBalance?.orchardBalance.total() ?? .zero,
                     ironwood: accountBalance?.ironwoodBalance.total() ?? .zero,
                     correction: correction
                 )
-                if correctedPools.wasClamped {
+                if displayPools.wasClamped {
                     // Stale status and balance reads must never turn a clamp into a one-sided
                     // add-back (which would make the pool cards sum above the wallet total).
                     MigrationTrace.event(
-                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(correctedPools.rawIronwood.decimalString())"
+                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(displayPools.rawIronwood.decimalString())"
                         + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
                     )
                 }
-                state.orchardPoolBalance = correctedPools.orchard
-                state.ironwoodPoolBalance = correctedPools.ironwood
+                state.orchardPoolBalance = displayPools.orchard
+                state.ironwoodPoolBalance = displayPools.ironwood
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
