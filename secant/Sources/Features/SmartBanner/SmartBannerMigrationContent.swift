@@ -168,21 +168,31 @@ enum MigrationBannerVariant: Equatable {
     /// only because the copy sat in the title slot is gone with it. It DOES carry the button: the
     /// same frame draws the ordinary "More", and the design is the authority.
     ///
-    /// I shipped it buttonless on the argument that an action offered against an unknown state is the
-    /// stale-CTA class this pass exists to remove, and wrote a test asserting it. The argument does
-    /// not survive contact with what the button does. "More" opens the migration screen — which is
-    /// exactly where the answer is being computed. A stale CTA promises an OUTCOME the app can no
-    /// longer deliver ("Send now" on an expired transfer); "More" promises a DESTINATION, and the
-    /// destination stays valid whatever the answer turns out to be.
+    /// BUTTONLESS, and the migration screen is UNREACHABLE while this state stands (Lukas,
+    /// 2026-08-07, new team agreement against the same frame 5679-8225): "remove MORE button and
+    /// disable going into the migration screen completely… it would render stale data anyway."
     ///
-    /// The layout argument cut the other way too: a banner that loses its button for 700 ms and grows
-    /// one back is the same jump the reserved blank second line exists to prevent.
+    /// This reverses the 2026-08-03 reversal, on a ground that argument never addressed. That round
+    /// weighed the CTA's honesty — "More" promises a DESTINATION, not an OUTCOME, so it cannot go
+    /// stale the way "Send now" on an expired transfer does — and concluded the button was safe.
+    /// True as far as it goes, and beside the point: the DESTINATION is what is stale. The screen
+    /// renders the previous session's snapshot until this session's verdict lands, so arriving
+    /// during checking shows numbers the app is in the middle of disproving. Withholding the door
+    /// is the same never-lie rule the reschedule CTA already lives under (AUD-2b) — not a claim
+    /// about the button's wording.
+    ///
+    /// The layout objection (button vanishes for the checking window, then regrows) stands and is
+    /// accepted: with the ≥0.5s checking floor it is a visible change, and the design ruled anyway.
     case checkingStatus
 
-    /// True for every variant. Kept as a named property rather than deleted: it is the seam where a
-    /// state that genuinely must not offer an action would say so, and its absence is what let the
-    /// buttonless `.checkingStatus` above pass for a design decision instead of a deviation from one.
-    var showsButton: Bool { true }
+    /// False ONLY for `.checkingStatus` — the one state whose destination is knowably stale (see
+    /// its doc). Every other variant offers its action. Kept as a named property rather than
+    /// inlined: it is the seam where a state that must not offer an action says so, and the tap
+    /// guard in `SmartBannerStore.smartBannerContentTapped` is its enforcement half — hiding the
+    /// button alone would leave the banner's own tap gesture as an open door.
+    var showsButton: Bool {
+        self != .checkingStatus
+    }
 
     /// Membership test for the preparing SHAPE, payload-blind — what the row-truth tests assert
     /// ("this run reads as PREPARING") without pinning counts those tests are not about. Prefer
@@ -326,8 +336,9 @@ struct MigrationBannerContentView: View {
 
             Spacer()
 
-            // `showsButton` is `true` for every variant today — the buttonless checking was
-            // reversed 2026-08-03 against Figma 5679-8225; see the property's own doc for the seam.
+            // `.checkingStatus` renders buttonless (2026-08-07 agreement, Figma 5679-8225); every
+            // other variant keeps its action. See `showsButton`'s doc — and note that hiding the
+            // button is only half of it: the store's tap guard closes the banner's own gesture.
             if variant.showsButton {
                 ZashiButton(
                     variant.buttonLabel,

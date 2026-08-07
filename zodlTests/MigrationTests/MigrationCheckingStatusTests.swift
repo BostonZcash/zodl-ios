@@ -25,19 +25,48 @@
 
 import Foundation
 import Testing
+import ComposableArchitecture
 import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationCheckingStatusTests {
-    /// REVERSED 2026-08-03 against Figma 5679-8225, which draws this state WITH the ordinary "More".
+    /// BUTTONLESS AND UNREACHABLE (Lukas, 2026-08-07 — new team agreement, same frame 5679-8225):
+    /// "remove MORE button and disable going into the migration screen completely… it would render
+    /// stale data anyway."
     ///
-    /// The old assertion (`!showsButton`) encoded my reasoning, not the design's: I argued an unknown
-    /// state must offer no action. But "More" opens the migration screen, which is where the answer
-    /// is being computed — a destination, not a promised outcome, and valid whichever way the answer
-    /// lands. The stale-CTA class this pass removes is "Send now" on a transfer that can no longer be
-    /// sent. This was never that.
-    @Test func checkingKeepsItsButton() {
-        #expect(MigrationBannerVariant.checkingStatus.showsButton)
+    /// This pin has now flipped twice, so it records WHY rather than just WHAT. The 2026-08-03
+    /// round argued the CTA was safe because "More" promises a DESTINATION, not an OUTCOME —
+    /// correct about the wording, and irrelevant: the destination itself is stale, because the
+    /// screen paints the previous session's snapshot until this session's verdict lands. Never-lie
+    /// (AUD-2b) withholds the door, not the label.
+    @Test func checkingIsButtonless() {
+        #expect(!MigrationBannerVariant.checkingStatus.showsButton)
+    }
+
+    /// The button is only half the rule — the banner's whole surface carries a tap gesture, so
+    /// hiding the CTA without closing that gesture would leave the stale screen one tap away.
+    /// `smartBannerContentTapped` must not emit `migrationScreenRequested` while checking.
+    @MainActor @Test func checkingTapDoesNotOpenTheMigrationScreen() async {
+        var state = SmartBanner.State()
+        state.priorityContent = .priorityMigration
+        state.migrationBannerVariant = .checkingStatus
+        let store = TestStore(initialState: state) { SmartBanner() }
+
+        // Exhaustive on purpose: an unasserted `.migrationScreenRequested` fails the test, which
+        // is the whole point of the pin.
+        await store.send(.smartBannerContentTapped)
+    }
+
+    /// The complement, so the guard can never widen into "migration is never tappable": the same
+    /// tap on any other migration variant still opens the screen.
+    @MainActor @Test func nonCheckingTapStillOpensTheMigrationScreen() async {
+        var state = SmartBanner.State()
+        state.priorityContent = .priorityMigration
+        state.migrationBannerVariant = .idle
+        let store = TestStore(initialState: state) { SmartBanner() }
+
+        await store.send(.smartBannerContentTapped)
+        await store.receive(\.migrationScreenRequested)
     }
 
     /// The dwell FLOOR is the ratified half second (Lukas, 2026-08-06 — Figma-parity audit, flow
@@ -101,8 +130,9 @@ import ZcashLightClientKit
         )
     }
 
-    /// Every variant offers its action. Written as an enumeration rather than a spot check so that
-    /// hiding a button anywhere becomes a deliberate act with a failing test attached.
+    /// Every variant EXCEPT `.checkingStatus` offers its action. Written as an enumeration rather
+    /// than a spot check so that hiding a button anywhere else becomes a deliberate act with a
+    /// failing test attached — the exemption is one named case, not a pattern to copy.
     @Test func everyVariantOffersItsAction() {
         let actionable: [MigrationBannerVariant] = [
             .required,
@@ -114,8 +144,7 @@ import ZcashLightClientKit
             .updatePlan,
             .transfersExpired(first: 1, last: 2),
             .complete,
-            .idle,
-            .checkingStatus
+            .idle
         ]
 
         for variant in actionable {

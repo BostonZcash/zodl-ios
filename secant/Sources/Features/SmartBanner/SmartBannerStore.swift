@@ -397,6 +397,13 @@ struct SmartBanner {
                 } else if state.priorityContent == .priority75 {
                     return .send(.torSetupScreenRequested)
                 } else if state.priorityContent == .priorityMigration {
+                    // 2026-08-07 (Lukas, Figma 5679-8225): while the session's verdict is still
+                    // being computed the migration screen would paint the PREVIOUS session's
+                    // snapshot — "it would render stale data anyway" — so the door is shut, not
+                    // just the button hidden. `showsButton` removes the CTA; this closes the
+                    // banner's own tap gesture, which is the other way in. Guarding here rather
+                    // than at either call site keeps the two entrances on one rule.
+                    guard state.migrationBannerVariant != .checkingStatus else { return .none }
                     return .send(.migrationScreenRequested)
                 } else if state.priorityContent == .priority8 {
                     return .send(.currencyConversionScreenRequested)
