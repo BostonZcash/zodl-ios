@@ -762,10 +762,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
             return MigrationViewSnapshot.empty
         }
-        // R13 Brick 1: the BUNDLE, not just rows — the correction below must derive from the same
-        // engine read the rows did (one clock; see `transferDerivation`). Unstamped rows are fine
-        // here: the builder reads `status`/`amount`, which the submit stamp never touches — the
-        // snapshot's own `isSubmitting` field is taken separately, last, below.
+        // R13 Brick 1: the BUNDLE, not just rows. Unstamped rows are fine here: the builder reads
+        // `status`/`amount`, which the submit stamp never touches — the snapshot's own
+        // `isSubmitting` field is taken separately, last, below.
         let derivation = await transferDerivation(accountUUID: resolved)
         let rows = derivation.rows
         let balances = try? await sdkSynchronizer.getAccountsBalances()
@@ -795,39 +794,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
             ? nil
             : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
 
-        // R13 refinement 1 — the loader's first canonical query: pools render as if every
-        // migration transaction not wallet-mined never happened. The current SDK enters a
-        // transaction into the wallet at the broadcast seam; proving only advisory-locks its
-        // inputs. Consequently only broadcast/mined-but-wallet-unsynced rows need correction.
-        let correction = MigrationDerivations.inFlightPoolCorrection(rows: rows, statuses: derivation.statuses)
+        // The SDK's per-pool summary already advances only when the wallet observes a transfer as
+        // mined. Migration engine states describe work; they must not infer balance movement.
         let sdkBalance = balances?[resolved]
         let displayPools = MigrationDerivations.poolBalancesForDisplay(
             orchard: sdkBalance?.orchardBalance.total() ?? .zero,
-            ironwood: sdkBalance?.ironwoodBalance.total() ?? .zero,
-            correction: correction
+            ironwood: sdkBalance?.ironwoodBalance.total() ?? .zero
         )
-        if displayPools.wasClamped {
-            // A stale/mismatched status read must never create value. The correction is bounded
-            // symmetrically by the destination value that can actually be moved back.
-            MigrationTrace.event(
-                "POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(displayPools.rawIronwood.decimalString())"
-                + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
-            )
-        }
 
         let snapshot = MigrationViewSnapshot(
             // Use the complete pool balance here, including proposal-scoped advisory locks. The
             // `unlockedForMigration` view remains correct for completion/gating, but using it for
             // display made proved transactions disappear from every pool until broadcast.
             orchardRemaining: displayPools.orchard,
-            // The wallet's OWN per-pool figure (B10), never inferred from the rows — corrected by
-            // the in-flight sum above so it renders R11's standard: what has truly crossed. The
-            // two agreeing with the greens is the claim; deriving one from the other would make it
-            // vacuous, and rendering the raw figure would make it future-tense.
+            // The wallet's OWN per-pool figure (B10), never inferred from transfer status. A stored
+            // or broadcast migration transaction does not make its unmined output pool value.
             ironwoodHeld: displayPools.ironwood,
-            // M3 Part B: the raw correction rides along so Home's pool sheet applies the SAME
-            // figure to its own balance reads — same pass, same clock as the bubbles above.
-            poolCorrection: correction,
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,
@@ -859,10 +841,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             + " · settled \(snapshot.isPoolFlowSettled)"
             + " · plan \(planTotal.map { $0.decimalString() } ?? "?")"
             + " · splits \(preparations.count)"
-            + (correction.ironwoodOverstatement.amount > 0
-                ? " · inflight −\(correction.ironwoodOverstatement.decimalString())"
-                + (derivation.statuses == nil ? " (partial: engine unread)" : "")
-                : "")
             + (snapshot.isSubmitting ? " · SUBMITTING" : "")
         )
         return snapshot
@@ -3418,99 +3396,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
-    /// R13 Brick 1 — the loader's FIRST CANONICAL QUERY (GROUND_RULES R13, refinement 1): what the
-    /// SDK's pool figures count that the wallet has NOT mined, so the header's bubbles can render
-    /// R11's standard — as if every migration transaction not wallet-mined never happened.
-    ///
-    /// The current SDK stores the wallet-side transaction at the BROADCAST seam. Before that, a
-    /// proved row only has advisory input locks: its value remains in Orchard and no Ironwood
-    /// output is counted. The correction is therefore needed only for the broadcast→wallet-mined
-    /// window every transfer routinely sits in (R11's confirming span).
-    ///
-    /// ONE CLOCK: the correction derives from the SAME row set the checkmarks render — a transfer
-    /// row that is not `.sent` contributes its amount when its ENGINE state says its transaction
-    /// has entered the wallet (`.broadcast`/`.mined`). Both
-    /// bubbles move by the same figure — the destination sheds what has not truly arrived, the
-    /// source regains what has not truly left — so the header can never contradict the greens it
-    /// sits above: they flip together, on the same `walletMinedTxIds` read.
-    struct PoolTruthCorrection: Equatable {
-        /// Value the destination pool's SDK figure counts that has NOT wallet-mined — subtract.
-        let ironwoodOverstatement: Zatoshi
-        /// Value the source pool's SDK figure already shed that has NOT wallet-mined — add back.
-        let orchardUnderstatement: Zatoshi
-
-        static let none = PoolTruthCorrection(ironwoodOverstatement: .zero, orchardUnderstatement: .zero)
-    }
-
-    /// Corrected display balances plus the raw destination value used to bound the correction.
-    /// Bounding both sides by the same amount preserves `orchard + ironwood` even if the engine
-    /// status and wallet-summary reads briefly disagree.
-    struct CorrectedPoolBalances: Equatable {
+    /// Pool values used by both migration and Home. The SDK's wallet summary is authoritative:
+    /// transfer-engine states describe pending work and must never infer that value moved pools.
+    struct DisplayPoolBalances: Equatable {
         let orchard: Zatoshi
         let ironwood: Zatoshi
-        let rawIronwood: Zatoshi
-        let wasClamped: Bool
     }
 
     static func poolBalancesForDisplay(
         orchard: Zatoshi,
-        ironwood: Zatoshi,
-        correction: PoolTruthCorrection
-    ) -> CorrectedPoolBalances {
-        let requested = min(
-            correction.ironwoodOverstatement.amount,
-            correction.orchardUnderstatement.amount
+        ironwood: Zatoshi
+    ) -> DisplayPoolBalances {
+        DisplayPoolBalances(
+            orchard: orchard,
+            ironwood: ironwood
         )
-        let applied = Zatoshi(min(ironwood.amount, requested))
-        return CorrectedPoolBalances(
-            orchard: orchard + applied,
-            ironwood: ironwood - applied,
-            rawIronwood: ironwood,
-            wasClamped: applied.amount != requested
-        )
-    }
-
-    /// See `PoolTruthCorrection`. Precision bounds, deliberate and documented:
-    /// - FEES: the add-back excludes the in-flight transaction's fee. The source bubble reads LOW
-    ///   by at most one fee per in-flight transfer (~10–20k zatoshi, transient) — conservative,
-    ///   never future-tense, exact at rest.
-    /// - `statuses == nil` means the engine could not be read in the rows' own pass (a degraded
-    ///   read, or the synthesized fallback): only `.confirming` rows contribute then — those are
-    ///   stored BY CONSTRUCTION (broadcast). Freshly-proved pollution inside a sweep window
-    ///   corrects itself at the post-sweep poke's full pass.
-    /// - `.invalid` engine states contribute nothing: whether their stored transaction still counts
-    ///   is unknowable here; the residual dies with store-at-broadcast.
-    /// - SPLITS are exempt: intra-Orchard, their net unmined effect is −fee only (same bound).
-    static func inFlightPoolCorrection(
-        rows: [MigrationTransferRow],
-        statuses: [MigrationTransactionStatus]?
-    ) -> PoolTruthCorrection {
-        let stateById: [String: MigrationTransactionStatus.State]? = statuses.map { list in
-            Dictionary(list.map { (String($0.id), $0.state) }, uniquingKeysWith: { first, _ in first })
-        }
-
-        var inFlight = Zatoshi.zero
-        for row in rows where row.kind == MigrationTransferRow.Kind.transfer && row.status != MigrationTransferRow.Status.sent {
-            guard let amount = row.amount else { continue }
-
-            let isStoredUnmined: Bool
-            if let stateById {
-                switch stateById[row.id] {
-                case .broadcast, .mined:
-                    isStoredUnmined = true
-                case .awaitingSignature, .signed, .proved, .invalid, nil:
-                    isStoredUnmined = false
-                }
-            } else {
-                isStoredUnmined = row.status == MigrationTransferRow.Status.confirming
-            }
-
-            if isStoredUnmined {
-                inFlight = inFlight + amount
-            }
-        }
-
-        return PoolTruthCorrection(ironwoodOverstatement: inFlight, orchardUnderstatement: inFlight)
     }
 
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm

@@ -45,7 +45,8 @@ import ZcashLightClientKit
 /// separately would reintroduce the second clock this type exists to remove.
 struct MigrationViewSnapshot: Equatable, Sendable {
     /// Orchard value still in the source pool — the SOURCE bubble. This includes advisory-locked
-    /// inputs of proved transactions; those funds remain in Orchard until the broadcast seam.
+    /// inputs of proved transactions; those funds remain in Orchard until the wallet summary
+    /// observes the transfer as mined.
     let orchardRemaining: Zatoshi
 
     /// Ironwood value the wallet currently holds — the DESTINATION bubble.
@@ -54,13 +55,6 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// agreeing is the point; deriving one from the other would make the agreement vacuous and hide
     /// exactly the lag we are trying to surface.
     let ironwoodHeld: Zatoshi
-
-    /// M3 Part B (MOB-1466): the in-flight correction the two bubbles above were ALREADY corrected
-    /// by, carried raw so Home's pool sheet can apply the SAME figure to its own SDK-read pool
-    /// balances. One derivation, one clock: Home and the migration header move together or not at
-    /// all — publishing corrected bubbles here while Home re-derived its own correction would be
-    /// the two-clocks shape this type exists to remove.
-    let poolCorrection: MigrationDerivations.PoolTruthCorrection
 
     /// Σ of the transfers the timeline shows as done — and R11 makes "done" mean WALLET-CONFIRMED
     /// (`.sent` rows only; `.confirming` rows are excluded), so this moves in the same sync write
@@ -169,7 +163,6 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     static let empty = MigrationViewSnapshot(
         orchardRemaining: .zero,
         ironwoodHeld: .zero,
-        poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
         movedByDoneTransfers: .zero,
         doneTransfers: 0,
         totalTransfers: 0,

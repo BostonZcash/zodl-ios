@@ -28,7 +28,6 @@ import ComposableArchitecture
         MigrationViewSnapshot(
             orchardRemaining: Zatoshi(5),
             ironwoodHeld: .zero,
-            poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
             movedByDoneTransfers: .zero,
             doneTransfers: 0,
             totalTransfers: rows.count,

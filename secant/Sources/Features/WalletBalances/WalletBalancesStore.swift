@@ -234,28 +234,13 @@ struct WalletBalances {
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                 state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
 
-                // M3 Part B (MOB-1466): the pool CARDS render R11's standard — as if every
-                // migration transaction the wallet has not mined never happened. The SDK's figures
-                // count a transaction once it reaches the broadcast seam, so without this the
-                // Ironwood card claims value that has not crossed while the migration header,
-                // corrected by the SAME figure from the SAME derivation pass, says otherwise.
-                // Spendability and both totals above stay raw: locked notes truly are unspendable,
-                // and the two deltas cancel inside the shielded total (Σpools == total holds).
-                let correction = migrationManager.currentMigrationSnapshot(state.selectedWalletAccount?.id)?.poolCorrection
-                    ?? MigrationDerivations.PoolTruthCorrection.none
+                // The SDK's per-pool wallet summary is authoritative. Migration transfer status
+                // describes pending work and must not move value between pool cards before the
+                // wallet summary itself observes that movement.
                 let displayPools = MigrationDerivations.poolBalancesForDisplay(
                     orchard: accountBalance?.orchardBalance.total() ?? .zero,
-                    ironwood: accountBalance?.ironwoodBalance.total() ?? .zero,
-                    correction: correction
+                    ironwood: accountBalance?.ironwoodBalance.total() ?? .zero
                 )
-                if displayPools.wasClamped {
-                    // Stale status and balance reads must never turn a clamp into a one-sided
-                    // add-back (which would make the pool cards sum above the wallet total).
-                    MigrationTrace.event(
-                        "HOME POOLS: ⚠️ in-flight correction clamped — sdk ironwood \(displayPools.rawIronwood.decimalString())"
-                        + " < in-flight \(correction.ironwoodOverstatement.decimalString())"
-                    )
-                }
                 state.orchardPoolBalance = displayPools.orchard
                 state.ironwoodPoolBalance = displayPools.ironwood
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
