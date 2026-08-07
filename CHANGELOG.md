@@ -23,6 +23,15 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Ironwood] Migration plan previews now show sane value breakdowns: exact funding amounts are preserved, and a split that cannot be funded reports as deferred instead of complete.
 - [Ironwood] The migration reminder is now armed from the engine's own next-work answer as well as the schedule, so the "come back" notification lands at the earliest genuinely serviceable moment — and never inside the privacy buffer for send work.
 
+- [MOB-1466] Migration status text now says what is happening right now: while transfers are being prepared, or while one is being sent, the Migration Progress screen says so and asks you to keep ZODL open; the rest of the time it tells you we will notify you when it is your turn. The note above the Got it button follows the same state, so the screen and the home banner can no longer describe different things.
+- [MOB-1466] The Confirm Transfer Plan screens now explain the arrangement the same way in both cases — how long the run takes, that we notify you at each step, and that opening the app promptly keeps it on track. They no longer say the migration continues "in the background", which iOS does not allow.
+- [MOB-1466] The notifications request now explains why it matters: iOS will not let transfers send in the background, so local notifications are the only way ZODL can tell you when to open it and take the next step.
+- [MOB-1466] While ZODL is checking migration status on open, the migration banner no longer offers a button and the Migration Progress screen cannot be opened — until the check finishes, that screen would only show the previous session's numbers.
+- [MOB-1466] Migration banner states now stay on screen for at least half a second each, so a quick run of changes reads as separate states instead of a flicker you cannot follow. Rapid updates to the same state (for example a rising transfer count) update in place without adding delay.
+
+### Removed
+- [MOB-1466] The "Updating…" label and the "Balances as of ~N min ago" line have been removed from the Migration Progress screen. Both described how fresh ZODL's own reads were rather than anything you can act on, and neither was part of the design.
+
 ### Fixed
 - The transaction list no longer sits empty for tens of seconds after a cold app start while migration checks and sync startup run — loading now begins as soon as the wallet's accounts are available.
 - [MOB-1466] A sent migration transfer's checkmark, amount and transaction id now always land on the transfer that was actually broadcast: the app previously assumed sends happen in the plan's original row order, so once the engine (correctly) sent the earliest-scheduled transfer instead, the wrong row could show as sent — and its later confirmation could be matched against the wrong transaction.
