@@ -193,8 +193,24 @@ extension MigrationCoordFlow {
 
                 // MARK: - TransferPlan (#1930 :620)
 
+                // MOB-1466 (Lukas, 2026-08-07): the commit landed; the ~30 s first drive is still
+                // running. Put the designed Scheduling screen up NOW rather than leaving the user
+                // on the plan under a button spinner. Its hydrated twin arrives at `.confirmed`
+                // below, which mutates THIS element rather than pushing a second one.
+            case .path(.element(id: _, action: .transferPlan(.delegate(.scheduling)))):
+                guard case .transferPlan = state.path.last else { return .none }
+                state.path.append(.scheduled(MigrationScheduled.State(phase: .scheduling)))
+                return .none
+
             case .path(.element(id: _, action: .transferPlan(.delegate(.confirmed)))):
-                guard case let .transferPlan(planState) = state.path.last else { return .none }
+                // NOT `path.last` any more: the Scheduling screen above is pushed on top of the
+                // plan before this lands, so the plan is the last `.transferPlan` ELEMENT rather
+                // than the last element. Reading `.last` here is what would silently no-op the
+                // whole post-confirm chain.
+                guard let planState = state.path.compactMap({ pathState -> MigrationTransferPlan.State? in
+                    guard case let .transferPlan(planState) = pathState else { return nil }
+                    return planState
+                }).last else { return .none }
 
                 guard planState.requiresSigning else {
                     // A `requiresSigning == false` confirm is a plain acknowledgment of an
@@ -1010,10 +1026,22 @@ extension MigrationCoordFlow {
             // `planCommit` resume (`resumeCommittedMigrationChain`, :1290) — reaches here WITHOUT
             // any awaited drive at all; the Keystone lane's own first-drive gap is a known
             // limitation, flagged in the PR as not yet fixed.
-            state.path.append(.scheduled(Self.scheduledStateNow(
+            let hydrated = Self.scheduledStateNow(
                 schedule: schedule,
                 snapshot: migrationManager.currentMigrationSnapshot(accountUUID)
-            )))
+            )
+            // MOB-1466: HYDRATE-OR-PUSH. The software lane already put this screen up in its
+            // `.scheduling` phase when the commit landed, so here it only fills in the numbers —
+            // no second push, no navigation animation, the card's skeleton bars simply become
+            // values in place. The OTHER caller (the Keystone `planCommit` resume, :1290) reaches
+            // this without a scheduling screen of its own and still pushes, unchanged.
+            if let id = state.path.ids.last,
+               case .scheduled(let existing) = state.path[id: id],
+               existing.isScheduling {
+                state.path[id: id] = .scheduled(hydrated)
+            } else {
+                state.path.append(.scheduled(hydrated))
+            }
             return .run { [migrationManager] _ in
                 await migrationManager.armNextWindowNotifications(accountUUID)
                 migrationManager.refreshMigrationSnapshot(accountUUID)

@@ -12870,6 +12870,40 @@
         }
       }
     },
+    "migrationScheduling.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC migration schedule is getting confirmed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se está confirmando tu programación de migración de ZEC."
+          }
+        }
+      }
+    },
+    "migrationScheduling.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scheduling…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Programando…"
+          }
+        }
+      }
+    },
     "migrationRestart.confirmCta" : {
       "extractionState" : "manual",
       "localizations" : {

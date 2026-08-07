@@ -27,21 +27,80 @@ import ComposableArchitecture
 struct MigrationScheduled {
     @ObservableState
     struct State: Equatable {
-        var totalAmount = Zatoshi.zero
-        var sentCount = 0
-        var totalCount = 0
-        var durationHours = 0
+        /// THE TWO PHASES OF ONE SCREEN (Lukas, 2026-08-07 — Figma B9 and its loading twin):
+        /// "we know the operation there takes seconds… so instead of just the button, hold a user
+        /// on a full modal scheduling screen."
+        ///
+        /// The commit's own sign+store is fast; what takes ~30 s is the run's awaited FIRST DRIVE
+        /// (`MigrationTransferPlan`'s `.scheduleCommitted` → `.scheduleSigned` leg — prepare,
+        /// presign and broadcast the first step before navigating, so the homepage republishes
+        /// against a free write actor). That wait used to happen on the plan screen under a button
+        /// spinner, which reads as "nothing is happening" for half a minute. It now happens HERE.
+        ///
+        /// An ENUM rather than an `isLoading` flag beside the four value fields: while scheduling
+        /// there are no numbers yet, and a bool would leave four zeros sitting in state for a view
+        /// to render by accident. `.scheduling` carries no summary, so the skeleton is the only
+        /// thing it CAN draw.
+        enum Phase: Equatable {
+            /// Committed, first drive in flight. Skeleton rows, spinner CTA, no back affordance.
+            case scheduling
+            /// The drive returned — the real numbers, the Done button.
+            case ready(Summary)
+        }
 
+        /// What the summary card states once the run exists. Sourced entirely from the committed
+        /// schedule plus a synchronous snapshot read — see `scheduledStateNow`.
+        struct Summary: Equatable {
+            var totalAmount = Zatoshi.zero
+            var sentCount = 0
+            var totalCount = 0
+            var durationHours = 0
+
+            init(
+                totalAmount: Zatoshi = Zatoshi.zero,
+                sentCount: Int = 0,
+                totalCount: Int = 0,
+                durationHours: Int = 0
+            ) {
+                self.totalAmount = totalAmount
+                self.sentCount = sentCount
+                self.totalCount = totalCount
+                self.durationHours = durationHours
+            }
+        }
+
+        var phase: Phase
+
+        var isScheduling: Bool {
+            phase == .scheduling
+        }
+
+        /// The summary, or `nil` while scheduling. The view has no other way to reach the numbers.
+        var summary: Summary? {
+            guard case .ready(let summary) = phase else { return nil }
+            return summary
+        }
+
+        init(phase: Phase) {
+            self.phase = phase
+        }
+
+        /// The hydrated shape, kept so every existing call site (`scheduledStateNow`, the recovery
+        /// refresh-stale push, previews, pins) reads exactly as it did before the phase existed.
         init(
             totalAmount: Zatoshi = Zatoshi.zero,
             sentCount: Int = 0,
             totalCount: Int = 0,
             durationHours: Int = 0
         ) {
-            self.totalAmount = totalAmount
-            self.sentCount = sentCount
-            self.totalCount = totalCount
-            self.durationHours = durationHours
+            self.phase = .ready(
+                Summary(
+                    totalAmount: totalAmount,
+                    sentCount: sentCount,
+                    totalCount: totalCount,
+                    durationHours: durationHours
+                )
+            )
         }
     }
 

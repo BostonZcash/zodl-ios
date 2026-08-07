@@ -479,6 +479,20 @@ struct MigrationTransferPlan {
 
         enum Delegate: Equatable {
             case confirmed
+            /// MOB-1466 (Lukas, 2026-08-07): THE COMMIT LANDED, the first drive has not. Emitted at
+            /// `.scheduleCommitted` so the coordinator can put the Scheduling screen up for the
+            /// ~30 s the drive takes, instead of leaving the user on this screen under a button
+            /// spinner ("I tap start migration and there is a spinner… I'm locked on left screen
+            /// and after 30s land to the right one").
+            ///
+            /// THIS boundary, not `.confirmTapped`: everything that can still fail into THIS
+            /// screen's failure sheet — a nil intent, a refused Face ID, a stale plan, a thrown
+            /// commit — has already happened by the time this fires. `hasConfirmed` is true, the
+            /// plan IS committed, and nothing downstream can send the user back here. Pushing any
+            /// earlier would mean popping the Scheduling screen back off on failure, and a
+            /// half-second flash of a screen that says "Scheduling…" before an error sheet is worse
+            /// than the spinner it replaces.
+            case scheduling
             /// PHASE 7 (Keystone): the run's PCZTs — any preparation transactions first, then all N
             /// of the schedule's transfers — were proposed and need QR signing in ONE batched
             /// session. The `MigrationKeystoneBatch` wrapper carries the preparation count, which is
@@ -802,7 +816,12 @@ struct MigrationTransferPlan {
                 // honestly, exactly like `.backTapped`'s carve-out promises (leaving forfeits
                 // nothing).
                 state.hasConfirmed = true
-                return .run { send in
+                return .merge(
+                    // MOB-1466: hand the wait a screen. See `.delegate(.scheduling)`'s doc for why
+                    // this boundary and not the tap. Merged rather than concatenated so the drive
+                    // below starts immediately — the push is not on its critical path.
+                    .send(.delegate(.scheduling)),
+                    .run { send in
                     // Field 2026-08-06 (the "instant dismiss" regression): with the push synchronous,
                     // the loader dropped the moment the sign-only commit landed — and the homepage
                     // then rendered the PRE-commit snapshot for the whole prove+broadcast window,
@@ -829,7 +848,8 @@ struct MigrationTransferPlan {
                         _ = await drive.value
                     }
                     await send(.scheduleSigned)
-                }
+                    }
+                )
 
             case .scheduleSigned:
                 MigrationTrace.event("CONFIRM chain COMPLETE — first drive done, delegating .confirmed")

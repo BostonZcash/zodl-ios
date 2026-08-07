@@ -31,12 +31,16 @@ struct MigrationScheduledView: View {
                     .resizable()
                     .frame(width: 148, height: 148)
 
-                Text(localizable: .migrationScheduledTitle)
+                Text(store.isScheduling
+                    ? String(localizable: .migrationSchedulingTitle)
+                    : String(localizable: .migrationScheduledTitle))
                     .zFont(.semiBold, size: 28, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 16)
 
-                Text(localizable: .migrationScheduledSubtitle)
+                Text(store.isScheduling
+                    ? String(localizable: .migrationSchedulingSubtitle)
+                    : String(localizable: .migrationScheduledSubtitle))
                     .zFont(size: 14, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -47,10 +51,26 @@ struct MigrationScheduledView: View {
 
                 Spacer()
 
-                ZashiButton(String(localizable: .generalDone)) {
-                    store.send(.doneTapped)
+                // While scheduling the CTA is the progress indicator itself (the established
+                // button-loading idiom) — there is nothing to acknowledge yet, and a live "Done"
+                // over a half-built run would promise an exit that leads nowhere.
+                if store.isScheduling {
+                    ZashiButton(
+                        String(localizable: .migrationSchedulingTitle),
+                        accessoryView:
+                            ProgressView()
+                            .progressViewStyle(
+                                CircularProgressViewStyle(tint: Asset.Colors.secondary.color)
+                            )
+                    ) { }
+                    .disabled(true)
+                    .padding(.bottom, 24)
+                } else {
+                    ZashiButton(String(localizable: .generalDone)) {
+                        store.send(.doneTapped)
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
             }
             .padding(.vertical, 1)
             .screenHorizontalPadding()
@@ -61,40 +81,63 @@ struct MigrationScheduledView: View {
 
     // MARK: - Summary card
 
+    /// The SAME four labels in both phases — only the values are unknown while scheduling, which is
+    /// exactly what the design draws. Placeholder widths differ per row so the card reads as data
+    /// arriving rather than as four identical bars; they approximate the real values' lengths, so
+    /// nothing jumps sideways when the numbers land.
     @ViewBuilder private var summaryCard: some View {
+        let summary = store.summary
+
         VStack(spacing: 0) {
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowTotal),
-                value: "\(store.totalAmount.decimalString()) ZEC",
+                value: summary.map { "\($0.totalAmount.decimalString()) ZEC" } ?? "",
                 rowAppereance: .top,
-                isContinuous: true
+                isContinuous: true,
+                skeletonWidth: summary == nil ? 68 : nil
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowPool),
                 value: String(localizable: .migrationScheduledRowPoolValue),
                 rowAppereance: .middle,
-                isContinuous: true
+                isContinuous: true,
+                skeletonWidth: summary == nil ? 140 : nil
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowTransfers),
-                value: String(localizable: .migrationScheduledRowTransfersValue(store.sentCount, store.totalCount)),
+                value: summary.map { String(localizable: .migrationScheduledRowTransfersValue($0.sentCount, $0.totalCount)) } ?? "",
                 rowAppereance: .middle,
-                isContinuous: true
+                isContinuous: true,
+                skeletonWidth: summary == nil ? 52 : nil
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowDuration),
-                value: String(localizable: .migrationPlanEtaHours(store.durationHours)),
+                value: summary.map { String(localizable: .migrationPlanEtaHours($0.durationHours)) } ?? "",
                 rowAppereance: .bottom,
-                isContinuous: true
+                isContinuous: true,
+                skeletonWidth: summary == nil ? 76 : nil
             )
         }
     }
 }
 
 // MARK: - Previews
+
+/// The screen the user actually lands on first: committed, first drive in flight.
+#Preview("Scheduling") {
+    NavigationView {
+        MigrationScheduledView(
+            store: StoreOf<MigrationScheduled>(
+                initialState: MigrationScheduled.State(phase: .scheduling)
+            ) {
+                MigrationScheduled()
+            }
+        )
+    }
+}
 
 #Preview {
     NavigationView {

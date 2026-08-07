@@ -43,6 +43,14 @@ struct MigrationDetailRow: View {
     let value: String
     var rowAppereance: RowAppereance = .full
     var isContinuous: Bool = false
+    /// LOADING SHAPE (MOB-1466, Figma B9's scheduling twin): when set, the row draws a placeholder
+    /// bar of this width where the value goes and `value` is ignored — the label is known before
+    /// the number is, which is exactly what the design draws while a schedule is being confirmed.
+    ///
+    /// Lives HERE rather than in a parallel skeleton row so the two states share one set of
+    /// paddings, corners and fills: a placeholder that drifts from the real row by a point is worse
+    /// than no placeholder, because the card visibly resizes the moment the numbers land.
+    var skeletonWidth: CGFloat?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -51,11 +59,19 @@ struct MigrationDetailRow: View {
 
             Spacer()
 
-            Text(value)
-                .zFont(.medium, size: 14, style: Design.Text.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .multilineTextAlignment(.trailing)
+            if let skeletonWidth {
+                // Sized to the type it stands in for (14 pt line box) so the row height is
+                // identical in both states.
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Design.Surfaces.bgTertiary.color(colorScheme))
+                    .frame(width: skeletonWidth, height: 14)
+            } else {
+                Text(value)
+                    .zFont(.medium, size: 14, style: Design.Text.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .multilineTextAlignment(.trailing)
+            }
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 20)

@@ -268,6 +268,11 @@ import Testing
         await store.send(.scheduleCommitted) {
             $0.hasConfirmed = true
         }
+        // MOB-1466 (Lukas, 2026-08-07): the commit landed, so the Scheduling screen goes up FOR the
+        // drive rather than after it — the ~30 s below used to be spent on this screen under a
+        // button spinner. Asserted here (not skipped with `.off`) because the ORDER is the contract:
+        // scheduling BEFORE the drive, `.confirmed` after it.
+        await store.receive(.delegate(.scheduling))
         await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
@@ -299,6 +304,11 @@ import Testing
         await store.send(.scheduleCommitted) {
             $0.hasConfirmed = true
         }
+        // MOB-1466: the Scheduling screen goes up even when the drive is SKIPPED. It costs a frame
+        // mid-sync and it keeps one rule instead of two — the screen follows the COMMIT, never the
+        // drive's presence, so there is no path where a commit lands and the user is left on the
+        // plan screen wondering.
+        await store.receive(.delegate(.scheduling))
         await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
