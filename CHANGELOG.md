@@ -24,6 +24,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Ironwood] The migration reminder is now armed from the engine's own next-work answer as well as the schedule, so the "come back" notification lands at the earliest genuinely serviceable moment — and never inside the privacy buffer for send work.
 
 ### Fixed
+- The transaction list no longer sits empty for tens of seconds after a cold app start while migration checks and sync startup run — loading now begins as soon as the wallet's accounts are available.
 - [MOB-1466] A sent migration transfer's checkmark, amount and transaction id now always land on the transfer that was actually broadcast: the app previously assumed sends happen in the plan's original row order, so once the engine (correctly) sent the earliest-scheduled transfer instead, the wrong row could show as sent — and its later confirmation could be matched against the wrong transaction.
 - [MOB-1466] The transaction history no longer shows up empty on a populated wallet: a database read failure could silently discard the whole list (seen in the field when every stored transaction hit a strict decode of an always-empty trust column — fixed in the SDK), and such a failure is now logged instead of vanishing without a trace.
 - [MOB-1466] The Home pool-balances sheet no longer counts scheduled migration transfers that have not mined yet: the Ironwood and Orchard cards now tell the same story as the Migration Status screen, instead of showing value as already moved hours or days early.
