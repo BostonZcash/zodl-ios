@@ -22,10 +22,16 @@ struct AdvancedSettings {
         }
 
         var isEnoughFreeSpaceMode = true
-        /// MOB-1466: whether a migration run exists to restart. The row is hidden without one —
-        /// "Restart Migration" on a wallet with no plan is a door onto a screen that can only
-        /// report zeros, and the engine call behind it would have nothing to cancel.
-        var hasMigrationRun = false
+        /// MOB-1466: whether a migration is IN PROGRESS — the only state a restart means anything
+        /// in. The row is hidden otherwise: "Restart Migration" on a wallet with no plan is a door
+        /// onto a screen that can only report zeros, and the engine call behind it has nothing to
+        /// cancel.
+        ///
+        /// Lukas, 2026-08-07: "this option is visible in the advanced settings only if some
+        /// migration is in progress." He was right to doubt the first cut — it asked whether a run
+        /// EXISTED (`totalTransfers > 0`), which stays true forever after a run FINISHES. A
+        /// completed migration would have kept offering to restart itself.
+        var isMigrationInProgress = false
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -75,11 +81,17 @@ struct AdvancedSettings {
             case .onAppear:
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
-                    await send(.migrationRunPresence(snapshot.totalTransfers > 0))
+                    // IN PROGRESS = the run has transfers AND unfinished ones. Both halves matter:
+                    // no transfers is "no run", and every transfer done is a run that has nothing
+                    // left to cancel. Read off the same published snapshot the banner, the timeline
+                    // and the pool header all render from, so the row can never disagree with them.
+                    let hasUnfinishedWork = snapshot.totalTransfers > 0
+                        && snapshot.doneTransfers < snapshot.totalTransfers
+                    await send(.migrationRunPresence(hasUnfinishedWork))
                 }
 
-            case .migrationRunPresence(let hasRun):
-                state.hasMigrationRun = hasRun
+            case .migrationRunPresence(let isInProgress):
+                state.isMigrationInProgress = isInProgress
                 return .none
 
             case .operationAccessCheck(let operation):

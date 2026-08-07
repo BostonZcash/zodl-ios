@@ -412,6 +412,27 @@ extension Root {
                 state.ironwoodAnnouncementResolved = false
                 return .none
 
+            case .settings(.path(.element(id: _, action: .migrationRestart(.delegate(.restarted))))):
+                // MOB-1466 (Lukas, 2026-08-07): "once I finish restart migration, we need to reset
+                // smart banner.. because it renders me 2 of 11 transactions done.. aka previous
+                // state."
+                //
+                // The restart cancels the run in the ENGINE and reconciles, but the banner holds
+                // its own answer: the last variant, the dwell queue behind it, any held answer
+                // waiting on a verdict, and the `.idle` termination latch that is deliberately
+                // sticky for the rest of the session. None of that is invalidated by an engine
+                // state change on its own — the banner would keep counting a run that no longer
+                // exists until something re-asked.
+                //
+                // So: kill the cached answer and re-run the priority ladder from the top. The
+                // ladder re-asks the manager, which now sees no run and Orchard funds still to
+                // move, and hands back `.required` — the user is offered the migration again,
+                // which is the whole point of restarting.
+                //
+                // Sent from `Root` rather than from Settings because the banner lives under Home;
+                // Settings has no path to it.
+                return .send(.home(.smartBanner(.migrationRunReset)))
+
                 // MARK: - Keystone
 
             case .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),

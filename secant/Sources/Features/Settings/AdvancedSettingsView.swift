@@ -81,10 +81,10 @@ struct AdvancedSettingsView: View {
                             store.send(.operationAccessCheck(.torSetup))
                         }
 
-                        // MOB-1466: the stuck-run escape hatch. Present only while a run exists
-                        // (`hasMigrationRun`) — see `AdvancedSettings.State`. `coinsSwap` is the
-                        // migration glyph every other migration surface already uses.
-                        if store.hasMigrationRun {
+                        // MOB-1466: the stuck-run escape hatch. Present only while a migration is
+                        // IN PROGRESS (`isMigrationInProgress`) — see `AdvancedSettings.State`.
+                        // `coinsSwap` is the migration glyph every other migration surface uses.
+                        if store.isMigrationInProgress {
                             ActionRow(
                                 icon: Asset.Assets.Icons.coinsSwap.image,
                                 title: String(localizable: .migrationRestartTitle)

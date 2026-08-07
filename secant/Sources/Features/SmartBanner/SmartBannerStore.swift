@@ -227,6 +227,10 @@ struct SmartBanner {
         case currencyConversionScreenRequested
         /// The migration banner was tapped — Home forwards it to Root, which opens the flow.
         case migrationScreenRequested
+        /// MOB-1466: the run this banner has been describing no longer exists — Restart Migration
+        /// cancelled it. Sent by `Root` on the restart's `.restarted` delegate. Clears every cached
+        /// migration answer and re-runs the priority ladder; see the handler.
+        case migrationRunReset
         case currencyConversionTapped
         case serverSwitchRequested
         case shieldFundsTapped
@@ -672,6 +676,47 @@ struct SmartBanner {
                 return .send(.evaluatePriorityMigration)
 
                 // ironwood migration
+            case .migrationRunReset:
+                // MOB-1466 (Lukas, 2026-08-07): "we must reset the smart banner AND it must offer
+                // us Migration required… kill previous state, retrigger logic checking smart banner
+                // priorities."
+                //
+                // Cancelling the run in the engine is not enough on its own, because this reducer
+                // holds FIVE pieces of its own memory about it, and every one of them would survive:
+                //   - `migrationBannerVariant`, the last answer painted (his "2 of 11"),
+                //   - `migrationVariantQueue` + `isMigrationVariantDwelling`, states still waiting
+                //     their SB-D1 half second, which would paint the dead run AFTER this reset,
+                //   - `heldMigrationVariant` + `hasHeldMigrationVariant`, an answer parked behind a
+                //     pending session verdict (R3) that would be applied when the verdict lands,
+                //   - `isMigrationCheckDwelling`, which would keep holding new answers back,
+                //   - `priorityContent`, the slot ownership — migration keeps the banner until it
+                //     is asked to give it up.
+                //
+                // Resetting the variant to the type's default also drops the `.idle` TERMINATION
+                // latch, which is deliberately sticky for the rest of the session
+                // (`resolvingIdleTermination`) and would otherwise keep re-asserting the quiet
+                // notify line over a run that is gone.
+                //
+                // The value set here is a placeholder, not an answer: `.evaluatePriority1` below
+                // re-runs the whole ladder, the manager re-reads the engine (no run, Orchard funds
+                // still to move) and hands back the real variant — `.required` — which is what the
+                // user is owed after cancelling.
+                //
+                // The two dwell timers still in flight need no cancelling: `.migrationVariantDwell
+                // Elapsed` short-circuits on the now-empty queue, and `.migrationCheckDwellElapsed`
+                // applies a held answer only while `hasHeldMigrationVariant` — both cleared here.
+                state.migrationBannerVariant = .required
+                state.isMigrationCheckDwelling = false
+                state.isMigrationVariantDwelling = false
+                state.migrationVariantQueue = []
+                state.heldMigrationVariant = nil
+                state.hasHeldMigrationVariant = false
+                if state.priorityContent == .priorityMigration {
+                    state.priorityContent = nil
+                }
+                MigrationTrace.event("banner RESET — run cancelled by Restart Migration; re-running the priority ladder")
+                return .send(.evaluatePriority1)
+
             case .evaluatePriorityMigration:
                 guard state.featureFlags.migration else {
                     return .send(.evaluatePriority3)
