@@ -36,7 +36,7 @@ jobs:
     # no pull_request context, so the guard lets them through.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
-    timeout-minutes: 55
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -67,14 +67,6 @@ jobs:
 
       - name: Link SDK at project-relative path
         run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
-
-      # Package.swift at the exact SDK source revision still points to an older released binary.
-      # Build its FFI from the same checkout so Swift and Rust cannot drift independently.
-      - name: Configure exact SDK FFI
-        uses: ./.github/actions/configure-exact-sdk-ffi
-        with:
-          slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
-          slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
 
       # Synchronized Xcode groups resolve .app bundle membership from the
       # on-disk file tree *before* build phases run. PartnerKeys.plist is
