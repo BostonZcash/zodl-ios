@@ -428,4 +428,66 @@ import Testing
 
         await drain(store)
     }
+
+    // MARK: - The spin cut: a broadcast-only pass must not re-register the synchronizer streams
+
+    /// MOB-1466 (Lukas, 2026-08-07). A device log caught 1,297 iterations of one cycle at ~10.7/s,
+    /// still running when the log was captured, and STILL running after the app backgrounded — 816
+    /// of them with no live trace session, each re-arming a local notification.
+    ///
+    /// The cycle closes entirely inside `.retryStart`'s broadcast branch:
+    ///   `visitKind() == .send` → skip sync → `.migrationGateDeferredSyncStart` re-arms
+    ///   `syncDeferredByMigrationGate` → `.registerForSynchronizersUpdate` re-subscribes →
+    ///   `migrationSyncGateFeed()`'s self-healing SEED (audit 2026-08-03 #9) emits the current gate
+    ///   value → `.migrationSyncGateChanged(false)` finds `isGenuineChange == false` but
+    ///   `shouldResume == true` → `.retryStart`. No state changes anywhere on the way round.
+    ///
+    /// It only sustains while `visitKind()` keeps answering `.send`, which is why it hid for four
+    /// days: a broadcast that SUCCEEDS stops answering `.send` after a turn or two. It took a
+    /// broadcast that could never succeed in-session (`migrationBroadcastDuringSync`, then the R0
+    /// once-credit refusing any retry) to turn two turns into forever.
+    ///
+    /// This pins the cut: a pass that never touched the synchronizer has nothing to re-register.
+    /// Asserted as ORDER — the register is sent immediately before `.refreshAutomaticServer` in
+    /// that same block, so if it were still there the predicate would meet it first.
+    @Test func broadcastOnlyPassDoesNotReRegisterSynchronizerStreams() async throws {
+        let calls = LockIsolated<[String]>([])
+        let store = makeStore(calls: calls, startError: nil, visitKind: .send)
+
+        await store.send(.initialization(.retryStart))
+
+        await store.receive(
+            { action in
+                if case .initialization(.registerForSynchronizersUpdate) = action {
+                    Issue.record("a broadcast-only pass re-registered the streams — the ~10 Hz spin is back")
+                    return true
+                }
+                guard case .refreshAutomaticServer = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        await drain(store)
+    }
+
+    /// The complement, so the cut can never widen into "sync passes stop re-registering either":
+    /// a pass that DID start the synchronizer still re-registers, which is what keeps the state
+    /// stream and both gate feeds alive after a start.
+    @Test func syncPassStillReRegistersSynchronizerStreams() async throws {
+        let calls = LockIsolated<[String]>([])
+        let store = makeStore(calls: calls, startError: nil, visitKind: .sync)
+
+        await store.send(.initialization(.retryStart))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        await drain(store)
+    }
 }

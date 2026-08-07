@@ -723,6 +723,11 @@ extension Root {
                         // must not initiate sync. Stopping an in-flight sync (the reactive gate
                         // below) is too late for the privacy property — the correlation exists the
                         // moment sync connects. See `MigrationVisit`.
+                        // MOB-1466 (Lukas, 2026-08-07 — THE ~10 Hz SPIN): did this pass touch the
+                        // synchronizer at all? Only a pass that did needs its streams
+                        // re-registered. See the guard on `.registerForSynchronizersUpdate` at the
+                        // bottom of this block for the loop this closes.
+                        var startedSyncThisPass = false
                         if await migrationManager.visitKind() == .send {
                             LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start — broadcast session")
                             // MOB-1466 (N4, field-caught 2026-08-01): ARM THE RESUME, exactly as the
@@ -758,6 +763,7 @@ extension Root {
                             // already confirmed.
                             await migrationManager.advance(.beforeSync)
                         } else {
+                            startedSyncThisPass = true
                             // THE DRIVER, on the sync branch too. `visitKind()` above answers only
                             // "may this session sync?"; this is where the engine's actual next step
                             // gets discharged. On a sync visit most steps defer to the post-sync
@@ -790,7 +796,36 @@ extension Root {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
                         }
-                        await send(.initialization(.registerForSynchronizersUpdate))
+                        // THE SPIN CUT (MOB-1466, Lukas 2026-08-07 — 1,297 iterations at ~10.7/s in
+                        // one device log, still running when it was captured, and NOT stopping at
+                        // background: 816 of those ran with no live trace session, each re-arming a
+                        // local notification).
+                        //
+                        // The cycle, all four links inside this one case:
+                        //   1. `visitKind() == .send` (a broadcast is due) -> skip sync start,
+                        //   2. `.migrationGateDeferredSyncStart` re-arms `syncDeferredByMigrationGate`,
+                        //   3. this line re-registers the subscriptions, and `migrationSyncGateFeed()`
+                        //      SEEDS every fresh subscription with a live gate read (audit
+                        //      2026-08-03 #9) — so a re-registration emits `false` all by itself,
+                        //   4. `.migrationSyncGateChanged(false)` finds `isGenuineChange == false`
+                        //      but `shouldResume == true` (step 2 armed it) and sends `.retryStart`,
+                        //      which is this case. Back to 1, with no state change anywhere.
+                        //
+                        // It self-sustains only while `visitKind()` keeps answering `.send`, which
+                        // is why nobody saw it before: a broadcast that SUCCEEDS stops answering
+                        // `.send` after a turn or two and the loop ends on its own. It took a
+                        // broadcast that could never succeed in-session (`migrationBroadcastDuringSync`
+                        // + the R0 once-credit refusing a retry) to turn two turns into forever.
+                        //
+                        // Cutting link 3 is the honest cut: a pass that never touched the
+                        // synchronizer has nothing to re-register. The sync branch still registers
+                        // (including its gate-refusal catch, whose own doc depends on it), the cold
+                        // launch's `.initializeSDK` still registers, and audit #9's seed still
+                        // repairs a dropped nudge on every registration that genuinely happens —
+                        // this only stops a no-op pass from manufacturing one.
+                        if startedSyncThisPass {
+                            await send(.initialization(.registerForSynchronizersUpdate))
+                        }
                         await send(.refreshAutomaticServer)
                     } catch {
                         if state.bgTask != nil {
