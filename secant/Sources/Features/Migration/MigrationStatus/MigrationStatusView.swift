@@ -97,11 +97,10 @@ struct MigrationStatusView: View {
                         // The ORCHARD→IRONWOOD pool header, RESTORED per Andrea's final design
                         // (Figma 5139-34627) after R9's same-day arc (dropped → record corrected →
                         // restored). The values are the wallet's REAL per-pool balances off the
-                        // same snapshot the timeline below renders from — one derivation pass, so
-                        // the card and the checkmarks cannot disagree — and R11 (green =
-                        // wallet-confirmed) makes them move in the same sync write, so no render
-                        // gate is needed. `.progress` only: the resume and re-scheduling frames
-                        // don't draw it.
+                        // same snapshot the timeline below renders from. Pool accounting and row
+                        // status remain independent SDK facts, so no render gate or app-side
+                        // reconciliation is applied. `.progress` only: the resume and
+                        // re-scheduling frames don't draw it.
                         // Handover O2: no session has published a snapshot yet (first open of the
                         // process while migration work holds the DB actor). The screen is HERE —
                         // title above, back arrow live — only the data zone waits. Anything is

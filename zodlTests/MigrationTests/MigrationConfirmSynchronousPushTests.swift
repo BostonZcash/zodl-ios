@@ -91,7 +91,6 @@ import Testing
         MigrationViewSnapshot(
             orchardRemaining: .zero,
             ironwoodHeld: .zero,
-            poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
             movedByDoneTransfers: movedByDoneTransfers,
             doneTransfers: doneTransfers,
             totalTransfers: totalTransfers,

@@ -15,11 +15,9 @@
 //  in-memory state that KEEPS the data; the banner and the screen are just renderings of it. One
 //  derivation, many observers, and a kick from anywhere to say "recompute".
 //
-//  THE INVARIANT THIS BUYS, and the reason the pool header waited for it: a header claiming
-//  "9.49 ZEC in Ironwood" and a timeline of green checkmarks summing to 9.49 must agree BY
-//  CONSTRUCTION, not by both happening to be right. Here they are computed from one read, in one
-//  place, at one instant. A third independent deriver would have made that impossible to guarantee
-//  no matter how carefully each one was written.
+//  THE INVARIANT THIS BUYS, and the reason the pool header waited for it: every observer sees one
+//  coherent snapshot. Pool values still come from the wallet summary while timeline rows describe
+//  migration progress; neither is derived from or used to correct the other.
 //
 //  Validated before building: on the 08-02 field wallet the DONE crossings summed to 949,000,000
 //  zatoshi and the Ironwood pool held 949,000,000 — exact. The accounting was never the problem;
@@ -28,11 +26,10 @@
 //  R9 + R11 (2026-08-03, final): the header's bubbles show `orchardRemaining`/`ironwoodHeld` — the
 //  wallet's REAL per-pool balances, the same chain-derived source the home balance sheet reads
 //  ("if pool X has Y zec, must use Y"; derived green-sums were rejected for contradicting the home
-//  sheet). The 55.2-vs-0 field screenshot that once argued against this was never a data problem —
-//  it was a GREEN problem: rows flipped green at broadcast, two phases before the wallet counted
-//  them. R11 fixed the green instead: a row renders Done only when the wallet's OWN store has its
-//  transaction mined (`.sent` vs `.confirming` in the row derivation), so the checkmarks and the
-//  pool balances now move in the same sync write and agree BY CONSTRUCTION — no render gate needed.
+//  sheet). Timeline status is deliberately independent: the pinned SDK stores wallet accounting at
+//  broadcast, while a row renders Done only after the wallet observes it mined (`.sent` versus
+//  `.confirming`). A pool may therefore advance before its row turns green, without either value
+//  being rewritten to manufacture agreement.
 //
 
 import Foundation
@@ -44,7 +41,9 @@ import ZcashLightClientKit
 /// needs. Every field must come from the SAME derivation pass; adding one that is fetched
 /// separately would reintroduce the second clock this type exists to remove.
 struct MigrationViewSnapshot: Equatable, Sendable {
-    /// Orchard value still to migrate — the SOURCE bubble.
+    /// Orchard value still in the source pool — the SOURCE bubble. This includes advisory-locked
+    /// inputs of proved transactions; those funds remain in Orchard until the wallet transaction
+    /// is stored at the broadcast seam.
     let orchardRemaining: Zatoshi
 
     /// Ironwood value the wallet currently holds — the DESTINATION bubble.
@@ -54,20 +53,11 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// exactly the lag we are trying to surface.
     let ironwoodHeld: Zatoshi
 
-    /// M3 Part B (MOB-1466): the in-flight correction the two bubbles above were ALREADY corrected
-    /// by, carried raw so Home's pool sheet can apply the SAME figure to its own SDK-read pool
-    /// balances. One derivation, one clock: Home and the migration header move together or not at
-    /// all — publishing corrected bubbles here while Home re-derived its own correction would be
-    /// the two-clocks shape this type exists to remove.
-    let poolCorrection: MigrationDerivations.PoolTruthCorrection
-
-    /// Σ of the transfers the timeline shows as done — and R11 makes "done" mean WALLET-CONFIRMED
-    /// (`.sent` rows only; `.confirming` rows are excluded), so this moves in the same sync write
-    /// `ironwoodHeld` does. Compared against it by `isPoolFlowSettled`, now trace-only.
+    /// Σ of the transfers the timeline shows as done (`.sent` rows only; `.confirming` rows are
+    /// excluded). This is migration progress, not an input to pool accounting.
     let movedByDoneTransfers: Zatoshi
 
-    /// How many transfers the timeline shows as done (wallet-confirmed, R11), and out of how many —
-    /// the checkmark count the header's numbers have to be consistent with.
+    /// How many transfers the timeline shows as done (wallet-confirmed, R11), and out of how many.
     let doneTransfers: Int
     let totalTransfers: Int
 
@@ -150,13 +140,10 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     /// TRACE-ONLY diagnostic (R11 demoted it from render gate): whether the destination pool's
     /// balance covers the Σ of wallet-confirmed transfers.
     ///
-    /// Under R11 `movedByDoneTransfers` counts only WALLET-CONFIRMED rows, and `ironwoodHeld` is
-    /// the same wallet's balance — both move in the same sync write, so this holds by construction
-    /// in the steady state. It can legitimately go false in exactly one honest way: the user SPENT
-    /// Ironwood funds mid-migration (the balance is current holdings; the checkmarks are history).
-    /// That is also why it must never gate rendering again — a mid-migration spend would have
-    /// hidden the header forever. It lives on only in the POOLS trace, where a false reading now
-    /// means "spent from Ironwood" rather than "settling lag".
+    /// Wallet accounting may advance at broadcast before a row becomes Done, so this is a coverage
+    /// check rather than an equality claim. It can legitimately go false when the user spends
+    /// Ironwood funds mid-migration (the balance is current holdings; the checkmarks are history),
+    /// which is why it must never gate rendering.
     var isPoolFlowSettled: Bool {
         ironwoodHeld >= movedByDoneTransfers
     }
@@ -168,7 +155,6 @@ struct MigrationViewSnapshot: Equatable, Sendable {
     static let empty = MigrationViewSnapshot(
         orchardRemaining: .zero,
         ironwoodHeld: .zero,
-        poolCorrection: MigrationDerivations.PoolTruthCorrection.none,
         movedByDoneTransfers: .zero,
         doneTransfers: 0,
         totalTransfers: 0,

@@ -9,16 +9,9 @@
 //
 //  GROUND_RULES R9: a bubble labelled with a pool name may only show the wallet's REAL per-pool
 //  balance — "if pool X has Y zec, must use Y" — the same source the home balance sheet reads.
-//  Earlier cuts failed in both available directions: the live balance under broadcast-green
-//  checkmarks read 55.2-vs-0 in the field, and plan-derived green-sums contradicted the home
-//  sheet. The values were never the problem — the GREEN was early. R11 fixed the green, so the
-//  real balances render here gate-free: they are passed in, and the component computes nothing.
-//
-//  No render gate is needed for header/checkmark agreement: R11 makes a green check
-//  WALLET-confirmed (a broadcast-but-uncounted row stays the neutral check — see
-//  `MigrationTransferTimeline`), so the sync write that turns a row green is the same one that
-//  moves the balances shown here. Header and checkmarks move together by construction, not by
-//  reconciliation.
+//  Plan-derived green sums contradicted the Home sheet, so real balances render here gate-free:
+//  they are passed in and the component computes nothing. Timeline checks remain an independent
+//  progress signal; wallet pool accounting can advance at broadcast before a row becomes Done.
 //
 
 @preconcurrency import ZcashLightClientKit
@@ -33,7 +26,7 @@ struct MigrationPoolFlowHeader: View {
 
     /// What is still in Orchard — the wallet's own per-pool balance, passed in (R9).
     let orchardRemaining: Zatoshi
-    /// What has landed in Ironwood — same source, same sync write as the green checks (R11).
+    /// What the wallet summary currently attributes to Ironwood.
     let ironwoodHeld: Zatoshi
     /// Fiat line under each ZEC value; nil rate hides BOTH fiat lines (never "$0.00" from a
     /// missing rate).
