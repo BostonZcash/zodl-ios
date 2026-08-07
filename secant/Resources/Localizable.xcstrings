@@ -11833,12 +11833,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your remaining Orchard balance splits into %1$lld transfers over ~%2$lld hours. Approve once and we'll handle the rest — just keep the app running in the background. If we miss a window, Zodl will prompt you on next open."
+            "value" : "Review the plan below. Your remaining Orchard balance splits into %1$lld transfers. Over the next ~%2$lld hours, we'll notify you at each step. Open the app promptly to keep things on track."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Tu saldo restante en Orchard se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Si nos perdemos una ventana, Zodl te lo indicará la próxima vez que abras la app."
           }
         }
@@ -11850,7 +11850,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Review the plan below — once confirmed, each transfer sends at its scheduled window over the next ~%1$lld hours."
+            "value" : "Review the plan below. Over the next ~%1$lld hours, we'll notify you at each step. Open the app promptly to keep things on track."
           }
         },
         "es" : {
@@ -12989,12 +12989,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers."
+            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers. We'll notify you when it's time to open Zodl and take the next action."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes."
           }
         }

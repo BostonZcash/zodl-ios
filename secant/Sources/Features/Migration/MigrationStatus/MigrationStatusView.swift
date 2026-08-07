@@ -253,12 +253,13 @@ struct MigrationStatusView: View {
         switch store.presentation {
         case .progress:
             guard let totalDurationHours = store.totalDurationHours else { return nil }
-            // PENDING DESIGN COPY (Figma 5139-34627): the final frame ends this paragraph with a third
-            // sentence — "Keep Zodl open while it is preparing the migration transfers." — that
-            // `migrationStatus.desc` does not carry. The key stays as-is (no minted copy, and
-            // bolting an unrelated key's sentence on would double the keep-open ask the new
-            // `progressFooterNote` already makes right below); the sentence lands with the
-            // strings pass.
+            // CLOSED 2026-08-07 (Lukas, H9): the paragraph's third sentence is now in
+            // `migrationStatus.desc` itself — "We'll notify you when it's time to open Zodl and
+            // take the next action." It is NOT the frame's "Keep Zodl open while it is preparing…";
+            // that ask moved to the footer, which is state-driven. The division: the HEADER states
+            // the standing arrangement (how the balance is split, and that we will call you), the
+            // FOOTER says what is happening right now. So the keep-open ask is made once, by
+            // whichever surface currently knows it is true.
             return String(
                 localizable: .migrationStatusDesc(store.rows.count, totalDurationHours, store.remainingCount)
             )
