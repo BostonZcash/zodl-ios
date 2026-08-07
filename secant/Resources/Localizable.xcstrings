@@ -11918,6 +11918,23 @@
         }
       }
     },
+    "migrationPlan.etaRecomputing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recomputing ETA…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recalculando la hora estimada…"
+          }
+        }
+      }
+    },
     "migrationPlan.etaMins" : {
       "extractionState" : "manual",
       "localizations" : {

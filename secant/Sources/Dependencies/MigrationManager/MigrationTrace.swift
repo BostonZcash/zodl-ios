@@ -352,7 +352,9 @@ enum MigrationTrace {
         case .expired: return "\(number):expired"
         case .overdue: return "\(number):overdue"
         case .active, .pending:
-            let minutes = row.forwardETAMinutes
+            // MOB-1466: the trace distinguishes "ready" from "no tip to answer with" too — a log
+            // reading `ready` for eleven rows because the clock was blank is how this bug hid.
+            guard let minutes = row.forwardETAMinutes else { return "\(number):eta?" }
             return minutes <= 0 ? "\(number):ready" : "\(number):~\(minutes)m"
         }
     }

@@ -1099,8 +1099,12 @@ struct MigrationTransferPlan {
                     index: index,
                     amount: transfer.amount,
                     status: Self.transferRowStatus(index: index, hasSplitRow: hasSplitRow),
-                    hoursFromNow: minutes / 60,
-                    minutesFromNow: minutes
+                    // MOB-1466: `nil` = the tip was unknown when this plan row was built, so it
+                    // carries no ETA and renders "Recomputing ETA…" rather than the "Starts right
+                    // away" a fabricated zero used to produce on every row at once.
+                    hoursFromNow: (minutes ?? 0) / 60,
+                    minutesFromNow: minutes,
+                    isETAKnown: minutes != nil
                 )
             }
         )

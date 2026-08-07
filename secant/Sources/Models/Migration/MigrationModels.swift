@@ -221,10 +221,27 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         isSubmitting || (isPreparing && (status == .active || status == .overdue))
     }
 
+    /// MOB-1466 (Lukas, 2026-08-07): whether the clock that produced this row's timings knew the
+    /// chain tip. `false` ⇒ there is no ETA to state, and every surface says "Recomputing ETA…".
+    ///
+    /// STORED, not derived, and written in the same expression as the numbers it qualifies (see
+    /// `MigrationDerivations.transferRows`) — the value and its trustworthiness come from ONE
+    /// `MigrationChainClock` read, so they cannot drift apart. That is what makes this a property of
+    /// the measurement rather than a second opinion about someone else's number.
+    ///
+    /// Defaults to `true` so every existing construction site keeps its meaning — including
+    /// `synthesizedTransferRows`, whose `hoursFromNow` is a position-based cadence estimate that
+    /// never consults a tip and is therefore unaffected by this bug.
+    var isETAKnown = true
+
     /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
     /// else the coarse `hoursFromNow` promoted to minutes (the synthetic-cadence surfaces).
-    var forwardETAMinutes: Int {
-        minutesFromNow ?? hoursFromNow * 60
+    ///
+    /// `nil` when the tip was unknown at build time. That is NOT "no forward time" — a finished row
+    /// never renders an ETA at all — it is "cannot answer yet", which is what the caption prints.
+    var forwardETAMinutes: Int? {
+        guard isETAKnown else { return nil }
+        return minutesFromNow ?? hoursFromNow * 60
     }
 
     init(
@@ -240,7 +257,8 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         isSubmitting: Bool = false,
         isAwaitingRunDependencies: Bool = false,
         overdueMinutesAgo: Int? = nil,
-        kind: Kind = .transfer
+        kind: Kind = .transfer,
+        isETAKnown: Bool = true
     ) {
         self.id = id
         self.index = index
@@ -248,6 +266,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.status = status
         self.hoursFromNow = hoursFromNow
         self.minutesFromNow = minutesFromNow
+        self.isETAKnown = isETAKnown
         self.sentMinutesAgo = sentMinutesAgo
         self.isBroadcasting = isBroadcasting
         self.isPreparing = isPreparing

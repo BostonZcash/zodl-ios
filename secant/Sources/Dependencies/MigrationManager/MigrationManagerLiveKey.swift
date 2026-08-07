@@ -2043,7 +2043,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 && $0.status != MigrationTransferRow.Status.expired
                 && !$0.isBroadcasting
             }
-            .min { $0.forwardETAMinutes < $1.forwardETAMinutes }
+            // MOB-1466: an unknown ETA sorts LAST. `nil` means "cannot answer", and letting it
+            // compare as 0 would make the least-known row win the soonest-row pick.
+            .min { ($0.forwardETAMinutes ?? Int.max) < ($1.forwardETAMinutes ?? Int.max) }
 
         var sendDate: Date?
         if let next = pendingBroadcast {
@@ -2053,7 +2055,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
             //
             // The row carries MINUTES (its displayed ETA), not a height, so the two-block slack is
             // added here rather than through `notificationDate` — same number, same reason.
-            var date = now.addingTimeInterval(TimeInterval(next.forwardETAMinutes) * 60 + clock.notificationBuffer)
+            // MOB-1466: with an unknown tip there is no ETA to arm from — `forwardETAMinutes` is
+            // `nil`, and arming off a fabricated zero would schedule the poke for "now". Fall back
+            // to the row's coarse position estimate, which never consults a tip.
+            var date = now.addingTimeInterval(
+                TimeInterval(next.forwardETAMinutes ?? next.hoursFromNow * 60) * 60 + clock.notificationBuffer
+            )
             if case let MigrationSendGate.waitUntil(gateUntil) = gate, gateUntil > date {
                 date = gateUntil
             }
@@ -4133,8 +4140,9 @@ enum MigrationDerivations {
                     index: index,
                     amount: seed.amount,
                     status: MigrationTransferRow.Status.invalid,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
+                    minutesFromNow: minutesFromNow,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4151,8 +4159,9 @@ enum MigrationDerivations {
                     index: index,
                     amount: seed.amount,
                     status: MigrationTransferRow.Status.expired,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
+                    minutesFromNow: minutesFromNow,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4182,7 +4191,7 @@ enum MigrationDerivations {
                 index: index,
                 amount: seed.amount,
                 status: status,
-                hoursFromNow: minutesFromNow / 60,
+                hoursFromNow: (minutesFromNow ?? 0) / 60,
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
@@ -4418,8 +4427,9 @@ enum MigrationDerivations {
                     index: index,
                     amount: nil,
                     status: MigrationTransferRow.Status.invalid,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
+                    minutesFromNow: minutesFromNow,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4443,8 +4453,9 @@ enum MigrationDerivations {
                     index: index,
                     amount: nil,
                     status: MigrationTransferRow.Status.expired,
-                    hoursFromNow: minutesFromNow / 60,
-                    minutesFromNow: minutesFromNow
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
+                    minutesFromNow: minutesFromNow,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4454,7 +4465,7 @@ enum MigrationDerivations {
             let isAwaitingRunDependencies = status.blockedOn == MigrationTransactionStatus.Blocker.dependencies
             let rowStatus: MigrationTransferRow.Status
             if index == firstNonTerminalIndex {
-                rowStatus = minutesFromNow > 0 || isAwaitingRunDependencies
+                rowStatus = (minutesFromNow ?? Int.max) > 0 || isAwaitingRunDependencies
                     ? MigrationTransferRow.Status.active
                     : MigrationTransferRow.Status.overdue
             } else {
@@ -4466,7 +4477,7 @@ enum MigrationDerivations {
                 index: index,
                 amount: nil,
                 status: rowStatus,
-                hoursFromNow: minutesFromNow / 60,
+                hoursFromNow: (minutesFromNow ?? 0) / 60,
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
@@ -4555,6 +4566,11 @@ enum MigrationDerivations {
 
         return ordered.enumerated().map { index, status in
             let forwardMinutes = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+            // MOB-1466: the state fork below asks "is this step's turn here yet?". With an unknown
+            // tip there is no answer, and the conservative one is NO — a step whose turn cannot be
+            // dated must not be described as arrived. `Int.max` reads as "still ahead" at every
+            // comparison site; the row's own ETA keeps the honest `nil` and says "Recomputing ETA…".
+            let forwardMinutesForState = forwardMinutes ?? Int.max
             var minutesFromNow: Int? = forwardMinutes
             let state: MigrationPrepareBalanceRow.State
             switch status.state {
@@ -4583,17 +4599,17 @@ enum MigrationDerivations {
                 let dueState: MigrationPrepareBalanceRow.State = isProvingStalled
                     ? MigrationPrepareBalanceRow.State.scheduled
                     : MigrationPrepareBalanceRow.State.preparing
-                if isProvingStalled, forwardMinutes <= 0 {
+                if isProvingStalled, forwardMinutesForState <= 0 {
                     minutesFromNow = nil
                 }
                 if status.blockedOn == MigrationTransactionStatus.Blocker.dependencies {
                     let waitsOn = status.dependsOn.compactMap { displayNumber[$0] }.sorted()
                     state = waitsOn.isEmpty
-                        ? (forwardMinutes > 0
+                        ? (forwardMinutesForState > 0
                             ? MigrationPrepareBalanceRow.State.scheduled
                             : dueState)
                         : MigrationPrepareBalanceRow.State.waitsOn(waitsOn)
-                } else if forwardMinutes > 0 {
+                } else if forwardMinutesForState > 0 {
                     state = MigrationPrepareBalanceRow.State.scheduled
                 } else {
                     state = dueState
@@ -4670,9 +4686,10 @@ enum MigrationDerivations {
                     index: position,
                     amount: nil,
                     status: MigrationTransferRow.Status.invalid,
-                    hoursFromNow: minutesFromNow / 60,
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
                     minutesFromNow: minutesFromNow,
-                    kind: MigrationTransferRow.Kind.splitBalance
+                    kind: MigrationTransferRow.Kind.splitBalance,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4696,9 +4713,10 @@ enum MigrationDerivations {
                     index: position,
                     amount: nil,
                     status: MigrationTransferRow.Status.expired,
-                    hoursFromNow: minutesFromNow / 60,
+                    hoursFromNow: (minutesFromNow ?? 0) / 60,
                     minutesFromNow: minutesFromNow,
-                    kind: MigrationTransferRow.Kind.splitBalance
+                    kind: MigrationTransferRow.Kind.splitBalance,
+                    isETAKnown: minutesFromNow != nil
                 )
             }
 
@@ -4707,7 +4725,7 @@ enum MigrationDerivations {
                 index: position,
                 amount: nil,
                 status: MigrationTransferRow.Status.active,
-                hoursFromNow: minutesFromNow / 60,
+                hoursFromNow: (minutesFromNow ?? 0) / 60,
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
                 kind: MigrationTransferRow.Kind.splitBalance

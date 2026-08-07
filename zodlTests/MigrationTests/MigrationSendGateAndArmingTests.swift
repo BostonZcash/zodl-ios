@@ -69,7 +69,9 @@ import ZcashLightClientKit
     ) -> MigrationTransferRow? {
         (preparations + transfers)
             .filter { $0.status != MigrationTransferRow.Status.sent && !$0.isBroadcasting }
-            .min { $0.forwardETAMinutes < $1.forwardETAMinutes }
+            // MOB-1466: mirrors the production ordering — a row with no ETA (unknown tip) sorts
+            // LAST, so it can never be picked as the soonest.
+            .min { ($0.forwardETAMinutes ?? Int.max) < ($1.forwardETAMinutes ?? Int.max) }
     }
 
     // MARK: - N2: the persisted, cross-session privacy buffer

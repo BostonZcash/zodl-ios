@@ -36,13 +36,24 @@ enum MigrationETA: Equatable, Sendable {
     /// Minutes-from-now for a transfer's scheduled execution height, via a block delta measured in
     /// `clock`'s frame: `(scheduledHeight − tip) × secondsPerBlock ÷ 60`, floored, never negative.
     ///
-    /// P3: the tip and the rate now travel together in `MigrationChainClock` — see that type for
-    /// why both are read from the SDK's measured estimators rather than the scanned tip and a
-    /// hardcoded 75 s. An unknown tip or a height at/below it still yields `0`, the same
-    /// fail-safe-sentinel idiom `isIronwoodActivated()` / `liveStalledHoursAgo` use: an unknown tip
-    /// is not a low one, so it must not be subtracted from.
-    static func minutesFromNow(scheduledHeight: BlockHeight, clock: MigrationChainClock) -> Int {
-        max(0, Int((clock.secondsUntil(height: scheduledHeight) / 60).rounded(.down)))
+    /// `nil` WHEN THE TIP IS UNKNOWN (MOB-1466, Lukas 2026-08-07: "either we know Tx send height =>
+    /// ETAs or we don't.. if we don't we need to write 'recomputing ETA...'").
+    ///
+    /// This returned `0` for an unknown tip until now, described as a fail-safe sentinel — and the
+    /// arithmetic reasoning was right (an unknown tip is not a low one, so it must not be subtracted
+    /// from). The DISPLAY consequence was not: `bucketed` reads `<= 0` as `.readyNow`, so a cold
+    /// launch (`tip 0`) rendered "Ready now" on every pending transfer — eleven instructions to act,
+    /// from a clock with nothing to measure against, replaced by real times seconds later.
+    ///
+    /// Zero and nil now mean different things and neither is a guess: `0` is "at or behind a KNOWN
+    /// tip" (genuinely ready), `nil` is "no tip, no answer".
+    ///
+    /// P3: the tip and the rate travel together in `MigrationChainClock` — see that type for why
+    /// both are read from the SDK's measured estimators rather than the scanned tip and a hardcoded
+    /// 75 s.
+    static func minutesFromNow(scheduledHeight: BlockHeight, clock: MigrationChainClock) -> Int? {
+        guard clock.isTipKnown else { return nil }
+        return max(0, Int((clock.secondsUntil(height: scheduledHeight) / 60).rounded(.down)))
     }
 
     /// Minutes SINCE a scheduled height passed — the overdue mirror of `minutesFromNow`, which
@@ -77,7 +88,17 @@ enum MigrationETA: Equatable, Sendable {
     /// The localized forward-ETA caption for `minutesFromNow`, bucketed then rendered under the
     /// requested phrasing. The single caption formatter every forward surface calls — see this
     /// type's header for why one shared formatter matters.
-    static func caption(minutesFromNow minutes: Int, phrasing: Phrasing) -> String {
+    /// `nil` minutes = the tip is unknown, so there is no ETA to state — every phrasing says
+    /// "Recomputing ETA…" (Lukas's own copy, 2026-08-07). This is the ONE place the unknown-tip
+    /// answer is rendered, so no surface can accidentally fall back to a number.
+    ///
+    /// A row with no forward time AT ALL (a finished one) must not reach here — it renders its green
+    /// check and DONE label with no ETA line, per Lukas's ruling. That absence is the caller's to
+    /// express, not this formatter's: "recomputing" on a completed transfer would be its own lie.
+    static func caption(minutesFromNow minutes: Int?, phrasing: Phrasing) -> String {
+        guard let minutes else {
+            return String(localizable: .migrationPlanEtaRecomputing)
+        }
         switch bucketed(minutesFromNow: minutes) {
         case .readyNow:
             return phrasing == .plan

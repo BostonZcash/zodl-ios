@@ -192,8 +192,12 @@ struct MigrationPrepareBalanceSheet: View {
                 //
                 // A finished step has no forward time (`minutesFromNow == nil`) and gets no line.
                 // Its trailing "Done" already says everything true about it.
-                if let minutesFromNow = step.minutesFromNow {
-                    Text(MigrationETA.caption(minutesFromNow: minutesFromNow, phrasing: .plan))
+                // MOB-1466: `hasForwardTime` decides whether a line exists at all; the caption then
+                // decides what it says — a real ETA, or "Recomputing ETA…" when the tip is unknown.
+                // A finished step stays silent either way: its green check and "Done" are the
+                // statement, and "Recomputing" over them would be a fresh lie in place of the old one.
+                if step.hasForwardTime {
+                    Text(MigrationETA.caption(minutesFromNow: step.minutesFromNow, phrasing: .plan))
                         .zFont(size: 12, style: Design.Text.tertiary)
                 }
             }

@@ -39,9 +39,21 @@ struct MigrationChainClock: Equatable, Sendable {
     let secondsPerBlock: Double
 
     /// A chain nothing is known about yet: before the first scan there is no tip to subtract from.
-    /// `MigrationETA.minutesFromNow` floors every height against it to "Ready now" rather than
-    /// inventing a distance — the same fail-safe-sentinel idiom `isIronwoodActivated()` uses.
+    ///
+    /// MOB-1466 (Lukas, 2026-08-07): this doc used to say `MigrationETA.minutesFromNow` "floors
+    /// every height against it to 'Ready now' rather than inventing a distance". That WAS the
+    /// behaviour and it was the bug — on a cold launch (the trace prints `APP OPEN … tip 0`) every
+    /// pending transfer rendered "Ready now" for the seconds until the tip landed, then flipped to
+    /// its real time. Eleven transfers told the user to act, from a clock that knew nothing.
+    /// `minutesFromNow` now returns `nil` here and the surfaces say "Recomputing ETA…".
     static let unknown = MigrationChainClock(tip: 0)
+
+    /// Whether this clock can answer forward questions at all. `tip == 0` means UNKNOWN, not low —
+    /// the distinction `secondsUntil`'s zero cannot carry, because it returns the same zero for a
+    /// height at or behind a KNOWN tip (genuinely ready now).
+    var isTipKnown: Bool {
+        tip > 0
+    }
 
     init(tip: BlockHeight, secondsPerBlock: Double = targetSecondsPerBlock) {
         self.tip = tip

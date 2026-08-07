@@ -87,6 +87,17 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
     /// ahead (in ~0 / ~1 / ~2 / ~3 hours). So nothing specified what a finished row should read, and
     /// the type answered "right away" on the design's behalf. `nil` says "no forward time", and the
     /// sheet omits the line. Absence renders; a wrong number does not.
+    /// Whether this step has ANY forward statement to make. `false` for a step that is finished,
+    /// on the chain's side, or needing the user — those render their badge and trailing word with no
+    /// time line at all (Lukas, 2026-08-07: "finished rows are silent, they have green checkmark and
+    /// DONE label").
+    ///
+    /// Separate from `minutesFromNow` because the two answer different questions and a single
+    /// optional could not carry both once "the tip is unknown" existed as a third state.
+    var hasForwardTime = true
+    /// How long until this step's turn, when there is one. `nil` while `hasForwardTime` means the
+    /// chain tip was unknown — no ETA to state, so the sheet says "Recomputing ETA…" rather than
+    /// the "Starts right away" a fabricated zero produced on every row at once.
     var minutesFromNow: Int?
 
     /// A shaped placeholder ladder for `count` steps, pending the real per-transaction statuses:
@@ -127,7 +138,7 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
                 // anywhere. A due step is `.preparing` whether or not the sweep has picked it up
                 // yet — the app's work is seconds away (the tick loop), and no user action exists
                 // for a preparation either way.
-                state = !row.isPreparing && row.forwardETAMinutes > 0 ? .scheduled : .preparing
+                state = !row.isPreparing && (row.forwardETAMinutes ?? Int.max) > 0 ? .scheduled : .preparing
             case .pending:
                 // Displayed step numbers are 1-based, and a first step that is somehow pending
                 // waits on nothing the user can see — the caption treats an empty list as
@@ -147,12 +158,25 @@ struct MigrationPrepareBalanceRow: Equatable, Identifiable, Sendable {
                 // on the chain's side (`.confirming` — the chain is working, not a schedule), or
                 // needing the user (`.invalid`/`.expired`). A plain 0 on those rendered "Starts
                 // right away" under "Sent" — the same lie the done-row fix already removed.
+                // MOB-1466: `hasForwardTime` is the finished/unfinished question and
+                // `minutesFromNow` is the how-long one. They used to share a single `nil`, which
+                // stopped working the moment "the tip is unknown" became a third answer — a
+                // completed step and an undateable one are both wordless, but only one of them
+                // should say "Recomputing ETA…".
+                hasForwardTime: {
+                    switch row.status {
+                    case .sent, .confirming, .invalid, .expired:
+                        return false
+                    default:
+                        return true
+                    }
+                }(),
                 minutesFromNow: {
                     switch row.status {
                     case .sent, .confirming, .invalid, .expired:
                         return nil
                     default:
-                        return max(0, row.forwardETAMinutes)
+                        return row.forwardETAMinutes.map { max(0, $0) }
                     }
                 }()
             )
