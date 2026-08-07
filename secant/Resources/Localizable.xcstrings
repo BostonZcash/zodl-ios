@@ -11714,12 +11714,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If a scheduled transfer is missed or a background submission fails, we can send you a local notification and prompt you to open Zodl. Get notified about:"
+            "value" : "Notifications are essential to this process. Since iOS won't let transfers send in the background, we rely on local notifications to tell you exactly when to open Zodl and take the next step. Get notified about:"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Si se omite una transferencia programada o falla un envío en segundo plano, podemos enviarte una notificación local y pedirte que abras Zodl. Recibe notificaciones sobre:"
           }
         }
