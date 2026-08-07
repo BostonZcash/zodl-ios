@@ -8602,6 +8602,12 @@
             "state" : "translated",
             "value" : "Reset Ironwood announcement"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restablecer el aviso de Ironwood"
+          }
         }
       }
     },
@@ -11720,7 +11726,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Si se omite una transferencia programada o falla un envío en segundo plano, podemos enviarte una notificación local y pedirte que abras Zodl. Recibe notificaciones sobre:"
+            "value" : "Las notificaciones son esenciales para este proceso. Como iOS no permite enviar transferencias en segundo plano, dependemos de las notificaciones locales para indicarte exactamente cuándo abrir Zodl y dar el siguiente paso. Recibe notificaciones sobre:"
           }
         }
       }
@@ -11839,7 +11845,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tu saldo restante en Orchard se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Si nos perdemos una ventana, Zodl te lo indicará la próxima vez que abras la app."
+            "value" : "Revisa el plan a continuación. Tu saldo restante de Orchard se divide en %1$lld transferencias. Durante las próximas ~%2$lld horas, te avisaremos en cada paso. Abre la app puntualmente para que todo siga su curso."
           }
         }
       }
@@ -11856,7 +11862,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Revisa el siguiente plan — una vez confirmado, cada transferencia se envía en su ventana programada durante las próximas ~%1$lld horas."
+            "value" : "Revisa el plan a continuación. Durante las próximas ~%1$lld horas, te avisaremos en cada paso. Abre la app puntualmente para que todo siga su curso."
           }
         }
       }
@@ -12961,7 +12967,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes."
+            "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes. Te avisaremos cuando sea el momento de abrir Zodl y realizar la siguiente acción."
           }
         }
       }
@@ -12974,6 +12980,12 @@
             "state" : "translated",
             "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers. Keep Zodl open while it is broadcasting the transaction."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes. Mantén Zodl abierto mientras se envía la transacción."
+          }
         }
       }
     },
@@ -12984,6 +12996,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. There are %3$lld remaining transfers. Keep Zodl open while it is preparing the migration transfers."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes. Mantén Zodl abierto mientras prepara las transferencias de la migración."
           }
         }
       }
@@ -13030,6 +13048,12 @@
             "state" : "translated",
             "value" : "Keep Zodl open until the transaction is sent. The process will pause if you leave the app."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén Zodl abierto hasta que se envíe la transacción. El proceso se pausará si sales de la app."
+          }
         }
       }
     },
@@ -13041,6 +13065,12 @@
             "state" : "translated",
             "value" : "Keep Zodl open in the background. We'll notify you when it's time to take the next action."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén Zodl abierto en segundo plano. Te avisaremos cuando sea el momento de realizar la siguiente acción."
+          }
         }
       }
     },
@@ -13051,6 +13081,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Keep Zodl open until transfers are prepared. The process will pause if you leave the app."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén Zodl abierto hasta que las transferencias estén preparadas. El proceso se pausará si sales de la app."
           }
         }
       }
@@ -18827,6 +18863,12 @@
             "state" : "translated",
             "value" : "Wallet Resync in Progress"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resincronización de la cartera en curso"
+          }
         }
       }
     },
@@ -19041,6 +19083,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Resyncing"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resincronizando"
           }
         }
       }
