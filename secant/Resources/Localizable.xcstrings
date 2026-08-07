@@ -12870,6 +12870,193 @@
         }
       }
     },
+    "migrationRestart.confirmCta" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm restart"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar reinicio"
+          }
+        }
+      }
+    },
+    "migrationRestart.confirmDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A new plan will be created for your remaining %1$@. The %2$lld transfers already completed stay as they are and won't be repeated."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se creará un nuevo plan para los %1$@ que te quedan. Las %2$lld transferencias ya completadas se mantienen como están y no se repetirán."
+          }
+        }
+      }
+    },
+    "migrationRestart.confirmTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart this migration?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Reiniciar esta migración?"
+          }
+        }
+      }
+    },
+    "migrationRestart.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If your migration looks stuck, you can restart it safely. This creates a new plan for your remaining funds. Completed transfers are not affected."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si tu migración parece atascada, puedes reiniciarla de forma segura. Esto crea un nuevo plan para los fondos que te quedan. Las transferencias completadas no se ven afectadas."
+          }
+        }
+      }
+    },
+    "migrationRestart.migrated" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrated"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Migrado"
+          }
+        }
+      }
+    },
+    "migrationRestart.migratedValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld transfers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld de %2$lld transferencias"
+          }
+        }
+      }
+    },
+    "migrationRestart.remainingBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining balance"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo restante"
+          }
+        }
+      }
+    },
+    "migrationRestart.remainingToMigrate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendiente de migrar"
+          }
+        }
+      }
+    },
+    "migrationRestart.supportNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If restarting doesn't resolve the issue, please reach out to Zodl Support via Send Feedback."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si reiniciar no resuelve el problema, ponte en contacto con el soporte de Zodl mediante Enviar comentarios."
+          }
+        }
+      }
+    },
+    "migrationRestart.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart Migration"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar migración"
+          }
+        }
+      }
+    },
+    "migrationRestart.warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This cancels the current migration plan. It cannot be undone once confirmed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto cancela el plan de migración actual. No se puede deshacer una vez confirmado."
+          }
+        }
+      }
+    },
     "migrationSending.sentSubtitleMigrated" : {
       "extractionState" : "manual",
       "localizations" : {

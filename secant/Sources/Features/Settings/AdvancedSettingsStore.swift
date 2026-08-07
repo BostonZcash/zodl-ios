@@ -16,11 +16,16 @@ struct AdvancedSettings {
             case exportTaxFile
             case recoveryPhrase
             case resetZashi
+            case restartMigration
             case resyncWallet
             case torSetup
         }
-        
+
         var isEnoughFreeSpaceMode = true
+        /// MOB-1466: whether a migration run exists to restart. The row is hidden without one —
+        /// "Restart Migration" on a wallet with no plan is a door onto a screen that can only
+        /// report zeros, and the engine call behind it would have nothing to cancel.
+        var hasMigrationRun = false
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         /// DEBUG-only result of the migration stride reschedule, shown as a plain alert.
@@ -49,11 +54,15 @@ struct AdvancedSettings {
         /// The signpost alert's payload — see `debugMigrationRescheduleTapped`.
         case debugMigrationRescheduleFinished(String)
         case debugResetIronwoodAnnouncementTapped
+        /// MOB-1466: the one-shot read that decides whether the Restart Migration row exists.
+        case migrationRunPresence(Bool)
+        case onAppear
         case operationAccessCheck(State.Operation)
         case operationAccessGranted(State.Operation)
     }
 
     @Dependency(\.localAuthentication) var localAuthentication
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.walletStorage) var walletStorage
 
     init() { }
@@ -101,9 +110,23 @@ struct AdvancedSettings {
                 try? walletStorage.importIronwoodAnnouncementFlag(false)
                 return .none
 
+            case .onAppear:
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    let snapshot = await migrationManager.migrationViewSnapshot(accountUUID)
+                    await send(.migrationRunPresence(snapshot.totalTransfers > 0))
+                }
+
+            case .migrationRunPresence(let hasRun):
+                state.hasMigrationRun = hasRun
+                return .none
+
             case .operationAccessCheck(let operation):
                 switch operation {
-                case .chooseServer, .torSetup:
+                // No biometric gate on the restart: its own confirmation sheet IS the gate, and
+                // the flow spends nothing — it cancels a plan (already-broadcast transfers stay
+                // migrated on-chain). Double-gating it would be the only place in the app where a
+                // confirm sheet sits behind Face ID.
+                case .chooseServer, .torSetup, .restartMigration:
                     return .send(.operationAccessGranted(operation))
                 case .recoveryPhrase, .exportPrivateData, .exportTaxFile, .resetZashi, .disconnectHWWallet, .resyncWallet:
                     return .run { send in

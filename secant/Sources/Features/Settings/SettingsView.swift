@@ -130,6 +130,8 @@ struct SettingsView: View {
                     PrivateDataConsentView(store: store)
                 case let .exportTransactionHistory(store):
                     ExportTransactionHistoryView(store: store)
+                case let .migrationRestart(store):
+                    MigrationRestartView(store: store)
                 case let .recoveryPhrase(store):
                     RecoveryPhraseDisplayView(store: store)
                 case let .resyncEstimateBirthdaysDate(store):

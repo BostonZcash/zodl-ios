@@ -17,6 +17,7 @@ struct Settings {
         case currencyConversionSetup(CurrencyConversionSetup)
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
+        case migrationRestart(MigrationRestart)
         case recoveryPhrase(RecoveryPhraseDisplay)
         case resetZashi(DeleteWallet)
         case resyncEstimateBirthdaysDate(WalletBirthday)
