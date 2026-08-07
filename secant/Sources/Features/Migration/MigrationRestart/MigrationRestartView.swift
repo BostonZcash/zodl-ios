@@ -147,7 +147,7 @@ struct MigrationRestartView: View {
     private var warningBox: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(String(localizable: .migrationRestartWarning))
-                .zFont(size: 14, style: Design.Utility.ErrorRed._500)
+                .zFont(size: 14, style: Design.Utility.ErrorRed._800)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
@@ -155,7 +155,7 @@ struct MigrationRestartView: View {
             Spacer(minLength: 0)
 
             Asset.Assets.infoOutline.image
-                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
+                .zImage(size: 20, style: Design.Utility.ErrorRed._800)
         }
         .padding(16)
         .background {
