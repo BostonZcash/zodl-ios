@@ -16,7 +16,7 @@ import MessageUI
 struct SmartBanner {
     enum Constants: Equatable {
         static let easeInOutDuration = 0.85
-        /// MOB-1466: the MINIMUM time `.checkingStatus` stays on screen once raised — ABSORBED into
+        /// The MINIMUM time ANY migration banner state stays on screen once raised — ABSORBED into
         /// the re-derivation, never added on top. A verdict at 2 s shows checking for 2 s; a
         /// verdict at 0.1 s still shows it until the floor.
         ///
@@ -35,7 +35,12 @@ struct SmartBanner {
         /// arrive in runs (A -> B -> A, A -> B -> C) rather than singly. Showing the truth
         /// immediately and forbidding a sub-half-second flip is the shape that matches what was
         /// actually observed.
-        static let migrationCheckingMinimumDwell = 0.5
+        ///
+        /// SB-D1 (Lukas, 2026-08-07): "always render any banner's state for at least 0.5s".
+        /// ONE number for every migration banner state, not just checking — the flicker he
+        /// reported (evaluating → sending → we'll notify, all inside a blink) is the general case
+        /// of what this originally guarded.
+        static let migrationMinimumDwell = 0.5
         static let remindMe2days: TimeInterval = 86_400 * 2
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
@@ -110,6 +115,10 @@ struct SmartBanner {
         /// elapses. While set, a resolved variant is HELD (below) rather than applied, so the
         /// checking state cannot flash.
         var isMigrationCheckDwelling = false
+        /// SB-D1: a state is on screen and has not yet served its half second.
+        var isMigrationVariantDwelling = false
+        /// SB-D1: distinct states waiting their turn. BOUNDED — see `enqueueMigrationVariant`.
+        var migrationVariantQueue: [MigrationBannerVariant] = []
         /// The variant that resolved during the dwell, waiting to be applied when it ends. The
         /// companion `Bool` exists because `nil` is itself a meaningful variant (it closes the
         /// banner) and a double optional reads far worse than two fields.
@@ -187,6 +196,7 @@ struct SmartBanner {
         case migrationForegroundCheckStarted
         /// The minimum dwell ended; apply whatever resolved meanwhile.
         case migrationCheckDwellElapsed
+        case migrationVariantDwellElapsed
         case reevaluateMigrationOnActivationFlip
         case evaluatePriority3
         case evaluatePriority4
@@ -492,14 +502,32 @@ struct SmartBanner {
                     )
                     return .none
                 }
-                MigrationTrace.event("banner → checkingStatus (foreground; min dwell \(Constants.migrationCheckingMinimumDwell)s)")
+                MigrationTrace.event("banner → checkingStatus (foreground; min dwell \(Constants.migrationMinimumDwell)s)")
                 state.migrationBannerVariant = .checkingStatus
                 state.isMigrationCheckDwelling = true
                 state.hasHeldMigrationVariant = false
                 state.heldMigrationVariant = nil
                 return .run { send in
-                    try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                    try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                     await send(.migrationCheckDwellElapsed)
+                }
+
+            case .migrationVariantDwellElapsed:
+                // SB-D1: the half second is served. Show the next DISTINCT state if one queued
+                // behind it, and start its own floor; otherwise the lane goes quiet and the next
+                // update paints immediately.
+                guard !state.migrationVariantQueue.isEmpty else {
+                    state.isMigrationVariantDwelling = false
+                    return .none
+                }
+                let next = state.migrationVariantQueue.removeFirst()
+                state.migrationBannerVariant = Self.resolvingIdleTermination(
+                    next,
+                    previous: state.migrationBannerVariant
+                )
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
+                    await send(.migrationVariantDwellElapsed)
                 }
 
             case .migrationCheckDwellElapsed:
@@ -511,7 +539,7 @@ struct SmartBanner {
                 guard migrationManager.isMigrationSessionVerdictKnown() else {
                     MigrationTrace.event("banner check dwell elapsed — verdict pending, staying on checking (R3)")
                     return .run { send in
-                        try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                        try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                         await send(.migrationCheckDwellElapsed)
                     }
                 }
@@ -548,7 +576,7 @@ struct SmartBanner {
                         state.heldMigrationVariant = variant
                         state.hasHeldMigrationVariant = true
                         return .run { send in
-                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                             await send(.migrationCheckDwellElapsed)
                         }
                     }
@@ -578,19 +606,31 @@ struct SmartBanner {
                     return .merge(
                         .send(.triggerPriority(.priorityMigration)),
                         .run { send in
-                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                             await send(.migrationCheckDwellElapsed)
                         }
                     )
                 }
                 if let variant {
+                    // SB-D1: something is already serving its half second — get in line rather
+                    // than overwriting it mid-blink.
+                    if state.isMigrationVariantDwelling {
+                        Self.enqueueMigrationVariant(variant, into: &state)
+                        return .none
+                    }
                     state.migrationBannerVariant = Self.resolvingIdleTermination(
                         variant,
                         previous: state.migrationBannerVariant
                     )
-                    if state.priorityContent != .priorityMigration {
-                        return .send(.triggerPriority(.priorityMigration))
+                    state.isMigrationVariantDwelling = true
+                    let dwell: Effect<Action> = .run { send in
+                        try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
+                        await send(.migrationVariantDwellElapsed)
                     }
+                    if state.priorityContent != .priorityMigration {
+                        return .merge(.send(.triggerPriority(.priorityMigration)), dwell)
+                    }
+                    return dwell
                     // Already showing migration — content re-renders from the updated variant
                     // alone; re-triggering would just be rejected by the `openBannerRequest`
                     // rank guard anyway (equal rank), so skip the round trip.
@@ -658,7 +698,7 @@ struct SmartBanner {
                         state.heldMigrationVariant = variant
                         state.hasHeldMigrationVariant = true
                         return .run { send in
-                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                             await send(.migrationCheckDwellElapsed)
                         }
                     }
@@ -696,7 +736,7 @@ struct SmartBanner {
                     return .merge(
                         .send(.triggerPriority(.priorityMigration)),
                         .run { send in
-                            try? await mainQueue.sleep(for: .seconds(Constants.migrationCheckingMinimumDwell))
+                            try? await mainQueue.sleep(for: .seconds(Constants.migrationMinimumDwell))
                             await send(.migrationCheckDwellElapsed)
                         }
                     )
@@ -1054,6 +1094,39 @@ struct SmartBanner {
     /// twice (the split arm's own doc carries both logs). At-open renders stay counts by
     /// construction: the claim gate paints `.checkingStatus` first, and checking is not a pending
     /// state, so the session's first real answer passes through untouched.
+    /// SB-D1's queue discipline. Two rules, both there to stop the banner drifting away from
+    /// reality while it politely finishes its sentence:
+    ///
+    /// 1. COALESCE same-case updates. `.idleCounts(1, 6)` → `.idleCounts(2, 6)` is the same STATE
+    ///    with a newer number, and Lukas asked to see state CHANGES, not every count tick. The
+    ///    newer value replaces the older in place, so a run of ticks costs no extra time on screen.
+    /// 2. BOUND the backlog. Past `maxQueue` the tail is REPLACED rather than appended: the newest
+    ///    truth always survives, and the worst-case lag stays `maxQueue × 0.5s` instead of growing
+    ///    with the churn. Dropping a middle state is the lesser harm — a banner that is four
+    ///    seconds behind is lying more than one that skipped a step.
+    ///
+    /// No preemption path: with the bound, the furthest any state can be delayed is 2 s, which is
+    /// under the cost of the flicker it prevents even for the "tap to fix" states.
+    static func enqueueMigrationVariant(_ variant: MigrationBannerVariant, into state: inout State) {
+        let maxQueue = 4
+        if let last = state.migrationVariantQueue.last {
+            if last.dwellKey == variant.dwellKey {
+                state.migrationVariantQueue[state.migrationVariantQueue.count - 1] = variant
+                return
+            }
+        } else if state.migrationBannerVariant.dwellKey == variant.dwellKey {
+            // Same state as the one currently serving its floor — nothing new to show. Let the
+            // value land directly so the counts stay live without buying another half second.
+            state.migrationBannerVariant = variant
+            return
+        }
+        if state.migrationVariantQueue.count >= maxQueue {
+            state.migrationVariantQueue[state.migrationVariantQueue.count - 1] = variant
+            return
+        }
+        state.migrationVariantQueue.append(variant)
+    }
+
     static func resolvingIdleTermination(
         _ variant: MigrationBannerVariant,
         previous: MigrationBannerVariant?

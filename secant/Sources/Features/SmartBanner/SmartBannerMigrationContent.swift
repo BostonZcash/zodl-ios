@@ -194,6 +194,25 @@ enum MigrationBannerVariant: Equatable {
         self != .checkingStatus
     }
 
+    /// SB-D1: the STATE identity, blind to payload. Two variants sharing a key are the same
+    /// thing to a reader — `.idleCounts(1, 6)` and `.idleCounts(2, 6)` are both "counting up" —
+    /// so the dwell queue coalesces them instead of spending a half second on each.
+    var dwellKey: String {
+        switch self {
+        case .required: return "required"
+        case .inProgress: return "inProgress"
+        case .preparing: return "preparing"
+        case .nextRoundRequired: return "nextRoundRequired"
+        case .transferSending: return "transferSending"
+        case .updatePlan: return "updatePlan"
+        case .transfersExpired: return "transfersExpired"
+        case .complete: return "complete"
+        case .idle: return "idle"
+        case .idleCounts: return "idleCounts"
+        case .checkingStatus: return "checkingStatus"
+        }
+    }
+
     /// Membership test for the preparing SHAPE, payload-blind — what the row-truth tests assert
     /// ("this run reads as PREPARING") without pinning counts those tests are not about. Prefer
     /// this over `== .preparing(...)` anywhere the counts are incidental.

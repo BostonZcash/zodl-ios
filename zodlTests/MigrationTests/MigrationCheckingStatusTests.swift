@@ -74,8 +74,11 @@ import ZcashLightClientKit
     /// 0.2 s once (2026-08-03), optimising spinner time — which was never the goal. This pin makes
     /// the next measure-down a deliberate act with a failing test attached, exactly as
     /// `MigrationTickIntervalLivePin` does for the tick interval.
+    ///
+    /// Renamed 2026-08-07 (SB-D1): the constant now floors EVERY migration banner state, not just
+    /// checking — one number, because the rule Lukas stated is one rule.
     @Test func checkingFloorIsTheRatifiedHalfSecond() {
-        #expect(SmartBanner.Constants.migrationCheckingMinimumDwell >= 0.5)
+        #expect(SmartBanner.Constants.migrationMinimumDwell >= 0.5)
     }
 
     /// THE RATIFIED IDLE (Lukas, 2026-08-06 — flow ID): engine `.waiting` ⇒ `.idle` ⇒ the designed
