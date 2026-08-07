@@ -3,11 +3,14 @@
 //  zodl
 //
 //  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). Shown while
-//  a migration transfer broadcasts — the immediate/plan-first confirm lanes — then flips to a
-//  success state once that one transfer has been executed. `onAppear` runs
-//  `executeNextPendingMigrationTransfer`, recording a broadcast and scheduling the next background
-//  window on success; a failure/`nil` result presents the failure sheet, and `retryTapped` re-runs
-//  the same step (MOB-1466).
+//  a migration transfer broadcasts — the immediate confirm lane — then flips to a
+//  success state once that one transfer has been executed. `onAppear` runs the immediate sweep's
+//  own submission (`MigrationCommitPipeline.commitImmediateSoftware`), recording a broadcast on
+//  success; a failure/`nil` result presents the failure sheet, and `retryTapped` re-runs the same
+//  step (MOB-1466). 2026-08-07: the SCHEDULED-RUN delivery branch that also lived here — ask the
+//  manager for a `.broadcast` instruction, then `performMigrationBroadcast` it — is GONE with the
+//  client member that fed it; instructions are issued by the drive and flow one way, and a screen
+//  that asks for one is the crank-and-filter the design forbids. It had no reachable producer.
 //
 //  2026-08-07 (Lukas): the SEND-NOW and MANUAL-DELIVERY lanes this screen also served are GONE —
 //  "send is driven only by .broadcast(id) next_step, never waiting on manual tap." With them went
@@ -44,10 +47,10 @@
 //  account's USK (same hoisted-above-the-broadcast treatment the dust lane's own derivation gets —
 //  R9-T4 finding 5) and calls `MigrationCommitPipeline.commitImmediateSoftware`
 //  (`createAndSubmitProposedTransactions`, already transaction-guarded in `SDKSynchronizerLive`)
-//  instead of `executeNextPendingMigrationTransfer` — the immediate proposal is engine-external, so
+//  instead of `performMigrationBroadcast` — the immediate proposal is engine-external, so
 //  there is nothing stored in the engine for that call to serve. This deliberately does NOT ride the
 //  engine transfers' `MigrationBroadcaster` Tor-first multi-endpoint routing
-//  (`executeNextPendingMigrationTransfer`'s own delivery mechanism) — the immediate sweep rides the
+//  (`performMigrationBroadcast`'s own delivery mechanism) — the immediate sweep rides the
 //  standard ordinary-send submission path by design (the Tor consent sheet upstream, at Entry/How
 //  This Works, still gates the flow before this screen is ever reached, so the user's Tor choice is
 //  respected identically either way; only the BROADCAST plumbing underneath differs). Success is
@@ -88,9 +91,12 @@ struct MigrationSending {
         /// 0 before a send, 1 after — this screen never executes more than one transfer (MOB-1496 W5).
         var sentCount = 0
         /// MOB-1513: the immediate lane's send-max proposal — see this file's header doc. Non-`nil`
-        /// for a SOFTWARE immediate-mode confirm OR software "Migrate anyway" (MOB-1496 W-B); `nil`
-        /// for every other lane (scheduled/Keystone), which keeps today's
-        /// `executeNextPendingMigrationTransfer` behavior unchanged.
+        /// for a SOFTWARE immediate-mode confirm OR software "Migrate anyway" (MOB-1496 W-B).
+        ///
+        /// 2026-08-07: it is now REQUIRED for this screen to execute anything. The Keystone lane
+        /// pushes this screen already in `.success` (its broadcast happened in the coordinator),
+        /// and the scheduled lane no longer reaches this screen at all, so a `nil` proposal means
+        /// simply "nothing to submit" — reported as a `nil` result.
         var immediateProposal: ImmediateMigrationProposal?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -142,7 +148,8 @@ struct MigrationSending {
         case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-run the failed step.
         case retryTapped
-        /// `executeNextPendingMigrationTransfer` result for the current step; `nil` on a stub/no-op.
+        /// The immediate submission's result for the current step; `nil` on a stub/no-op, or when
+        /// there was nothing to submit.
         case transferResult(MigrationTransferResult?)
         /// R7-T3 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
         case useSyncServerTapped
@@ -344,7 +351,20 @@ struct MigrationSending {
         account: WalletAccount?,
         immediateProposal: ImmediateMigrationProposal?
     ) -> Effect<Action> {
-        guard let account else {
+        // IMMEDIATE-LANE ONLY (2026-08-07). The scheduled-run delivery branch that used to live
+        // below — ask the manager for a `.broadcast` instruction, then submit it — is GONE, with
+        // the client member that fed it. Instructions are issued by the drive and flow one way,
+        // crank -> executor; a screen that ASKS for one is the banned crank-and-filter whatever
+        // layer it sits in. Nothing was lost: the branch had no reachable producer. Every
+        // production push that reaches this executor is the software immediate sweep
+        // (`MigrationCoordFlowCoordinator`'s `.reviewTransfer(.delegate(.confirmed))`, whose own
+        // comment records that the proposal is guaranteed populated there); the two `.success`
+        // pushes short-circuit in `onAppear`, and the `.immediateReview` arm of
+        // `resumeCommittedMigrationChain` is documented unreachable.
+        //
+        // So a missing account or proposal is now simply nothing to submit, reported as `nil`
+        // exactly as an unusable account already was.
+        guard let account, let immediateProposal else {
             return .run { send in await send(.transferResult(nil)) }
         }
 
@@ -359,26 +379,22 @@ struct MigrationSending {
             // sync was never stopped for this attempt. `immediateProposal` is `nil` for every lane
             // except a software immediate-mode confirm (see `State.immediateProposal`'s doc), so
             // this is a no-op everywhere else.
-            let immediateUSK: UnifiedSpendingKey?
-            if immediateProposal != nil {
-                guard account.vendor != WalletAccount.Vendor.keystone, let zip32AccountIndex = account.zip32AccountIndex else {
-                    await send(.transferResult(nil))
-                    return
-                }
-                do {
-                    immediateUSK = try MigrationSpendingKeyDerivation.deriveUSK(
-                        zip32AccountIndex: zip32AccountIndex,
-                        walletStorage: walletStorage,
-                        mnemonic: mnemonic,
-                        derivationTool: derivationTool,
-                        networkType: zcashSDKEnvironment.network().networkType
-                    )
-                } catch {
-                    await send(.transferResult(nil))
-                    return
-                }
-            } else {
-                immediateUSK = nil
+            guard account.vendor != WalletAccount.Vendor.keystone, let zip32AccountIndex = account.zip32AccountIndex else {
+                await send(.transferResult(nil))
+                return
+            }
+            let immediateUSK: UnifiedSpendingKey
+            do {
+                immediateUSK = try MigrationSpendingKeyDerivation.deriveUSK(
+                    zip32AccountIndex: zip32AccountIndex,
+                    walletStorage: walletStorage,
+                    mnemonic: mnemonic,
+                    derivationTool: derivationTool,
+                    networkType: zcashSDKEnvironment.network().networkType
+                )
+            } catch {
+                await send(.transferResult(nil))
+                return
             }
 
             // MOB-1496 (R8-T4, #3): tracks whether `stopSyncBeforeMigrationBroadcast()` actually ran
@@ -388,76 +404,34 @@ struct MigrationSending {
             // nudge.
             var didStopSyncForBroadcast = false
             do {
-                let result: MigrationTransferResult?
-                if let immediateProposal, let immediateUSK {
-                    // MOB-1513: no `migrationNetworkOptions` read here by design — the immediate
-                    // lane's `createAndSubmitProposedTransactions` is the ordinary-send submission
-                    // path (endpoint selection via `userStoredPreferences.automaticServerSelection()`),
-                    // not the engine transfers' `MigrationNetworkPrivacyOptions`/Tor-first
-                    // `MigrationBroadcaster` routing — see this file's header doc for the accepted
-                    // divergence. Still stops sync first, consistent with every other foreground
-                    // migration broadcast lane.
-                    await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
-                    didStopSyncForBroadcast = true
-                    let txId = try await MigrationCommitPipeline.commitImmediateSoftware(
-                        proposal: immediateProposal,
-                        usk: immediateUSK,
-                        accountUUID: account.id,
-                        sdkSynchronizer: sdkSynchronizer
-                    )
-                    result = MigrationTransferResult.success(txId: txId)
-                } else {
-                    let options = await migrationManager.migrationNetworkOptions(account.id)
-                    await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
-                    didStopSyncForBroadcast = true
-                    // `useEstimatedTip: true` — this IS a send visit. It deliberately did not
-                    // sync (see `stopSyncBeforeMigrationBroadcast` above), so the scanned tip is
-                    // stale by construction and would report "nothing due" for a transfer that
-                    // genuinely is.
-                    let attempt = try await sdkSynchronizer.executeNextPendingMigrationTransfer(
-                        account.id,
-                        options,
-                        true
-                    )
-                    switch attempt {
-                    case .executed(let executed):
-                        result = executed
-                    case .nothingDue:
-                        result = nil
-                    case .awaitingProof(let id):
-                        // The transfer is due but unproven, so nothing was broadcast. Proving is
-                        // sync-bound and this is a send session, so the fix is NOT to prove here —
-                        // it is to let sync resume and have the next SYNC visit run the prove sweep
-                        // (`finalizeReadyMigrationTransfers`), after which a later send visit
-                        // broadcasts. `nil` takes exactly that path: it falls through to the
-                        // `didStopSyncForBroadcast` nudge below, which reopens the sync gate.
-                        LoggerProxy.event("\(MigrationManagerImpl.logTag) transfer \(id) due but awaiting proof — deferring to the next sync visit")
-                        result = nil
-                    }
-                }
-                if let result, let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
+                // MOB-1513: no `migrationNetworkOptions` read here by design — the immediate
+                // lane's `createAndSubmitProposedTransactions` is the ordinary-send submission
+                // path (endpoint selection via `userStoredPreferences.automaticServerSelection()`),
+                // not the engine transfers' `MigrationNetworkPrivacyOptions`/Tor-first
+                // `MigrationBroadcaster` routing — see this file's header doc for the accepted
+                // divergence. Still stops sync first, consistent with every other foreground
+                // migration broadcast lane.
+                await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                didStopSyncForBroadcast = true
+                let txId = try await MigrationCommitPipeline.commitImmediateSoftware(
+                    proposal: immediateProposal,
+                    usk: immediateUSK,
+                    accountUUID: account.id,
+                    sdkSynchronizer: sdkSynchronizer
+                )
+                let result = MigrationTransferResult.success(txId: txId)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
                     await send(.broadcastFailureRouted(route))
                 }
                 await send(.transferResult(result))
-                // A `.success` result from the ENGINE (scheduled) lane —
-                // `executeNextPendingMigrationTransfer` — is the only outcome the SDK's own
-                // migration privacy gate transitions on; every other outcome (`.networkError`/
-                // `.invalidNote`/`.expired`/`nil`) stopped sync above without ever reaching that
-                // transition, so nudges Root's gate feed directly.
-                if case MigrationTransferResult.success? = result {
-                    if immediateProposal != nil {
-                        // MOB-1513: the immediate lane's success came from
-                        // `createAndSubmitProposedTransactions` (the ordinary-send submission path),
-                        // which never touches the ENGINE's own migration-sync privacy gate at all —
-                        // unlike the engine lanes, nothing else will ever prompt
-                        // `RootInitialization`'s resume-once-clear machinery to re-check, so this
-                        // stop needs the SAME explicit nudge a non-success outcome gets below.
-                        await migrationManager.refreshMigrationSyncGate()
-                    }
-                    // Engine lanes: no nudge — the SDK's own gate transition covers the resume.
-                } else if didStopSyncForBroadcast {
-                    await migrationManager.refreshMigrationSyncGate()
-                }
+                // MOB-1513: the immediate lane's success came from
+                // `createAndSubmitProposedTransactions` (the ordinary-send submission path), which
+                // never touches the ENGINE's own migration-sync privacy gate at all — unlike the
+                // engine lanes, nothing else will ever prompt `RootInitialization`'s
+                // resume-once-clear machinery to re-check, so this stop needs an explicit nudge
+                // just as a non-success outcome does. (The engine-lane branch that skipped the
+                // nudge here went with the scheduled-run delivery arm; this lane always nudges.)
+                await migrationManager.refreshMigrationSyncGate()
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                 // The broadcast DID land; only recording failed — treated as landed (like `.success`),
                 // so no nudge either.

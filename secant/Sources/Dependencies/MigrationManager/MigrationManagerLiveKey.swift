@@ -148,8 +148,16 @@ extension MigrationManagerClient: DependencyKey {
             migrationPrepareBalanceRows: { await impl.migrationPrepareBalanceRows(accountUUID: $0) },
             advance: { await impl.advance(phase: $0) },
             visitKind: { await impl.visitKind() },
-            runProveSweep: { await impl.runProveSweep() },
-            runBroadcastSession: { await impl.runBroadcastSession() },
+            runProveSweep: { accountUUID, instruction, maxProofs in
+                await impl.runProveSweep(accountUUID: accountUUID, instruction: instruction, maxProofs: maxProofs)
+            },
+            runBroadcastSession: { accountUUID, instruction, isPreparation in
+                await impl.runBroadcastSession(
+                    accountUUID: accountUUID,
+                    instruction: instruction,
+                    vettedPreparationDelivery: isPreparation
+                )
+            },
             migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
             shouldWarnBeforeManualSend: { accountUUID, proposal in
                 await impl.shouldWarnBeforeManualSend(accountUUID: accountUUID, proposal: proposal)
@@ -1948,9 +1956,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///
     /// Height -> date is an ESTIMATE (`MigrationETA.minutesFromNow`), and that is fine here: these
     /// are advisory pokes, and every broadcast decision is still made against the engine's own
-    /// height-based due-ness at open (`executeNextPendingMigrationTransfer`'s nil return is the
-    /// sole authority — matrix D7). An early poke therefore causes no broadcast, only a calm
-    /// "not yet".
+    /// height-based due-ness at open (the CRANK is the sole authority — matrix D7: a poke can only
+    /// bring the user back, never sanction a send, and only a `.broadcast` step does that). An
+    /// early poke therefore causes no broadcast, only a calm "not yet".
     /// Arms THE notification — exactly one per account, always.
     ///
     /// The migration has no background lane. Nothing happens unless the user opens Zodl, and each
@@ -1980,9 +1988,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// always the next transfer's window. The engine schedules its own sync/proving wake-ups
     /// (`migrationSyncWakeups`), and those come FIRST by construction: proving is what makes a
     /// broadcast window usable at all. Poking only at the broadcast window meant the user could
-    /// arrive exactly on time and find the transfer unproven — `executeNextPendingMigrationTransfer`
-    /// answers `.awaitingProof`, nothing is sent, and the run waits for whenever they happen to open
-    /// the app next. Heights become dates through the measured block rate (`MigrationChainClock`),
+    /// arrive exactly on time and find the transfer unproven — the crank answers `.prove` rather
+    /// than `.broadcast`, nothing is sent, and the run waits for whenever they happen to open the
+    /// app next. Heights become dates through the measured block rate (`MigrationChainClock`),
     /// not a 75 s assumption, and are re-drawn on every call: the engine re-jitters its wake-ups per
     /// read, so this must never cache a schedule.
     func armNextWindowNotifications(accountUUID: AccountUUID?, outlook: MigrationNextWork? = nil) async {
@@ -2172,9 +2180,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             }
             if MigrationVisit.decide(advanceSteps: [step], preparationIds: preparationIds) == MigrationVisit.send {
                 visit = MigrationVisit.send
-            } else if case let MigrationAdvanceStep.broadcast(id)? = step, preparationIds.contains(id) {
+            } else if case let MigrationAdvanceStep.broadcast(instruction)? = step, preparationIds.contains(instruction.id) {
                 LoggerProxy.event(
-                    "\(Self.logTag) preparation \(id) due — ZIP-exempt, the session stays a sync session (AUD-3)"
+                    "\(Self.logTag) preparation \(instruction.id) due — ZIP-exempt, the session stays a sync session (AUD-3)"
                 )
             }
         }
@@ -2202,45 +2210,51 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
     }
 
-    /// THE PROVE SWEEP over every candidate account — see `MigrationManagerClient.runProveSweep`.
+    /// THE PROVE EXECUTOR for ONE account — see `MigrationManagerClient.runProveSweep`.
+    ///
+    /// PER-ACCOUNT AND INSTRUCTION-TAKING (2026-08-07). This used to be account-agnostic: it
+    /// re-derived the candidate set itself and called a payload-free wallet-wide sweep once per
+    /// account. That shape does not survive the SDK's instruction executors —
+    /// `proveMigrationTransactions` proves the rows THIS batch names, and a batch belongs to the
+    /// account whose crank produced it. Sweeping accounts a second time in here would prove
+    /// un-instructed; the driver already iterates accounts and holds each one's advance, so it
+    /// passes both the account and its own batch.
+    ///
+    /// `maxProofs` is the caller's budget, chosen by PHASE rather than fixed: each proof is
+    /// seconds of CPU, and a 30 s tick should take on less than a post-sync edge. A skipped row
+    /// (already proved, anchor unresolvable) does not spend the budget, so a `0` return is still
+    /// the ordinary "nothing in this batch is provable right now" answer.
     ///
     /// Deliberately OUTSIDE `serialExecutor`: proving is a long, purely additive engine operation
     /// (it stores proofs; it mutates no app-side migration storage), and holding the mutex that
     /// serializes reconcile/commit for its whole duration would stall the very reconcile that is
-    /// about to run behind it. Per-account failures degrade to 0 rather than aborting the sweep —
-    /// one account's proving problem must not stop another account's.
-    func runProveSweep() async -> Int {
+    /// about to run behind it. A failure degrades to 0 rather than throwing — the next sync visit
+    /// retries.
+    func runProveSweep(accountUUID: AccountUUID, instruction: [MigrationProveTarget], maxProofs: Int) async -> Int {
         guard isIronwoodActivated() else { return 0 }
+        guard !instruction.isEmpty else { return 0 }
 
-        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
-            selectedAccountUUID: selectedWalletAccount?.id,
-            walletAccounts: walletAccounts
-        )
-        guard !accountUUIDs.isEmpty else { return 0 }
+        let accountUUIDs = [accountUUID]
 
         setMigrationWorkInFlight(true)
         defer { setMigrationWorkInFlight(false) }
 
-        for accountUUID in accountUUIDs {
-            pokeStateEvent(for: accountUUID)
-        }
+        pokeStateEvent(for: accountUUID)
 
         var proved = 0
-        for accountUUID in accountUUIDs {
-            do {
-                proved += try await sdkSynchronizer.finalizeReadyMigrationTransfers(accountUUID)
-            } catch {
-                // Includes `migrationProvingUnavailable` (ZRUST0127), the one HARD proving error:
-                // the ironwood tree is not queryable yet. Nothing the app can do but try at the
-                // next sync visit, so log and carry on to the next account.
-                LoggerProxy.event("\(Self.logTag) prove sweep failed for one account: \(error.toZcashError())")
-            }
+        do {
+            proved = try await sdkSynchronizer.proveMigrationTransactions(accountUUID, instruction, maxProofs)
+        } catch {
+            // Includes `migrationProvingUnavailable` (ZRUST0127), the one HARD proving error:
+            // the ironwood tree is not queryable yet. Nothing the app can do but try at the
+            // next sync visit, so log and carry on.
+            LoggerProxy.event("\(Self.logTag) prove pass failed: \(error.toZcashError())")
         }
         // Logged even at ZERO. A sweep that proves nothing, over and over, while the engine keeps
         // asking to prove IS the signal — and staying quiet about it made a stalled run look
         // identical to a healthy idle one.
         MigrationTrace.recordProveSweep(proved: proved)
-        LoggerProxy.event("\(Self.logTag) prove sweep: proved \(proved) transaction(s)")
+        LoggerProxy.event("\(Self.logTag) prove pass: proved \(proved) of \(instruction.count) instructed transaction(s)")
         if proved == 0 {
             let anyRowClaimedProvable = await logProveStall(accountUUIDs: accountUUIDs)
             // A FRUITLESS sweep is not the same as a quiet one. A sweep that proves nothing because
@@ -2419,13 +2433,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// still decides is the BANNER MAP below: a prep submit wears keep-open, never "Transfer N is
     /// sending". The submit itself is unchanged — same artifact handout, same outcome
     /// verification, same `mark_broadcast` recording.
-    func runBroadcastSession(vettedAccountUUID: AccountUUID? = nil, vettedPreparationDelivery: Bool = false) async -> Bool {
+    func runBroadcastSession(
+        accountUUID: AccountUUID,
+        instruction: MigrationBroadcastInstruction,
+        vettedPreparationDelivery: Bool = false
+    ) async -> Bool {
         guard isIronwoodActivated() else { return false }
-
-        let accountUUIDs = vettedAccountUUID.map { [$0] } ?? MigrationDerivations.candidateAccountUUIDs(
-            selectedAccountUUID: selectedWalletAccount?.id,
-            walletAccounts: walletAccounts
-        )
 
         // MOB-1466 (N2) held this lane for a fixed window after the last COMPLETED sync. That
         // hold is GONE (2026-08-07): a fixed sync->broadcast delay is an identifiable pattern in
@@ -2439,74 +2452,47 @@ final class MigrationManagerImpl: @unchecked Sendable {
             LoggerProxy.event("\(Self.logTag) broadcast proceeding with a sync in flight — it will be stopped first")
         }
 
-        for accountUUID in accountUUIDs {
-            // ONE-CLOCK DISPATCH (AUD-1, 2026-08-05): deliverability used to be pre-guarded on the
-            // SCANNED-frame step alone, while everything that PROMISES delivery — the sync gate's
-            // ready-broadcast query, the pokes, the row's Overdue label — and the submit itself
-            // (`executeNextPendingMigrationTransfer(_, _, useEstimatedTip: true)`) judge dueness
-            // at the ESTIMATED tip. In the punctual window (a proved transfer whose scheduled
-            // height the wall clock has reached but the scan has not) that mismatch made this
-            // loop refuse the very send the gate was refusing sync FOR — the open could do
-            // neither, and the in-place Send now died the same way (spinner, then nothing). The
-            // scanned step keeps first say (it carries the id with no extra reads); when it is
-            // quiet, the SAME est-aware clock the gate uses gets the second. The submit remains
-            // the single deliverability authority either way: it re-checks dueness against the
-            // estimate and answers `.nothingDue`/`.awaitingProof` honestly, so a false positive
-            // here degrades to a held verdict, never a wrong send.
-            let deliverableId: UInt32?
-            if case let MigrationAdvanceStep.broadcast(stepId)? = (try? await sdkSynchronizer.migrationAdvanceStep(accountUUID))?.step {
-                deliverableId = stepId
-            } else if (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID, true)) == true,
-                let proposal = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID) {
-                LoggerProxy.event(
-                    "\(Self.logTag) one-clock dispatch: scanned step is quiet but the estimate says transfer \(proposal.id) is due — attempting delivery (AUD-1)"
-                )
-                deliverableId = proposal.id
-            } else {
-                deliverableId = nil
-            }
-            guard let id = deliverableId else {
-                continue
-            }
-            // The user asked to press Send themselves. `visitKind()` still suppressed sync for this
-            // session — the engine says a broadcast is due, and that is what makes the session a
-            // send one regardless of who presses the button — so the transfer stays deliverable the
-            // Re-entrancy: a driver call arriving while this account is already mid-broadcast (a
-            // second foreground trigger, a raced scene-phase flip) must not submit twice.
-            guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { continue }
+        // THE INSTRUCTION IS THE AUTHORITY (2026-08-07). This lane used to decide for itself what
+        // was deliverable: it cranked the engine a SECOND time (the driver had already cranked),
+        // took the scanned-frame step's id, and — when that was quiet — fell back to the AUD-1
+        // one-clock tiebreaker, synthesising a delivery out of `hasOverdueMigrationTransfers` plus
+        // a queue peek. All of it is gone. The driver cranked once, and the instruction it hands
+        // down IS the sanction; there is nothing left here to re-derive or second-guess, and no
+        // second clock to reconcile (the crank applies the estimate itself now). The submit still
+        // has the last word: a stale instruction draws the seam's staleness throw, which
+        // `broadcastOneTransfer` discharges by asking for a fresh crank rather than retrying.
+        let id = instruction.id
 
-            MigrationTrace.recordBroadcast()
-            LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
-            // D6: the id THIS session submits — the banner renders it, never a row-inferred guess.
-            activeBroadcastTxIds.withLock { $0[accountUUID] = id }
-            if vettedPreparationDelivery {
-                // THE BANNER MAP: a prep submit wears keep-open, never "Transfer N is sending".
-                preparationBroadcastsInFlight.withLock { _ = $0.insert(accountUUID) }
-            }
+        // Re-entrancy: a driver call arriving while this account is already mid-broadcast (a
+        // second foreground trigger, a raced scene-phase flip) must not submit twice.
+        guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { return false }
 
-            setMigrationWorkInFlight(true)
-
-            pokeStateEvent(for: accountUUID)
-            let didBroadcast = await broadcastOneTransfer(accountUUID: accountUUID)
-            // Cleared BEFORE the closing poke, so that one derives fresh — it is the edge that
-            // reveals the row this broadcast just changed.
-            setMigrationWorkInFlight(false)
-            broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
-            activeBroadcastTxIds.withLock { $0[accountUUID] = nil }
-            preparationBroadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
-            pokeStateEvent(for: accountUUID)
-
-            // ZIP 318: a session carries ONE broadcast ATTEMPT — the session touched the wire, so
-            // a second account waits for the next open either way. The RETURN, though, is the
-            // attempt's real outcome (audit 2026-08-03, #5): this used to be an unconditional
-            // `true`, so a `.nothingDue`, an `.awaitingProof`, a rejected result and a thrown
-            // submit all read as "broadcast" upstream — the driver logged `.broadcast(id:)` on
-            // every open, forever, while nothing went out, and `.failed` was unreachable from
-            // this lane.
-            return didBroadcast
+        MigrationTrace.recordBroadcast()
+        LoggerProxy.event("\(Self.logTag) broadcasting migration tx \(id) — headless send session")
+        // D6: the id THIS session submits — the banner renders it, never a row-inferred guess.
+        activeBroadcastTxIds.withLock { $0[accountUUID] = id }
+        if vettedPreparationDelivery {
+            // THE BANNER MAP: a prep submit wears keep-open, never "Transfer N is sending".
+            preparationBroadcastsInFlight.withLock { _ = $0.insert(accountUUID) }
         }
 
-        return false
+        setMigrationWorkInFlight(true)
+
+        pokeStateEvent(for: accountUUID)
+        let didBroadcast = await broadcastOneTransfer(accountUUID: accountUUID, instruction: instruction)
+        // Cleared BEFORE the closing poke, so that one derives fresh — it is the edge that
+        // reveals the row this broadcast just changed.
+        setMigrationWorkInFlight(false)
+        broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+        activeBroadcastTxIds.withLock { $0[accountUUID] = nil }
+        preparationBroadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+        pokeStateEvent(for: accountUUID)
+
+        // ZIP 318: a session carries ONE broadcast ATTEMPT. The RETURN is the attempt's real
+        // outcome (audit 2026-08-03, #5): this used to be an unconditional `true`, so a rejected
+        // result and a thrown submit both read as "broadcast" upstream — the driver logged
+        // `.broadcast(id:)` on every open, forever, while nothing went out.
+        return didBroadcast
     }
 
     /// One account's submission, from `runBroadcastSession`. Every exit path either ends in a
@@ -2516,45 +2502,45 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///
     /// Returns whether a broadcast actually LANDED (a `.success` result, or the
     /// landed-but-record-failed shape, which is a landed broadcast by definition).
-    private func broadcastOneTransfer(accountUUID: AccountUUID) async -> Bool {
+    private func broadcastOneTransfer(accountUUID: AccountUUID, instruction: MigrationBroadcastInstruction) async -> Bool {
         let options = await migrationNetworkOptions(accountUUID: accountUUID)
         await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
 
         do {
-            // `useEstimatedTip: true` for exactly the reason the foreground lane passes it: this
-            // session deliberately did not sync, so the scanned tip is stale by construction and
-            // would report "nothing due" for a transfer that genuinely is.
-            let attempt = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options, true)
+            // Straight-line now (2026-08-07). The executor takes the crank's own instruction and
+            // returns the recorded result — no tip parameter (the conduit projected the estimate
+            // once, at the crank) and no outcome cases to disambiguate. The two arms that used to
+            // live here are both gone by construction: `.nothingDue` cannot arise when an
+            // instruction is in hand, and a due-but-unproved row now reaches the app as a `.prove`
+            // batch entry rather than as a delivery outcome.
+            let result = try await sdkSynchronizer.performMigrationBroadcast(accountUUID, instruction, options)
 
-            switch attempt {
-            case .executed(let result):
-                if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
-                    _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
-                }
-                LoggerProxy.event("\(Self.logTag) broadcast result: \(result)")
-                await recordTransferBroadcast(accountUUID: accountUUID, result: result)
-                await reconcile()
-                guard case MigrationTransferResult.success = result else {
-                    await refreshMigrationSyncGate()
-                    return false
-                }
-                return true
-
-            case .nothingDue:
-                // The advance step said broadcast and the executor disagrees — a tip moved under
-                // us, or another lane got there first. Nothing was sent; let sync resume.
-                LoggerProxy.event("\(Self.logTag) broadcast result: nothing due — the executor disagreed with the step")
-                await refreshMigrationSyncGate()
-                return false
-
-            case .awaitingProof(let id):
-                // Proving is sync-bound, so it must NOT happen in a send session. Reopening the
-                // gate IS the fix: the next sync visit's prove sweep produces the proof, and a
-                // later send visit delivers it.
-                LoggerProxy.event("\(Self.logTag) transfer \(id) due but awaiting proof — deferring to the next sync visit")
+            if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
+                _ = await routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+            }
+            LoggerProxy.event("\(Self.logTag) broadcast result: \(result)")
+            await recordTransferBroadcast(accountUUID: accountUUID, result: result)
+            await reconcile()
+            guard case MigrationTransferResult.success = result else {
                 await refreshMigrationSyncGate()
                 return false
             }
+            return true
+        } catch ZcashError.rustMigrationTakeBroadcastTransaction {
+            // THE STALE INSTRUCTION. The row this instruction named is no longer
+            // proved-and-servable — typically because it was already broadcast, or a tip moved
+            // under us between the crank and the submit. Nothing was sent.
+            //
+            // The discharge is to CRANK AGAIN, never to retry the executor: retrying re-presents
+            // the same dead instruction, while a fresh crank returns whatever the run actually
+            // needs now (possibly a different step kind entirely). This lane does not crank
+            // itself — it reopens the sync gate and returns false, exactly as the old
+            // `.nothingDue` arm did, and the driver's next pass gets a fresh instruction.
+            LoggerProxy.event(
+                "\(Self.logTag) broadcast instruction \(instruction.id) went stale before the submit — cranking again, not retrying"
+            )
+            await refreshMigrationSyncGate()
+            return false
         } catch ZcashError.migrationRecordFailedAfterBroadcast {
             // The broadcast LANDED and only recording it failed (the engine self-heals later) —
             // treated exactly as a success: not a failure to route, and no gate nudge.

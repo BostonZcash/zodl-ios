@@ -40,7 +40,7 @@ enum MigrationBroadcastFailureClass: Equatable, Sendable {
     /// broadcast endpoint could not be reached.
     case endpointUnreachable
 
-    /// Classifies a THROWN error from a broadcast call (`executeNextPendingMigrationTransfer`,
+    /// Classifies a THROWN error from a broadcast call (`performMigrationBroadcast`,
     /// `createAndSubmitProposedTransactions`/`createAndSubmitTransactionFromPCZT` —
     /// `SDKSynchronizerInterface.swift`).
     ///

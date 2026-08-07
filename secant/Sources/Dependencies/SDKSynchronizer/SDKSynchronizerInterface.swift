@@ -109,32 +109,38 @@ struct SDKSynchronizerClient: Sendable {
     /// account's USK). THE commit — one call signs the whole run, preparation layers included,
     /// straight from the plan cache the schedule's own propose already wrote.
     let signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
-    /// BROADCAST ONLY — never proves. The three outcomes are distinct and the app must not collapse
-    /// them: `.nothingDue` ends the session, `.awaitingProof(id:)` means the due transaction has no
-    /// proof yet (run `finalizeReadyMigrationTransfers` at the next SYNC visit, then come back), and
-    /// `.executed` carries the recorded result. Broadcast-bearing: guarded by the transaction guard
-    /// in the LiveKey.
+    /// THE BROADCAST EXECUTOR. Submits the already-proven transaction `instruction` names and
+    /// returns the recorded result directly. Broadcast-bearing: guarded by the transaction guard in
+    /// the LiveKey.
     ///
-    /// `useEstimatedTip` belongs to SEND visits: a broadcast session deliberately does not sync, so
-    /// the scanned tip is stale by construction and would report "nothing due" for a transfer that
-    /// genuinely is. Estimates only ACCELERATE due-ness — expiry and invalidity always use the
-    /// scanned tip.
-    let executeNextPendingMigrationTransfer: @Sendable (
-        AccountUUID, MigrationNetworkPrivacyOptions, Bool
-    ) async throws -> MigrationTransferAttempt
+    /// There are no outcome cases left to collapse. The instruction is the payload of a
+    /// `.broadcast` step a crank handed out, so "nothing due" cannot arise, and a due-but-unproved
+    /// row arrives as a `.prove` batch entry rather than as a delivery outcome. No `useEstimatedTip`
+    /// either — the conduit always projects the estimate, so the acceleration is applied once, at
+    /// the crank.
+    ///
+    /// Throws `ZcashError.rustMigrationTakeBroadcastTransaction` when the instruction went STALE
+    /// between crank and submit: crank `migrationAdvanceStep` again, never retry the executor.
+    let performMigrationBroadcast: @Sendable (
+        AccountUUID, MigrationBroadcastInstruction, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult
     /// Whether the account has a scheduled transfer past its send height but not yet broadcast.
     /// `useEstimatedTip` as above — pass `true` on SEND visits and launch checks.
     let hasOverdueMigrationTransfers: @Sendable (AccountUUID, Bool) async throws -> Bool
-    /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
-    /// Read-only readback — nothing about the plan is mutated (the old name said otherwise).
-    let pendingMigrationTransferProposal: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
-    /// THE PROVE SWEEP. Proves every transfer whose anchor boundary has settled and returns how many
-    /// it proved. Call on every SYNC visit once sync reaches the tip.
+    /// THE PROVE EXECUTOR. Proves up to `maxProofs` of the transactions the instruction batch
+    /// names and returns how many were proved; `0` is the ordinary "nothing in this batch is
+    /// provable right now" answer. Run at SYNC visits once sync reaches the tip, NEVER in a
+    /// broadcast session.
     ///
-    /// Proving has no deadline — boundary checkpoints are durably retained until the transfer is
-    /// broadcast — so this is not a race. It is what keeps SEND visits sync-free: everything is
-    /// already proven by the time a broadcast window opens, leaving nothing but the submission.
-    let finalizeReadyMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
+    /// The batch is the payload of a `.prove` step a crank handed out — this executor never asks
+    /// the engine what to prove. There is no loop inside it: proving can unblock rows the batch did
+    /// not name, so a host draining the run cranks again. A skipped row (already proved, anchor
+    /// unresolvable) does NOT spend the budget, and acting on a stale batch is safe.
+    ///
+    /// `maxProofs` must be >= 1 or the call throws `rustMigrationProveTransactions`. Proving has no
+    /// deadline — boundary checkpoints are durably retained until the transfer is broadcast — so a
+    /// bounded budget only defers work, never loses it.
+    let proveMigrationTransactions: @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> Int
     /// The minimal set of heights at which to wake, sync and prove. Jitter is re-drawn per call, so
     /// these must be recomputed after any state change rather than cached.
     let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]
@@ -171,7 +177,7 @@ struct SDKSynchronizerClient: Sendable {
     // PHASE 7 — the Keystone lane (REBUILD_PLAN D15). Two groups: the PCZT serve/store pair that
     // creates and completes a hardware-signed run, and the batch-signing bridge that carries one
     // ceremony's PCZTs to the device and its signatures back. None of the six is broadcast-bearing
-    // (the actual broadcast still rides `executeNextPendingMigrationTransfer` for the scheduled lane
+    // (the actual broadcast still rides `performMigrationBroadcast` for the scheduled lane
     // and `createAndSubmitTransactionFromPCZT` for the immediate one), so none takes the transaction
     // guard in the LiveKey.
 
@@ -190,7 +196,7 @@ struct SDKSynchronizerClient: Sendable {
     /// array is applied together. Order-independent with `storeSignedMigrationTransactions` — both
     /// are per-transaction signature applications over the SAME already-created run (see
     /// `proposeNoteSplitPCZTs`). The returned storage receipt is discarded; the broadcastable value
-    /// comes from the next-due lane, `executeNextPendingMigrationTransfer`.
+    /// comes from the instruction a `migrationAdvanceStep` crank hands to `performMigrationBroadcast`.
     let storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     /// Serves the run's TRANSFER PCZTs unsigned. Handle-free: it resumes the run
     /// `proposeNoteSplitPCZTs` created rather than committing a new one.

@@ -125,8 +125,13 @@ struct MigrationManagerClient: Sendable {
     /// correlation ZIP 318 forbids. Sweeping here means a due transfer is already proven when its
     /// window opens and the send session has nothing to do but submit.
     ///
-    /// Returns the number of transactions proved across all accounts (0 is the normal case).
-    var runProveSweep: @Sendable () async -> Int = { 0 }
+    /// PER-ACCOUNT AND INSTRUCTION-TAKING (2026-08-07): the SDK's prove executor proves the rows
+    /// the crank's own batch names, so this takes that account's batch and a phase-chosen
+    /// `maxProofs` budget rather than sweeping the wallet with no payload.
+    ///
+    /// Returns the number of transactions proved (0 is the normal case — a skipped row does not
+    /// spend the budget).
+    var runProveSweep: @Sendable (AccountUUID, [MigrationProveTarget], Int) async -> Int = { _, _, _ in 0 }
 
     /// THE BROADCAST SESSION — the other half of `visitKind() == .send`. Discharges the engine's
     /// `.broadcast` step headlessly, without the user ever navigating into the migration flow.
@@ -137,11 +142,15 @@ struct MigrationManagerClient: Sendable {
     ///
     /// Broadcasts AT MOST ONE transfer per call (ZIP 318: a session carries one broadcast, and the
     /// engine's own contract for `.broadcast` is "broadcast it and end the session") — a second
-    /// account with a due transfer waits for the next app-open. Skips manual-delivery accounts: the
-    /// user asked to press the button themselves, and this must never press it for them.
+    /// account with a due transfer waits for the next app-open.
+    ///
+    /// INSTRUCTION-TAKING (2026-08-07): it takes the account and the crank's own opaque
+    /// `MigrationBroadcastInstruction`. There is no un-instructed entry point any more — the
+    /// parameterless form used to crank a second time inside itself, which is exactly the
+    /// double-read the SDK's single-crank contract removes.
     ///
     /// Returns true iff something was actually broadcast.
-    var runBroadcastSession: @Sendable () async -> Bool = { false }
+    var runBroadcastSession: @Sendable (AccountUUID, MigrationBroadcastInstruction, Bool) async -> Bool = { _, _, _ in false }
 
     /// The chain-time frame migration ETAs are measured in — see `MigrationChainClock`. Reads the
     /// SDK's estimated tip and measured block rate; degrades to the scanned tip and Zcash's target

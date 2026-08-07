@@ -806,7 +806,10 @@ extension MigrationCoordFlow {
                         await send(.rescheduleResultReady(id: id, rows: currentRows, totalDurationHours: nil))
                         return
                     }
-                    _ = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID)
+                    // (A discarded `pendingMigrationTransferProposal` read sat here as a
+                    // reconcile-nudge. Deleted 2026-08-07 with the accessor: the engine performs
+                    // that reconcile inside every `migrationAdvanceStep` crank now, and the
+                    // `reconcile()` on the next line was always the real work.)
                     await migrationManager.reconcile()
                     let rows = await migrationManager.migrationTransfers(accountUUID)
                     let summary = await migrationManager.migrationSummary(accountUUID)

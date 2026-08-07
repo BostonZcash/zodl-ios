@@ -24,7 +24,7 @@
 //
 
 import Testing
-import ZcashLightClientKit
+@_spi(Testing) import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationSplitOverdueRouteTests {
@@ -45,7 +45,7 @@ import ZcashLightClientKit
         state: MigrationState,
         hasOverdue: Bool,
         hasInvalid: Bool = false,
-        advanceStep: MigrationAdvanceStep? = MigrationAdvanceStep.broadcast(id: 1)
+        advanceStep: MigrationAdvanceStep? = MigrationAdvanceStep.broadcast(MigrationBroadcastInstruction(id: 1))
     ) -> MigrationReentryRoute {
         MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,

@@ -13,7 +13,7 @@
 //
 //  MOB-1513 (Lane A2 — send-max immediate migration): the OLD `.immediate` lane above signed+stored
 //  an engine-held, single-transfer `MigrationSchedule` here and broadcast it LATER via
-//  `MigrationSendingStore`'s `executeNextPendingMigrationTransfer` (the schedule/dust lanes' own
+//  `MigrationSendingStore`'s `performMigrationBroadcast` (the schedule/dust lanes' own
 //  delivery mechanism) — `commitSoftware`'s old `MigrationCommitMode.immediate` branch and
 //  `MigrationCommitMode` itself are DELETED along with it (the immediate lane is the ONLY caller
 //  that ever passed `.immediate`, and `commitSoftware` is `.scheduled`-only now, so the parameter

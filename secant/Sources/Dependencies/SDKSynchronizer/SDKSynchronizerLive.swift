@@ -125,11 +125,11 @@ extension SDKSynchronizerClient: DependencyKey {
             signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
                 try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
             },
-            executeNextPendingMigrationTransfer: { accountUUID, options, useEstimatedTip in
-                try await synchronizer.executeNextPendingMigrationTransfer(
+            performMigrationBroadcast: { accountUUID, instruction, options in
+                try await synchronizer.performMigrationBroadcast(
                     accountUUID: accountUUID,
-                    options: options,
-                    useEstimatedTip: useEstimatedTip
+                    instruction,
+                    options: options
                 )
             },
             hasOverdueMigrationTransfers: { accountUUID, useEstimatedTip in
@@ -138,11 +138,12 @@ extension SDKSynchronizerClient: DependencyKey {
                     useEstimatedTip: useEstimatedTip
                 )
             },
-            pendingMigrationTransferProposal: { accountUUID in
-                try await synchronizer.pendingMigrationTransferProposal(accountUUID: accountUUID)
-            },
-            finalizeReadyMigrationTransfers: { accountUUID in
-                try await synchronizer.finalizeReadyMigrationTransfers(accountUUID: accountUUID)
+            proveMigrationTransactions: { accountUUID, instruction, maxProofs in
+                try await synchronizer.proveMigrationTransactions(
+                    accountUUID: accountUUID,
+                    instruction,
+                    maxProofs: maxProofs
+                )
             },
             migrationSyncWakeups: { accountUUID in
                 try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)
@@ -183,7 +184,7 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             storeSignedNoteSplits: { accountUUID, signed in
                 // The returned `PreparedMigrationTransfer` is a storage receipt with a zeroed txid —
-                // the broadcastable value comes from `executeNextPendingMigrationTransfer`.
+                // the broadcastable value comes from `performMigrationBroadcast`'s instruction.
                 _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
             },
             proposeMigrationPCZTs: { accountUUID, schedule in

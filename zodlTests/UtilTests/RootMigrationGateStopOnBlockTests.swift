@@ -54,7 +54,7 @@
 import ComposableArchitecture
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 // Serialized: resets the process-global `@Shared(.inMemory(.migrationStoppedSyncForBroadcast))`
@@ -223,7 +223,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             // A stop-eligible candidate now also merges in `migrationTickLoopEffect`'s re-spawn
             // (Fix 1a), which reaches for `continuousClock` the instant it spawns — a `TestClock`
@@ -265,7 +265,7 @@ import Testing
                 }
                 return callNumber == 1
                     ? MigrationAdvance(step: .waiting, next: nil)
-                    : MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                    : MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             testClock: testClock
         )
@@ -386,7 +386,7 @@ import Testing
 
         // Release the "late" read now — it resumes with a genuine `.broadcast`, same as if the
         // engine had proved the transfer moments after the edge had already cleared.
-        stepContinuation.value?.resume(returning: MigrationAdvance(step: .broadcast(id: 9), next: nil))
+        stepContinuation.value?.resume(returning: MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil))
 
         try? await Task.sleep(nanoseconds: 150_000_000)
 
@@ -413,7 +413,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.immediate,            advanceStep: { accountUUID in
                 queriedAccountUUIDs.withValue { $0.append(accountUUID) }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             testClock: TestClock(),
             secondCandidateMode: MigrationMode.privateScheduled
@@ -444,7 +444,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.immediate,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             }
         )
 
@@ -468,7 +468,7 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+            advanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — a
             // stop-eligible candidate merges in the tick-loop re-spawn, which needs a `TestClock`.
             testClock: TestClock()
@@ -492,7 +492,7 @@ import Testing
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,
-            advanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+            advanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
             lastMigrationSyncGateBlocked: true
         )
 
@@ -518,7 +518,7 @@ import Testing
             syncStatus: SyncStatus.stopped,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — the
             // candidate is eligible (mode/delivery, not syncStatus, gates the tick-loop merge), so
@@ -554,7 +554,7 @@ import Testing
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
-                return MigrationAdvance(step: .broadcast(id: 9), next: nil)
+                return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             tickInterval: Swift.Duration.zero
         )

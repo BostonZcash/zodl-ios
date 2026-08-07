@@ -22,7 +22,7 @@
 
 import Foundation
 import Testing
-import ZcashLightClientKit
+@_spi(Testing) import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationCancelledRunStateTests {
@@ -121,7 +121,7 @@ import ZcashLightClientKit
     @Test func theFlagCannotAffectALiveRun() {
         #expect(
             MigrationState.derive(
-                advanceStep: .broadcast(id: 3),
+                advanceStep: .broadcast(MigrationBroadcastInstruction(id: 3)),
                 progress: nil,
                 statuses: [],
                 hasInvalidTransfers: false,

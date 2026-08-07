@@ -24,7 +24,7 @@
 
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 @testable import zodl_internal
 
@@ -171,10 +171,10 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "should-never-run"))
+                    return .success(txId: "should-never-run")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -197,10 +197,10 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "abcd"))
+                    return .success(txId: "abcd")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -216,59 +216,10 @@ import ComposableArchitecture
 
     // MARK: - One-clock dispatch (AUD-1, 2026-08-05)
 
-    /// THE WEDGE CURE: a proved transfer whose window the wall clock has reached but the scan has
-    /// not reads `.waiting` on the scanned frame — while the est-aware sync gate refuses sync FOR
-    /// it, so the open could do neither. The `.beforeSync` dispatch now consults the same
-    /// est-aware clock the gate uses (`hasOverdueMigrationTransfers(_, useEstimatedTip: true)`)
-    /// and routes to the broadcast lane, whose submit (`useEstimatedTip: true`) stays the single
-    /// deliverability authority.
-    @Test func beforeSyncWaitingButEstimateDueRoutesToTheBroadcastLane() async {
-        Self.installCandidateAccount()
-        let submissionCalls = LockIsolated<Int>(0)
-        let estFlagsSeen = LockIsolated<[Bool]>([])
-
-        let verdict = await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.activatedState() },
-                isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
-                    submissionCalls.withValue { $0 += 1 }
-                    estFlagsSeen.withValue { $0.append(useEstimatedTip) }
-                    return .executed(.success(txId: "one-clock"))
-                },
-                hasOverdueMigrationTransfers: { _, useEstimatedTip in
-                    estFlagsSeen.withValue { $0.append(useEstimatedTip) }
-                    return true
-                },
-                pendingMigrationTransferProposal: { _ in
-                    MigrationTransferProposal(
-                        id: 9,
-                        amount: Zatoshi(50_000_000),
-                        anchorHeight: Self.activationHeight,
-                        nextExecutableAfterHeight: Self.activationHeight,
-                        expiryHeight: Self.activationHeight + 10_000
-                    )
-                }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-            Self.stubUserNotifications(&$0)
-        } operation: {
-            // R0: the open lane needs a live session — pinned via the seam, never the global trace.
-            let manager = MigrationManagerImpl(
-                gateStorage: Self.freshGateStorage(mode: .immediate),
-                sessionOrdinalProvider: { 1 }
-            )
-            return await manager.advance(phase: .beforeSync)
-        }
-
-        #expect(verdict == .broadcast(id: 9), "the est-due transfer must be delivered, got \(verdict)")
-        #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
-        #expect(
-            estFlagsSeen.value.count >= 2 && estFlagsSeen.value.allSatisfy { $0 },
-            "every dueness consult and the submit itself run est-aware — got \(estFlagsSeen.value)"
-        )
-    }
+    // `beforeSyncWaitingButEstimateDueRoutesToTheBroadcastLane` was deleted 2026-08-07 with the
+    // AUD-1 tiebreaker it pinned — see the tick-half note further down for why the wedge it cured
+    // no longer has a mechanism. Its quiet mirror below survives unchanged: `.waiting` still
+    // means idle, which is now simply the whole story rather than half of it.
 
     /// The quiet mirror: `.waiting` with nothing due by the estimate stays `.idle` and never
     /// touches the broadcast lane — the one-clock consult is a second opinion from the gate's own
@@ -282,9 +233,9 @@ import ComposableArchitecture
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "must-not-run"))
+                    return .success(txId: "must-not-run")
                 },
                 hasOverdueMigrationTransfers: { _, _ in false }
             )
@@ -333,11 +284,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "prep-at-edge"))
+                    return .success(txId: "prep-at-edge")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -364,11 +315,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "must-not-run"))
+                    return .success(txId: "must-not-run")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -402,11 +353,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
                 migrationTransactionStatuses: { _ in [] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "transfer-right-after-a-sync"))
+                    return .success(txId: "transfer-right-after-a-sync")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -431,11 +382,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
                 migrationTransactionStatuses: { _ in [Self.preparationStatus(id: 9)] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "prep-on-tick"))
+                    return .success(txId: "prep-on-tick")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -449,16 +400,18 @@ import ComposableArchitecture
         #expect(submissionCalls.value == 1)
     }
 
-    // MARK: - D2: prep prove→broadcast in the same pass, no re-ask (danny + nuttycom, 2026-08-05)
+    // MARK: - One instruction, one action: a prove pass ends at the proof (kris, 2026-08-07)
 
-    /// A PREPARATION proved this pass is broadcast THIS pass — and the `.prove(id, kind)` step is
-    /// ITSELF the sanction. nuttycom, on the shape: "there should be no second call needed —
-    /// inspect the kind attribute of `Prove { id, kind }`, and if it matches Preparation then
-    /// prove and broadcast." The pin here: statuses are scripted EMPTY, so any implementation
-    /// that re-derives the kind from a statuses read (or gates the send on a `next_step` re-ask
-    /// offering the id) refuses the delivery — only "the step's own kind sanctions it" passes.
-    /// One open, zero extra wake-ups — the split phase halves.
-    @Test func provePassBroadcastsAProvedPreparationWithoutReasking() async {
+    /// A PREPARATION's prove pass ends at the proof, exactly like a transfer's. This is the
+    /// inverse of the retired D2 pin, which required the prep to be broadcast in the SAME pass off
+    /// the step's own kind. D2's stated justification was "there should be no second call needed";
+    /// a broadcast now needs an opaque instruction a prove batch does not carry, so the same-pass
+    /// delivery would have cost exactly that second call while keeping an app-side judgement about
+    /// kinds. The pass proves and stops; the next crank delivers.
+    ///
+    /// The mock is a TRAP: it stands ready to answer `.broadcast(2)` to any post-prove read, so an
+    /// implementation that re-cranked and acted would be betrayed by the submission count.
+    @Test func provePassEndsAtTheProofForAPreparation() async {
         Self.installCandidateAccount()
         let submissionCalls = LockIsolated<Int>(0)
         let stepReads = LockIsolated<Int>(0)
@@ -467,30 +420,21 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                // Faithful engine model: the FIRST read answers `.prove`; every later read answers
-                // `.broadcast(2)` UNTIL the submit records, then `.waiting` — because the machine
-                // has no cursor, its answer flips on PERSISTED state, not on being asked. (The
-                // delivery lane's own id-pick read is one of those later reads — the DRIVER makes
-                // no read of its own beyond the first; the statuses-empty pin below is what
-                // catches a smuggled-back decision re-ask.)
                 migrationAdvanceStep: { _ in
-                    if submissionCalls.value > 0 { return MigrationAdvance(step: .waiting, next: nil) }
                     let read = stepReads.withValue { $0 += 1; return $0 }
                     return read == 1
                         ? MigrationAdvance(
-                            step: .prove(transactions: [MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0))]),
+                            step: .prove(transactions: [MigrationProveTarget(id: 2, kind: .preparation(layer: 0, index: 0))]),
                             next: nil
                         )
-                        : MigrationAdvance(step: .broadcast(id: 2), next: nil)
+                        : MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 2)), next: nil)
                 },
-                // EMPTY on purpose — the old chain's `preparationTransactionIds.contains(id)`
-                // cross-check would break here; the step's kind must be the only authority.
                 migrationTransactionStatuses: { _ in [] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "d2-samepass-prep"))
+                    return .success(txId: "must-not-run")
                 },
-                finalizeReadyMigrationTransfers: { _ in 1 }
+                proveMigrationTransactions: { _, _, _ in 1 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
@@ -502,13 +446,13 @@ import ComposableArchitecture
             return await manager.advance(phase: .afterSync)
         }
 
-        #expect(verdict == .broadcast(id: 2), "the proved prep must go out in the same pass, got \(verdict)")
-        #expect(submissionCalls.value == 1, "exactly one same-pass delivery")
+        #expect(verdict == .proved(count: 1), "a preparation's prove pass ends at the proof, got \(verdict)")
+        #expect(submissionCalls.value == 0, "no same-pass delivery, and no re-crank to find one")
     }
 
-    /// The hard scope: a TRANSFER's `.prove` never broadcasts. The pass proves it and ends — the
-    /// transfer waits for its own broadcast session (ZIP 318's separation is exactly about
-    /// transfers), so the one-transfer-per-open law is untouched by D2. The mock is a TRAP: it
+    /// The same rule from the transfer side: a TRANSFER's `.prove` never broadcasts. The pass
+    /// proves it and ends — the transfer waits for its own broadcast session (ZIP 318's separation
+    /// is exactly about transfers), so the one-transfer-per-open law holds. The mock is a TRAP: it
     /// stands ready to answer `.broadcast(4)` to any post-prove read, so if the discharge ever
     /// consulted the engine again and acted on it, the submission count would betray it.
     @Test func provePassNeverBroadcastsAfterProvingATransfer() async {
@@ -524,14 +468,14 @@ import ComposableArchitecture
                     let read = stepReads.withValue { $0 += 1; return $0 }
                     return read == 1
                         ? MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
-                        : MigrationAdvance(step: .broadcast(id: 4), next: nil)
+                        : MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 4)), next: nil)
                 },
                 migrationTransactionStatuses: { _ in [] },
-                executeNextPendingMigrationTransfer: { _, _, _ in
+                performMigrationBroadcast: { _, _, _ in
                     submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "must-not-run"))
+                    return .success(txId: "must-not-run")
                 },
-                finalizeReadyMigrationTransfers: { _ in 1 }
+                proveMigrationTransactions: { _, _, _ in 1 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
@@ -567,7 +511,7 @@ import ComposableArchitecture
                 migrationAdvanceStep: { _ in
                     MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
                 },
-                finalizeReadyMigrationTransfers: { _ in
+                proveMigrationTransactions: { _, _, _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
                 }
@@ -597,7 +541,7 @@ import ComposableArchitecture
                 migrationAdvanceStep: { _ in
                     MigrationAdvance(step: .prove(transactions: [MigrationProveTarget(id: 4, kind: .transfer(crossing: 0))]), next: nil)
                 },
-                finalizeReadyMigrationTransfers: { _ in
+                proveMigrationTransactions: { _, _, _ in
                     sweepCalls.withValue { $0 += 1 }
                     return 1
                 }
@@ -613,86 +557,13 @@ import ComposableArchitecture
         #expect(sweepCalls.value == 1, "the sweep must run exactly once")
     }
 
-    // MARK: - One-clock dispatch at ticks (FIND-5, 2026-08-05)
-
-    /// THE MARATHON CURE, tick half. The frozen frame: an est-frame-released transfer pinned one
-    /// block past the scanned tip, the sync gate refusing sync FOR it, every 30s tick reading
-    /// `.waiting` off the frozen scanned frame — for 50+ minutes, until a cold reopen minted a
-    /// fresh `.beforeSync` pass. A tick is a broadcast opportunity on `.beforeSync`'s exact terms
-    /// (no sync of its own), so the same est-aware dispatch now serves the row without a reopen.
-    @Test func tickWaitingButEstimateDueRoutesToTheBroadcastLane() async {
-        Self.installCandidateAccount()
-        let submissionCalls = LockIsolated<Int>(0)
-
-        let verdict = await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.activatedState() },
-                isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, useEstimatedTip in
-                    submissionCalls.withValue { $0 += 1 }
-                    #expect(useEstimatedTip, "the submit stays the est-aware single authority")
-                    return .executed(.success(txId: "tick-one-clock"))
-                },
-                hasOverdueMigrationTransfers: { _, useEstimatedTip in useEstimatedTip },
-                pendingMigrationTransferProposal: { _ in
-                    MigrationTransferProposal(
-                        id: 11,
-                        amount: Zatoshi(20_000_000),
-                        anchorHeight: Self.activationHeight,
-                        nextExecutableAfterHeight: Self.activationHeight,
-                        expiryHeight: Self.activationHeight + 10_000
-                    )
-                }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-            Self.stubUserNotifications(&$0)
-        } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .privateScheduled))
-            return await manager.advance(phase: .tick)
-        }
-
-        #expect(verdict == .broadcast(id: 11), "the est-due transfer must be tick-delivered, got \(verdict)")
-        #expect(submissionCalls.value == 1, "the broadcast lane must submit exactly once")
-    }
-
-    /// The belt survives the new clock: an `.immediate` run's est-due TRANSFER is still held at a
-    /// tick — the est-aware dispatch routes INTO the same broadcast lane, it does not tunnel past
-    /// the mode belt. (`.immediate` keeps its one delivery at the open lanes, as ever.)
-    @Test func tickEstimateDispatchStillRespectsTheModeBelt() async {
-        Self.installCandidateAccount()
-        let submissionCalls = LockIsolated<Int>(0)
-
-        let verdict = await withDependencies {
-            $0.sdkSynchronizer = .mocked(
-                latestState: { Self.activatedState() },
-                isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .waiting, next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in
-                    submissionCalls.withValue { $0 += 1 }
-                    return .executed(.success(txId: "must-not-run"))
-                },
-                hasOverdueMigrationTransfers: { _, _ in true },
-                pendingMigrationTransferProposal: { _ in
-                    MigrationTransferProposal(
-                        id: 11,
-                        amount: Zatoshi(20_000_000),
-                        anchorHeight: Self.activationHeight,
-                        nextExecutableAfterHeight: Self.activationHeight,
-                        expiryHeight: Self.activationHeight + 10_000
-                    )
-                }
-            )
-            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
-            Self.stubUserNotifications(&$0)
-        } operation: {
-            let manager = MigrationManagerImpl(gateStorage: Self.freshGateStorage(mode: .immediate))
-            return await manager.advance(phase: .tick)
-        }
-
-        #expect(Self.isHeld(verdict), "an immediate-mode est-due transfer stays held at a tick, got \(verdict)")
-        #expect(submissionCalls.value == 0, "the broadcast lane must never submit")
-    }
+    // The two ONE-CLOCK DISPATCH tick tests were deleted 2026-08-07 with the AUD-1 tiebreaker
+    // they pinned (`tickWaitingButEstimateDueRoutesToTheBroadcastLane`, and its mode-belt
+    // sibling). The FIND-5 marathon wedge they cured is closed at the ROOT now: the crank applies
+    // the wall-clock estimate itself, so a `.waiting` answer is `.waiting` on the same clock the
+    // gate uses and the frozen-scanned-frame divergence cannot arise. There is no second clock to
+    // reconcile and nothing to synthesise a delivery out of — the queue peek that fed them is
+    // gone from the SDK too. The mode belt they guarded is still pinned by the tick tests above.
 
     // MARK: - Held accounts must not starve their siblings (audit 2026-08-03, #4)
 
@@ -732,12 +603,12 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { accountUUID in
                     accountUUID == Self.secondAccountUUID
-                        ? MigrationAdvance(step: .broadcast(id: 7), next: nil)
-                        : MigrationAdvance(step: .broadcast(id: 1), next: nil)
+                        ? MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 7)), next: nil)
+                        : MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 1)), next: nil)
                 },
-                executeNextPendingMigrationTransfer: { accountUUID, _, _ in
+                performMigrationBroadcast: { accountUUID, _, _ in
                     submittedFor.withValue { $0.append(accountUUID) }
-                    return .executed(.success(txId: "efgh"))
+                    return .success(txId: "efgh")
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -753,18 +624,25 @@ import ComposableArchitecture
 
     // MARK: - A broadcast verdict means a broadcast LANDED (audit 2026-08-03, #5)
 
-    /// `runBroadcastSession` used to return `true` unconditionally — a `.nothingDue` disagreement
-    /// (and every failure) read as `.broadcast(id:)` upstream, making a permanently-failing run
-    /// indistinguishable in the log from a healthy one.
-    @Test func aNothingDueAttemptAnswersHeldNotBroadcast() async {
+    /// `runBroadcastSession` used to return `true` unconditionally — a disagreement between the
+    /// step and the executor (and every failure) read as `.broadcast(id:)` upstream, making a
+    /// permanently-failing run indistinguishable in the log from a healthy one.
+    ///
+    /// 2026-08-07: the disagreement this pinned used to arrive as a `.nothingDue` OUTCOME. With an
+    /// instruction in hand that outcome cannot exist, so its successor is the STALE-INSTRUCTION
+    /// throw — the row went un-servable between crank and submit. Same property, current mechanism:
+    /// nothing was sent, so the verdict must be `.held`, never `.broadcast`.
+    @Test func aStaleInstructionAnswersHeldNotBroadcast() async {
         Self.installCandidateAccount()
 
         let verdict = await withDependencies {
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 9), next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue }
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil) },
+                performMigrationBroadcast: { _, _, _ in
+                    throw ZcashError.rustMigrationTakeBroadcastTransaction("transaction 9 is not proved-and-servable")
+                }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)
@@ -774,7 +652,7 @@ import ComposableArchitecture
         }
 
         guard case .held = verdict else {
-            Issue.record("an attempt that submitted nothing must answer .held, got \(verdict)")
+            Issue.record("a stale instruction submitted nothing, so the verdict must be .held, got \(verdict)")
             return
         }
     }
@@ -1054,8 +932,8 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.activatedState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(id: 3), next: nil) },
-                executeNextPendingMigrationTransfer: { _, _, _ in .executed(.success(txId: "abcd")) }
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 3)), next: nil) },
+                performMigrationBroadcast: { _, _, _ in (.success(txId: "abcd")) }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
             Self.stubUserNotifications(&$0)

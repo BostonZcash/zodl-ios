@@ -146,7 +146,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// practice — a broadcast transfer is already proved.
     var isPreparing: Bool
     /// MOB-1466 (field, 2026-08-03): this row's transaction is ON THE WIRE right now — the app is
-    /// inside `executeNextPendingMigrationTransfer` for it, this second.
+    /// inside `performMigrationBroadcast` for it, this second.
     ///
     /// NOT the same fact as `isBroadcasting`, and the difference is the whole point. `isBroadcasting`
     /// comes from the engine's durable `.broadcast(txid:)`: SUBMITTED, awaiting mining, minutes of

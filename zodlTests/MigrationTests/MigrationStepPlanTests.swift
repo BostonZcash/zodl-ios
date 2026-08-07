@@ -18,7 +18,7 @@
 //
 
 import Testing
-import ZcashLightClientKit
+@_spi(Testing) import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationStepPlanTests {
@@ -57,8 +57,8 @@ import ZcashLightClientKit
     /// A broadcast may only happen in a session that has not synced. Enforced by the TABLE rather
     /// than by a caller remembering — a caller that forgets is how the property gets lost.
     @Test func broadcastIsOfferedOnlyBeforeSync() {
-        #expect(MigrationStepPlan.action(for: .broadcast(id: 5), phase: .beforeSync) == .broadcast(id: 5))
-        #expect(MigrationStepPlan.action(for: .broadcast(id: 5), phase: .afterSync) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: .broadcast(MigrationBroadcastInstruction(id: 5)), phase: .beforeSync) == .broadcast(MigrationBroadcastInstruction(id: 5)))
+        #expect(MigrationStepPlan.action(for: .broadcast(MigrationBroadcastInstruction(id: 5)), phase: .afterSync) == .nothing(.wrongPhase))
     }
 
     /// The mirror: proving needs the commitment tree at the tip, so it only happens after a sync —
@@ -66,43 +66,49 @@ import ZcashLightClientKit
     @Test func proveIsOfferedOnlyAfterSync() {
         let step = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
 
-        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 1, isPreparation: false))
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(instruction: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]))
         #expect(MigrationStepPlan.action(for: step, phase: .beforeSync) == .nothing(.wrongPhase))
     }
 
-    /// Both kinds prove, and the action CARRIES the kind (D2 — nuttycom: "no second call needed,
-    /// inspect the kind attribute of `Prove { id, kind }`"). The step's own kind is what sanctions
-    /// a preparation's same-pass broadcast in the discharge — not a statuses re-read, and never a
-    /// `next_step` re-ask.
+    /// Both kinds prove, and the action carries the batch, kinds included. The head's kind is read
+    /// at the discharge (never a statuses re-read, never a `next_step` re-ask) — today only to log
+    /// and route, since the pass ends at the proof for every kind. See
+    /// `MigrationStepDriver.execute`'s prove arm for why D2's same-pass preparation delivery is
+    /// currently withheld.
     @Test func bothProveKindsProveButTheActionCarriesTheKind() {
         let preparation = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 9, kind: .preparation(layer: 0, index: 0))])
         let transfer = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 9, kind: .transfer(crossing: 0))])
 
-        #expect(MigrationStepPlan.action(for: preparation, phase: .afterSync) == .prove(id: 9, isPreparation: true))
-        #expect(MigrationStepPlan.action(for: transfer, phase: .afterSync) == .prove(id: 9, isPreparation: false))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .afterSync) == .prove(instruction: [MigrationProveTarget(id: 9, kind: .preparation(layer: 0, index: 0))]))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .afterSync) == .prove(instruction: [MigrationProveTarget(id: 9, kind: .transfer(crossing: 0))]))
     }
 
-    /// #2939 batch step: the action takes the HEAD — the earliest-ready entry, exactly what the
-    /// old single-id step carried. A preparation later in the batch changes nothing here: the
-    /// sweep proves the whole queue regardless, and the head's kind is what routes the
-    /// after-proof step.
-    @Test func aBatchProveActsOnItsHeadEntry() {
-        let step = MigrationAdvanceStep.prove(transactions: [
+    /// #2939 batch step.
+    /// 2026-08-07: this pinned the table PROJECTING the batch down to its head
+    /// (`.prove(id:isPreparation:)`). It no longer projects — the SDK's prove executor takes the
+    /// batch, so the table passes the whole instruction through UNCHANGED and in order, and the
+    /// head is read at the discharge instead. That pass-through is what this pins now: dropping or
+    /// reordering entries here would silently shrink what gets proved.
+    @Test func aBatchProvePassesTheWholeInstructionThrough() {
+        let batch = [
             MigrationProveTarget(id: 4, kind: .transfer(crossing: 0)),
             MigrationProveTarget(id: 9, kind: .preparation(layer: 0, index: 0))
-        ])
-        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 4, isPreparation: false))
-        #expect(MigrationStepPlan.action(for: step, phase: .tick) == .prove(id: 4, isPreparation: false))
+        ]
+        let step = MigrationAdvanceStep.prove(transactions: batch)
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(instruction: batch))
+        #expect(MigrationStepPlan.action(for: step, phase: .tick) == .prove(instruction: batch))
     }
 
-    /// The mirror order: a preparation head keeps its same-wake-up broadcast routing even with a
-    /// transfer queued behind it.
-    @Test func aPreparationHeadKeepsItsSameWakeupRouting() {
-        let step = MigrationAdvanceStep.prove(transactions: [
+    /// The mirror order: a preparation head is carried through with its transfer still queued
+    /// behind it, so the discharge can read the head's kind and route the same-wake-up broadcast.
+    @Test func aPreparationHeadIsCarriedThroughAheadOfItsTransfer() {
+        let batch = [
             MigrationProveTarget(id: 2, kind: .preparation(layer: 1, index: 0)),
             MigrationProveTarget(id: 7, kind: .transfer(crossing: 0))
-        ])
-        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(id: 2, isPreparation: true))
+        ]
+        let step = MigrationAdvanceStep.prove(transactions: batch)
+        #expect(MigrationStepPlan.action(for: step, phase: .afterSync) == .prove(instruction: batch))
+        #expect(batch[0].kind.isPreparation, "the discharge routes the same-wake-up broadcast off this head")
     }
 
     // MARK: - The quiet answers
@@ -130,7 +136,7 @@ import ZcashLightClientKit
     /// chance to deliver it, without a sync of its own. See the file header's tick-column note for
     /// why that correlation story is what makes a tick safe to broadcast from at all.
     @Test func tickBroadcastsADueTransfer() {
-        #expect(MigrationStepPlan.action(for: .broadcast(id: 5), phase: .tick) == .broadcast(id: 5))
+        #expect(MigrationStepPlan.action(for: .broadcast(MigrationBroadcastInstruction(id: 5)), phase: .tick) == .broadcast(MigrationBroadcastInstruction(id: 5)))
     }
 
     /// Proving, rebuilding, and attention all stay pinned to the two moments that bracket an actual
@@ -155,8 +161,8 @@ import ZcashLightClientKit
         let transfer = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))])
         let preparation = MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))])
 
-        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(id: 1, isPreparation: false))
-        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(id: 1, isPreparation: true))
+        #expect(MigrationStepPlan.action(for: transfer, phase: .tick) == .prove(instruction: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]))
+        #expect(MigrationStepPlan.action(for: preparation, phase: .tick) == .prove(instruction: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]))
     }
 
     /// The tick prove changes nothing about the other cells: `.beforeSync` keeps deferring the
@@ -190,7 +196,7 @@ import ZcashLightClientKit
     /// will ever discharge — which is precisely the bug this whole file was written against.
     @Test func everyStepIsActionableAtSomePhase() {
         let everyStep: [MigrationAdvanceStep] = [
-            .broadcast(id: 1),
+            .broadcast(MigrationBroadcastInstruction(id: 1)),
             .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
             .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
             .rebuild(id: 1),
@@ -218,7 +224,7 @@ import ZcashLightClientKit
     /// One account mid-broadcast puts the WHOLE wallet off the wire: a Zodl account and a Keystone
     /// account run independent plans but share one network identity.
     @Test func anyDueBroadcastMakesTheWholeSessionABroadcastSession() {
-        #expect(MigrationStepPlan.isBroadcastSession(steps: [.waiting, .broadcast(id: 3)]))
+        #expect(MigrationStepPlan.isBroadcastSession(steps: [.waiting, .broadcast(MigrationBroadcastInstruction(id: 3))]))
     }
 
     /// `nil` entries (an account with no run, or a read that failed) do not vote.
@@ -240,8 +246,8 @@ import ZcashLightClientKit
             [],
             [nil],
             [.waiting],
-            [.broadcast(id: 1)],
-            [.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]), .broadcast(id: 2)],
+            [.broadcast(MigrationBroadcastInstruction(id: 1))],
+            [.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]), .broadcast(MigrationBroadcastInstruction(id: 2))],
             [.rebuild(id: 1), .requiresAttention(id: 2)]
         ]
 

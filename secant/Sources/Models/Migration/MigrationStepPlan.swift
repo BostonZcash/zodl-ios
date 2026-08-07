@@ -103,14 +103,19 @@ enum MigrationOpenPhase: Equatable, Sendable {
 /// What the app must DO to discharge one engine step at one phase — the whole vocabulary, and
 /// deliberately small. Every case has exactly one executor in `MigrationStepDriver`.
 enum MigrationStepAction: Equatable, Sendable {
-    /// Submit the named transaction and END the session (no sync). `.beforeSync` only.
-    case broadcast(id: UInt32)
-    /// Run the prove sweep. `.afterSync` and `.tick` (FIND-5) — proving needs the commitment tree
-    /// at the tip. `isPreparation` carries the step's own kind into the discharge: a proved
-    /// note-PREPARATION also broadcasts in the SAME pass (D2 — nuttycom: "no second call needed,
-    /// inspect the kind attribute of `Prove { id, kind }` and if it matches Preparation then
-    /// prove and broadcast"), while a transfer's broadcast waits for its own session.
-    case prove(id: UInt32, isPreparation: Bool)
+    /// Submit the transaction the INSTRUCTION names and END the session (no sync). `.beforeSync`
+    /// only. Carries the crank's own opaque `MigrationBroadcastInstruction` rather than a bare id:
+    /// possession of one is the proof that this app cranked, and the executor takes nothing else.
+    case broadcast(MigrationBroadcastInstruction)
+    /// Prove the crank's own batch. `.afterSync` and `.tick` (FIND-5) — proving needs the
+    /// commitment tree at the tip. Carries the WHOLE instruction, not a head-of-batch summary: the
+    /// executor proves the rows this batch names and nothing else. The head's id/kind
+    /// (`instruction[0]`) still routes what happens AFTER the proof — a proved note-PREPARATION
+    /// also broadcasts in the SAME pass (D2 — nuttycom: "no second call needed, inspect the kind
+    /// attribute of `Prove { id, kind }` and if it matches Preparation then prove and broadcast"),
+    /// while a transfer's broadcast waits for its own session — but that is read at the discharge
+    /// now, not projected here.
+    case prove(instruction: [MigrationProveTarget])
     /// Rebuild the expired transfer in place. `.afterSync` only: the rebuilt rows are re-anchored
     /// against the current tip, so a stale tip would rebuild them straight back into staleness.
     case rebuild(id: UInt32)
@@ -218,11 +223,11 @@ enum MigrationStepPlan {
         isPreparationBroadcast: Bool = false
     ) -> MigrationStepAction {
         switch answer {
-        case let MigrationEngineAnswer.broadcast(id):
+        case let MigrationEngineAnswer.broadcast(instruction):
             switch phase {
             case MigrationOpenPhase.beforeSync:
                 // ZIP 318: a proven transfer is delivered in a session that does not sync.
-                return MigrationStepAction.broadcast(id: id)
+                return MigrationStepAction.broadcast(instruction)
             case MigrationOpenPhase.afterSync:
                 // A TRANSFER must wait for the next open: this session has ALREADY synced, and
                 // broadcasting a pool-crossing here would create exactly the adjacency the
@@ -231,32 +236,33 @@ enum MigrationStepPlan {
                 // used to cost every prep a whole extra human open — proved at this edge, it
                 // goes out at this edge.
                 return isPreparationBroadcast
-                    ? MigrationStepAction.broadcast(id: id)
+                    ? MigrationStepAction.broadcast(instruction)
                     : MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             case MigrationOpenPhase.tick:
                 // THE TICK COLUMN's one substantive answer — see the file header's "THE THIRD
                 // PHASE" note. A tick runs no sync of its own, same as `.beforeSync`, so the same
                 // action is correct: the driver's broadcast lane cannot tell the two apart, and
                 // neither should this table.
-                return MigrationStepAction.broadcast(id: id)
+                return MigrationStepAction.broadcast(instruction)
             }
 
         case let MigrationEngineAnswer.prove(transactions):
             // The engine offers the WHOLE provable set (#2939) — earliest-ready first, never empty
-            // (SDK contract; `transactions[0]` below leans on it, and a breached contract must
-            // crash here rather than read as "no run"). The action still carries ONE id: the HEAD,
-            // exactly the entry the old single-id step named. The discharge's sweep proves every
-            // ready row in one pass regardless; the head's id/kind only route what happens AFTER
-            // the proof — a preparation broadcasts at the SAME wake-up, a transfer waits for its
-            // own session. D2 (nuttycom, 2026-08-05): "there should be no second call needed —
-            // inspect the kind attribute of `Prove { id, kind }`, and if it matches Preparation
-            // then prove and broadcast." The step itself is the sanction; nothing re-asks the
-            // engine. (A preparation elsewhere in the batch behind a transfer head still gets
-            // PROVED by the whole-queue sweep; its broadcast follows at the edge whose step names
-            // it — nothing new to handle.)
+            // (SDK contract; the discharge's `instruction[0]` read leans on it, and a breached
+            // contract must crash there rather than read as "no run"). The action now carries the
+            // WHOLE batch, because the executor takes the batch: `proveMigrationTransactions`
+            // proves the rows this instruction names, so projecting a head here would have thrown
+            // away the very payload the call needs. The head's id/kind still routes what happens
+            // AFTER the proof — a preparation broadcasts at the SAME wake-up, a transfer waits for
+            // its own session — but that read moved to the discharge. D2 (nuttycom, 2026-08-05):
+            // "there should be no second call needed — inspect the kind attribute of
+            // `Prove { id, kind }`, and if it matches Preparation then prove and broadcast." The
+            // step itself is the sanction; nothing re-asks the engine. (A preparation elsewhere in
+            // the batch behind a transfer head still gets PROVED by the same call; its broadcast
+            // follows at the edge whose step names it — nothing new to handle.)
             switch phase {
             case MigrationOpenPhase.afterSync:
-                return MigrationStepAction.prove(id: transactions[0].id, isPreparation: transactions[0].kind.isPreparation)
+                return MigrationStepAction.prove(instruction: transactions)
             case MigrationOpenPhase.tick:
                 // A tick proves UNCONDITIONALLY (FIND-5, 2026-08-05). Two prior versions of this
                 // cell each starved a real session: full deferral (pre-2026-08-02) starved
@@ -270,7 +276,7 @@ enum MigrationStepPlan {
                 // mid-sync. Proving is local computation, so ZIP 318's broadcast-session
                 // separation is untouched. The one tick-side refinement lives in the driver: a
                 // sweep already adjudicated STALLED is not re-run every 30s.
-                return MigrationStepAction.prove(id: transactions[0].id, isPreparation: transactions[0].kind.isPreparation)
+                return MigrationStepAction.prove(instruction: transactions)
             case MigrationOpenPhase.beforeSync:
                 // The open's own edge is moments away and must stay free to broadcast instead —
                 // deferring here is unchanged even at the tip.
