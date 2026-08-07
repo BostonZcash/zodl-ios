@@ -1043,14 +1043,16 @@ extension Root {
                                 await send(.initialization(.staleWalletDatabaseHealed))
                             }
 
-                            await send(.fetchTransactionsForTheSelectedAccount)
-                            /// The TCA spins an async Task in `fetchTransactionsForTheSelectedAccount` and it's needed to run
-                            /// before next code here therefore Task is asleep for 0.01s. The purpose is also to not block the main thread
-                            /// so await of mainQueue is not used.
-                            try? await Task.sleep(nanoseconds: 10_000_000)
-
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
+                            // Dispatched only now that `.loadedWalletAccounts` has selected an account:
+                            // `.fetchTransactionsForTheSelectedAccount` silently no-ops without one, and on
+                            // a cold start `selectedWalletAccount` (in-memory) is nil until that selection —
+                            // dispatching any earlier is a guaranteed no-op, leaving the list empty until
+                            // the post-gate `.observeTransactions` fetch finally runs. Fire-and-forget on
+                            // purpose: the fetch races ahead on the still-quiet synchronizer while the
+                            // migration gate below does its network-bound work.
+                            await send(.fetchTransactionsForTheSelectedAccount)
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
