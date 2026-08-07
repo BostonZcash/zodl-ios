@@ -39,9 +39,9 @@ import Testing
         #expect(sum == store.state.totalBalance)
     }
 
-    /// Exact physical-device regression: Transfer 6 was Sent for 2 ZEC, but the SDK's current
-    /// wallet summary remained 7.22845 Orchard / 2.77 Ironwood. Home must display those values.
-    @MainActor @Test func sentTransferDoesNotReverseSDKPoolValues() async {
+    /// Exact physical-device regression values: Home must preserve the SDK snapshot instead of
+    /// subtracting a transfer-sized correction based on migration status.
+    @MainActor @Test func migrationStatusDoesNotRewriteSDKPoolValues() async {
         let store = makeStore()
         let balance = AccountBalance(
             saplingBalance: .zero,
@@ -112,17 +112,20 @@ import Testing
             saplingBalance: PoolBalance(
                 spendableValue: Zatoshi(100),
                 changePendingConfirmation: Zatoshi(10),
-                valuePendingSpendability: Zatoshi(20)
+                valuePendingSpendability: Zatoshi(20),
+                lockedValue: Zatoshi(3)
             ),
             orchardBalance: PoolBalance(
                 spendableValue: Zatoshi(200),
                 changePendingConfirmation: Zatoshi(30),
-                valuePendingSpendability: Zatoshi(40)
+                valuePendingSpendability: Zatoshi(40),
+                lockedValue: Zatoshi(7)
             ),
             ironwoodBalance: PoolBalance(
                 spendableValue: Zatoshi(300),
                 changePendingConfirmation: Zatoshi(50),
-                valuePendingSpendability: Zatoshi(60)
+                valuePendingSpendability: Zatoshi(60),
+                lockedValue: Zatoshi(11)
             ),
             unshielded: Zatoshi(5),
             awaitingResolution: Zatoshi(1)
@@ -141,4 +144,3 @@ import Testing
         return store
     }
 }
-

@@ -234,15 +234,11 @@ struct WalletBalances {
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                 state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
 
-                // The SDK's per-pool wallet summary is authoritative. Migration transfer status
-                // describes pending work and must not move value between pool cards before the
-                // wallet summary itself observes that movement.
-                let displayPools = MigrationDerivations.poolBalancesForDisplay(
-                    orchard: accountBalance?.orchardBalance.total() ?? .zero,
-                    ironwood: accountBalance?.ironwoodBalance.total() ?? .zero
-                )
-                state.orchardPoolBalance = displayPools.orchard
-                state.ironwoodPoolBalance = displayPools.ironwood
+                // Display the SDK's pool summary without interpreting migration-engine status.
+                // The pinned SDK updates wallet accounting when it stores the transaction at the
+                // broadcast seam; confirmation only changes the balance's pending classifications.
+                state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
+                state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)

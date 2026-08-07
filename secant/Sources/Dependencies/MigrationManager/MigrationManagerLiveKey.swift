@@ -754,10 +754,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// THE SINGLE DERIVATION — see `MigrationViewSnapshot`.
     ///
-    /// Rows, both pool balances and the done-total are read in ONE pass, so a header claiming an
-    /// Ironwood figure and a timeline of checkmarks summing to it agree by construction rather than
-    /// by coincidence. Three independent readers could not have guaranteed that however carefully
-    /// each was written — which is exactly why the header waited for this.
+    /// Rows, both pool balances and the done-total are read in one pass, so every observer sees the
+    /// same snapshot. Pool balances and progress rows remain independent SDK facts; this function
+    /// deliberately does not reconcile one from the other.
     func migrationViewSnapshot(accountUUID: AccountUUID?) async -> MigrationViewSnapshot {
         guard let resolved = accountUUID ?? selectedWalletAccount?.id else {
             return MigrationViewSnapshot.empty
@@ -794,22 +793,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
             ? nil
             : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
 
-        // The SDK's per-pool summary already advances only when the wallet observes a transfer as
-        // mined. Migration engine states describe work; they must not infer balance movement.
+        // The wallet summary is the only source of pool accounting. With the pinned SDK, proving
+        // only records migration state and advisory-locks inputs; the wallet transaction is stored
+        // at broadcast. Migration engine states describe progress and must not rewrite balances.
         let sdkBalance = balances?[resolved]
-        let displayPools = MigrationDerivations.poolBalancesForDisplay(
-            orchard: sdkBalance?.orchardBalance.total() ?? .zero,
-            ironwood: sdkBalance?.ironwoodBalance.total() ?? .zero
-        )
 
         let snapshot = MigrationViewSnapshot(
             // Use the complete pool balance here, including proposal-scoped advisory locks. The
             // `unlockedForMigration` view remains correct for completion/gating, but using it for
             // display made proved transactions disappear from every pool until broadcast.
-            orchardRemaining: displayPools.orchard,
-            // The wallet's OWN per-pool figure (B10), never inferred from transfer status. A stored
-            // or broadcast migration transaction does not make its unmined output pool value.
-            ironwoodHeld: displayPools.ironwood,
+            orchardRemaining: sdkBalance?.orchardBalance.total() ?? .zero,
+            // The wallet's own destination-pool figure, never inferred from transfer status.
+            ironwoodHeld: sdkBalance?.ironwoodBalance.total() ?? .zero,
             movedByDoneTransfers: done.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) },
             doneTransfers: done.count,
             totalTransfers: rows.count,
@@ -3396,23 +3391,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
-    /// Pool values used by both migration and Home. The SDK's wallet summary is authoritative:
-    /// transfer-engine states describe pending work and must never infer that value moved pools.
-    struct DisplayPoolBalances: Equatable {
-        let orchard: Zatoshi
-        let ironwood: Zatoshi
-    }
-
-    static func poolBalancesForDisplay(
-        orchard: Zatoshi,
-        ironwood: Zatoshi
-    ) -> DisplayPoolBalances {
-        DisplayPoolBalances(
-            orchard: orchard,
-            ironwood: ironwood
-        )
-    }
-
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
     /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
