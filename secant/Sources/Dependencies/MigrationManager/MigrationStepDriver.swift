@@ -446,9 +446,6 @@ extension MigrationManagerImpl {
         return firstHeld ?? fallback
     }
 
-    /// One action, executed. The switch is exhaustive over `MigrationStepAction` (I1) — every case
-    /// the planner can produce has a body here, and adding a case to either breaks the build.
-    // swiftlint:disable:next cyclomatic_complexity
     /// The proof budget for one discharge, chosen by PHASE rather than fixed (SDK guidance: each
     /// proof is seconds of CPU, so a session should bound what it takes on and crank again).
     ///
@@ -580,6 +577,9 @@ extension MigrationManagerImpl {
         }
     }
 
+    /// One action, executed. The switch is exhaustive over `MigrationStepAction` (I1) — every case
+    /// the planner can produce has a body here, and adding a case to either breaks the build.
+    // swiftlint:disable:next cyclomatic_complexity
     private func execute(
         _ action: MigrationStepAction,
         accountUUID: AccountUUID,
