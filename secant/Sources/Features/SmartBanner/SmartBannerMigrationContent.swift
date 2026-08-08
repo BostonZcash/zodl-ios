@@ -111,10 +111,16 @@ enum MigrationBannerVariant: Equatable {
     /// pending state A → finished = IDLE 1. For example Tx SENDING when done flips to IDLE 1 —
     /// 'ok, I finished, now you can leave zodl'."*
     ///
+    /// AMENDED 2026-08-08 (Andrea via Lukas), reversing the quote's own SENDING example: *"if
+    /// preparation of send is in progress and finishes, we say we'll notify you when to send,
+    /// while if we're sending and that finishes, we stay generic — N of M done."* Termination
+    /// into the notify promise is therefore exclusive to `.preparing`; a finished
+    /// `.transferSending` settles on `.idleCounts`.
+    ///
     /// So this case is STORE-ENTERED, never derivation-entered: `MigrationDerivations
     /// .bannerVariant` never returns it (its nothing-actionable arm answers `.idleCounts` — the
-    /// AT-OPEN idle). `SmartBannerStore` presents `.idle` when a pending state
-    /// (`.transferSending`/`.preparing`) resolves to `.idleCounts` within one foreground session,
+    /// AT-OPEN idle). `SmartBannerStore` presents `.idle` when `.preparing` resolves to
+    /// `.idleCounts` within one foreground session,
     /// and holds it (sticky) until a non-idle variant or the next session's Evaluating resets it.
     ///
     /// HISTORY, third and final flip, each with its ruling: SP1 wired the notify line universally →

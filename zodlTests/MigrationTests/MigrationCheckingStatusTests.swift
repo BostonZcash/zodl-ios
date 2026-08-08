@@ -104,16 +104,19 @@ import ZcashLightClientKit
         #expect(!idle2.isPreparingVariant)
     }
 
-    /// THE BANNER MAP's idle1 rule, pinned on the store's single entry point: `.idle` (the notify
-    /// line) is TERMINATION — only a pending state resolving to the quiet at-open answer converts,
-    /// it is sticky across re-derivations, and nothing else (checking, counts, required, a fresh
-    /// open) can produce it. The split phase's resting counts arrive as `.inProgress`, which is
-    /// deliberately NOT convertible — idle copy over the split was the 08-01 false promise.
+    /// THE BANNER MAP's idle1 rule as amended 2026-08-08 (Andrea via Lukas), pinned on the
+    /// store's single entry point: `.idle` (the notify line) is TERMINATION — only a finished
+    /// PREPARING converts, it is sticky across re-derivations, and nothing else (a finished
+    /// SENDING, checking, counts, required, a fresh open) can produce it. A finished SENDING
+    /// stays generic — "N of M done" — because the notify promise is about the NEXT send, and
+    /// only the prepare-then-wait rhythm has one to promise. The split phase's resting counts
+    /// arrive as `.inProgress`, which is deliberately NOT convertible — idle copy over the split
+    /// was the 08-01 false promise.
     @Test func idleTerminationEntersOnlyFromPendingStates() {
         let quiet = MigrationBannerVariant.idleCounts(done: 2, total: 6)
 
-        // Pending → finished ⇒ idle1.
-        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .transferSending(number: 2)) == .idle)
+        // Preparing → finished ⇒ idle1; sending → finished stays the generic counts (idle2).
+        #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .transferSending(number: 2)) == quiet)
         #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .preparing(done: 1, total: 6)) == .idle)
         // Sticky for the rest of the session.
         #expect(SmartBanner.resolvingIdleTermination(quiet, previous: .idle) == .idle)

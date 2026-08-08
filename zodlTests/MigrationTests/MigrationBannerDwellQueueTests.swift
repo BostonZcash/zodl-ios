@@ -128,11 +128,26 @@ import ZcashLightClientKit
         #expect(store.state.migrationVariantQueue.last == .complete)
     }
 
-    /// The queue must not smuggle a state past THE BANNER MAP's idle1 rule. A quiet counts answer
-    /// arriving behind a PENDING state still converts to `.idle` (the termination notify line) when
-    /// it finally paints — the conversion reads the variant it actually follows on screen, which is
-    /// exactly what queueing preserves.
+    /// The queue must not smuggle a state past THE BANNER MAP's idle1 rule (as amended 2026-08-08,
+    /// Andrea via Lukas). A quiet counts answer arriving behind a finished PREPARING still converts
+    /// to `.idle` (the termination notify line) when it finally paints — the conversion reads the
+    /// variant it actually follows on screen, which is exactly what queueing preserves. And the
+    /// amendment survives the queue in the other direction too: a counts answer behind a finished
+    /// SENDING stays the generic counts.
     @Test func queueingPreservesIdleTermination() async {
+        let queue = DispatchQueue.test
+        let store = Self.store(queue: queue)
+
+        await store.send(.migrationVariantUpdated(.preparing(done: 1, total: 6)))
+        await store.send(.migrationVariantUpdated(.idleCounts(done: 6, total: 6)))
+
+        await Self.tick(store, queue)
+        #expect(store.state.migrationBannerVariant == .idle)
+    }
+
+    /// The amendment's other half, through the same queue: a finished SENDING settles on the
+    /// generic counts — the notify promise never paints off the back of a completed send.
+    @Test func queueingKeepsASendingFinishOnCounts() async {
         let queue = DispatchQueue.test
         let store = Self.store(queue: queue)
 
@@ -140,6 +155,6 @@ import ZcashLightClientKit
         await store.send(.migrationVariantUpdated(.idleCounts(done: 6, total: 6)))
 
         await Self.tick(store, queue)
-        #expect(store.state.migrationBannerVariant == .idle)
+        #expect(store.state.migrationBannerVariant == .idleCounts(done: 6, total: 6))
     }
 }

@@ -1125,12 +1125,19 @@ struct SmartBanner {
         }
     }
 
-    /// THE BANNER MAP (Lukas, 2026-08-06): IDLE 1 (`.idle`, the notify line) is TERMINATION —
-    /// entered only when a pending state (`.transferSending`/`.preparing`) resolves to the quiet
-    /// at-open answer (`.idleCounts`) within one foreground session, and sticky until a non-idle
-    /// variant (or the next session's Evaluating) replaces it. The map, verbatim: *"NEVER rendered
-    /// as a result of any next_step calls or zodl open — always the transition pending state A →
-    /// finished; 'ok, I finished, now you can leave zodl'."* The derivation never returns `.idle`;
+    /// THE BANNER MAP (Lukas, 2026-08-06) as AMENDED 2026-08-08 (Andrea via Lukas): IDLE 1
+    /// (`.idle`, the notify line) is TERMINATION — entered only when a PREPARING pending state
+    /// resolves to the quiet at-open answer (`.idleCounts`) within one foreground session, and
+    /// sticky until a non-idle variant (or the next session's Evaluating) replaces it. The map,
+    /// verbatim: *"NEVER rendered as a result of any next_step calls or zodl open — always the
+    /// transition pending state A → finished; 'ok, I finished, now you can leave zodl'."*
+    ///
+    /// THE AMENDMENT reverses the map's own SENDING example: *"if preparation of send is in
+    /// progress and finishes, we say we'll notify you when to send, while if we're sending and
+    /// that finishes, we stay generic — N of M done."* So `.transferSending` termination passes
+    /// through untouched and settles on the counts idle: the notify promise is about the NEXT
+    /// send, and it is the prepare-then-wait rhythm that has one to promise — a finished send's
+    /// honest close-out is the progress readout. The derivation never returns `.idle`;
     /// this helper is its single production entry point, applied at both variant-apply sites.
     ///
     /// Only `.idleCounts` is convertible, deliberately: the split phase's resting counts arrive as
@@ -1178,7 +1185,7 @@ struct SmartBanner {
     ) -> MigrationBannerVariant {
         guard case .idleCounts = variant else { return variant }
         switch previous {
-        case .transferSending, .preparing:
+        case .preparing:
             return .idle
         case .idle:
             // Sticky: re-derivations keep answering `.idleCounts` for the rest of the session,
