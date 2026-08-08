@@ -275,6 +275,33 @@ extension MigrationManagerImpl {
             verdict = MigrationStepVerdict.failed("engine step read failed: \(stepReadFailure)")
         }
 
+        // REEVALUATE IS "SYNC, THEN DO NOTHING" — nuttycom, 2026-08-08, reviewing the split at SDK
+        // 93a11081: "this does reintroduce the sync-then-possibly-send identifiable behavior that
+        // we don't want. I would prefer that 'reevaluate' operate as 'sync, then do nothing.'"
+        //
+        // The whole content of a `.reevaluate` is "this wallet's chain view is behind the node that
+        // rejected a broadcast; let this session sync". It is only ever discharged at
+        // `.beforeSync`. Left alone, the sync-completion edge then drives `.afterSync` on the SAME
+        // open — and the engine, now holding the data it was waiting for, may well answer
+        // `.broadcast`. That is a sync followed within seconds by a submission over one wire: the
+        // same correlation SIGNATURE the deleted post-broadcast buffer was removed for, pointing
+        // the other way. Nothing about it is fixed by spacing, so nothing here is timed.
+        //
+        // The session therefore SPENDS its `.afterSync` credit, unused. The edge still fires and
+        // still syncs; R0's own gate answers `.skipped` when it asks to drive, and whatever the
+        // engine now wants is served by the next open — a session that has no sync attached to it.
+        // Burning the credit rather than adding a second suppression flag keeps one mechanism in
+        // charge of "may this lane drive?", which is the property R0 exists to hold.
+        if phase == MigrationOpenPhase.beforeSync,
+           verdict == MigrationStepVerdict.reevaluating,
+           let sessionOrdinal = sessionOrdinalProvider() {
+            openLaneCredits.withLock { $0.afterSyncSpentSession = sessionOrdinal }
+            LoggerProxy.event(
+                "\(Self.logTag) reevaluate: this session syncs and STOPS — the post-sync edge is spent, so nothing broadcasts behind the sync"
+            )
+            MigrationTrace.event("reevaluate — sync, then nothing (afterSync lane spent)")
+        }
+
         // MOB-1466: LOG HYGIENE. A quiet `.tick` verdict — nothing changed, nothing needed the user
         // — logs at `.debug`: every 30s, forever, while the app sits open with a scheduled run, is
         // not a volume `.event` (read by default) should carry. A SUBSTANTIVE tick verdict (a

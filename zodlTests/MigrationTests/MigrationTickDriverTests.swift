@@ -1077,6 +1077,74 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - Reevaluate is "sync, then do nothing" (nuttycom, 2026-08-08)
+
+    /// THE PRIVACY PROPERTY, pinned at the driver. nuttycom, reviewing the split at SDK
+    /// `93a11081`: *"this does reintroduce the sync-then-possibly-send identifiable behavior that
+    /// we don't want. I would prefer that `reevaluate` operate as `sync, then do nothing`."*
+    ///
+    /// A reevaluate is discharged at `.beforeSync` and its whole content is "let this session
+    /// sync". The engine that answered it will very often want a BROADCAST once the scan catches
+    /// up — which is precisely what must not happen on this open, because a sync followed seconds
+    /// later by a submission is one correlatable pattern on one wire. The mock below is built to
+    /// tempt exactly that: its second answer IS a broadcast. The session must still stop.
+    @MainActor @Test func aReevaluateSessionSyncsAndThenDoesNothing() async {
+        Self.installCandidateAccount()
+        let asks = LockIsolated<Int>(0)
+        // Flipped once the pre-sync drive is done, standing in for the scan catching up: from then
+        // on the engine offers the BROADCAST that reevaluating was blocking. Reaching it in this
+        // same session is the regression.
+        let syncCaughtUp = LockIsolated<Bool>(false)
+
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.atTipState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    asks.withValue { $0 += 1 }
+                    return syncCaughtUp.value
+                        ? MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 4)), next: nil)
+                        : MigrationAdvance(step: .reevaluate, next: nil)
+                },
+                migrationTransactionStatuses: { _ in [] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            $0.userNotifications = UserNotificationsClient(
+                authorizationStatus: { .authorized },
+                requestAuthorization: { true },
+                scheduleMigrationNotification: { _, _, _ in },
+                cancelMigrationNotifications: { _ in },
+                clearDeliveredMigrationNotifications: { }
+            )
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                sessionOrdinalProvider: { 1 }
+            )
+
+            let before = await manager.advance(phase: .beforeSync)
+            #expect(before == MigrationStepVerdict.reevaluating)
+
+            // The sync happens, and now the engine would serve the broadcast.
+            syncCaughtUp.withValue { $0 = true }
+            let asksBeforeTheEdge = asks.value
+
+            // The sync-completion edge of the SAME open. The lane is spent, so it yields without
+            // reading the engine at all — the broadcast is left for a session with no sync
+            // attached to it. (The count is compared RELATIVELY: how many reads the pre-sync pass
+            // itself makes is an implementation detail, that the edge adds none is the property.)
+            let after = await manager.advance(phase: .afterSync)
+            #expect(
+                after == MigrationStepVerdict.skipped,
+                "a reevaluate session must not drive after its sync, got \(after)"
+            )
+            #expect(
+                asks.value == asksBeforeTheEdge,
+                "the post-sync edge must not ask the engine again — it would be offered the broadcast"
+            )
+        }
+    }
+
     // MARK: - Step-read failure honesty (audit 2026-08-03, P1)
 
     /// A THROWN engine read must never flatten into `.noRun` — that verdict self-cancels the tick
