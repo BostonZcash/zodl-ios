@@ -487,14 +487,16 @@ extension MigrationManagerImpl {
     /// persisted are already durable, the remaining preparations are independent, and a
     /// preparation that did not go out is re-offered by the engine's own next crank.
     ///
-    /// NO FAILURE-CLASS ROUTING. `broadcastOneTransfer` runs a non-success through
+    /// NO TOR-CLASS ROUTING. `broadcastOneTransfer` runs a non-success through
     /// `MigrationBroadcastFailureClass` for its PERSISTENT effects — the Tor-hold indicator, the
     /// pending-prompt latch — because that lane submits under the run's pinned privacy options and
     /// a Tor failure there is a fact about the user's chosen transport. This lane submits over the
     /// app's ordinary connection with no privacy options at all, so it has no Tor verdict to
-    /// record and no held prompt to raise; what it sees is transport success or transport failure,
-    /// and it reports exactly that. Routing a plain server rejection into the Tor UX would put a
-    /// privacy claim behind an outcome that made none.
+    /// record and no held prompt to raise; routing a plain server rejection into the Tor UX would
+    /// put a privacy claim behind an outcome that made none. What it DOES classify is the SERVER'S
+    /// OWN ANSWER — `transferResult(from:)` reads a rejection in the engine's vocabulary, and
+    /// `recordPreparationSubmission` records a PERMANENT one so the run can raise attention
+    /// instead of re-offering a doomed row forever.
     private func submitProvedPreparations(accountUUID: AccountUUID, txids: [Data]) async {
         guard !txids.isEmpty else { return }
 
@@ -505,44 +507,11 @@ extension MigrationManagerImpl {
                 LoggerProxy.event(
                     "\(Self.logTag) preparation \(prepared.id) submitted: \(result)"
                 )
-                let outcome = Self.transferResult(from: result)
-                guard case MigrationTransferResult.success = outcome else {
-                    // Nothing to record anywhere. The engine's retryable network error records
-                    // nothing by design, so reporting it and reporting silence leave the row
-                    // equally re-servable; and the app-side flag below is a LANDED-broadcast flag.
-                    continue
-                }
-
-                // DELIBERATELY NOT `recordTransferBroadcast`. That member is the schedule-ledger
-                // chokepoint for TRANSFERS: it resolves the served transfer id, and a preparation
-                // matches none of its resolution paths (`resolveServedTransferId` considers only
-                // `.transfer`-kind rows, and this lane sets no in-flight marker), so it would fall
-                // through to the storage layer's positional guess and attribute a preparation's
-                // submission to the first unsent schedule TRANSFER. Its `.splitPendingConfirmation`
-                // short-circuit ordinarily prevents that, but only when the migration state READS —
-                // an unreadable state (the read throws) lets the positional guess run. Riding a
-                // short-circuit for correctness is not correctness, and here it is unnecessary:
-                // this lane KNOWS the transaction is a preparation, so it performs exactly what
-                // that short-circuit's own doc prescribes for one — mark the had-broadcast flag,
-                // append NO schedule sent record — without asking the state at all.
-                failureRoutingStorage.markHadBroadcast(for: accountUUID)
-
-                // ...and the ENGINE's own mark, which no app-side ledger makes.
-                // `Proved -> Broadcast` is what `performMigrationBroadcast`'s success arm does for
-                // a transfer; a preparation the app submitted itself never travels that path, so
-                // the app makes the same mark here — KEYED BY `prepared.id`, the engine transfer
-                // id the retrieval handed back, which is the one place in this lane an id is
-                // genuinely load-bearing. The mark gets its OWN catch: by this line the submission
-                // SUCCEEDED, so a mark failure must not log "not submitted" — the engine's
-                // mined-reconciliation still promotes the transaction once the scan sees it.
-                do {
-                    try await sdkSynchronizer.recordMigrationPreparationBroadcast(accountUUID, prepared, outcome)
-                } catch {
-                    let reason = error.toZcashError()
-                    LoggerProxy.event(
-                        "\(Self.logTag) preparation \(txid.toHexStringTxId()) submitted; engine mark failed — \(reason); scan promotes it"
-                    )
-                }
+                await recordPreparationSubmission(
+                    Self.transferResult(from: result),
+                    prepared: prepared,
+                    accountUUID: accountUUID
+                )
             } catch {
                 let reason = error.toZcashError()
                 LoggerProxy.event(
@@ -552,13 +521,123 @@ extension MigrationManagerImpl {
         }
     }
 
+    /// One preparation submission's outcome, recorded where each half belongs — split from the
+    /// loop above so the classification's three-way routing reads as the table it is.
+    ///
+    /// `.success` — TWO records, and only one of them keys on an id.
+    ///
+    /// The app-side flag is DELIBERATELY NOT `recordTransferBroadcast`. That member is the
+    /// schedule-ledger chokepoint for TRANSFERS: it resolves the served transfer id, and a
+    /// preparation matches none of its resolution paths (`resolveServedTransferId` considers only
+    /// `.transfer`-kind rows, and this lane sets no in-flight marker), so it would fall through to
+    /// the storage layer's positional guess and attribute a preparation's submission to the first
+    /// unsent schedule TRANSFER. Its `.splitPendingConfirmation` short-circuit ordinarily prevents
+    /// that, but only when the migration state READS — an unreadable state (the read throws) lets
+    /// the positional guess run. Riding a short-circuit for correctness is not correctness, and
+    /// here it is unnecessary: this lane KNOWS the transaction is a preparation, so it performs
+    /// exactly what that short-circuit's own doc prescribes for one — mark the had-broadcast flag,
+    /// append NO schedule sent record — without asking the state at all.
+    ///
+    /// The ENGINE's mark is the one no app-side ledger makes. `Proved -> Broadcast` is what
+    /// `performMigrationBroadcast`'s success arm does for a transfer; a preparation the app
+    /// submitted itself never travels that path, so the app makes the same mark here — KEYED BY
+    /// `prepared.id`, the engine transfer id the retrieval handed back, which is the one place in
+    /// this lane an id is genuinely load-bearing. The mark gets its OWN catch: by this line the
+    /// submission SUCCEEDED, so a mark failure must not log "not submitted" — the engine's
+    /// mined-reconciliation still promotes the transaction once the scan sees it.
+    ///
+    /// `.networkError` — nothing recorded anywhere. The engine's retryable network error records
+    /// nothing by design, so reporting it and reporting silence leave the row equally
+    /// re-servable; and the app-side flag above is a LANDED-broadcast flag.
+    ///
+    /// `.invalidNote`/`.expired` — the server PERMANENTLY rejected this preparation, and the
+    /// engine is TOLD (the record path's rejection tags date the verdict against the wallet's
+    /// observed chain tip and only touch a still-`Proved` row), so the next crank re-adjudicates
+    /// satisfiability and can raise Reevaluate/Replan/attention. Without the record the engine
+    /// kept re-offering the same doomed row — every prove pass and 30-second tick re-took and
+    /// re-submitted it until ZIP 203 expiry, with the user parked in the split phase for hours
+    /// and no failure surface. The had-broadcast flag is NOT set: nothing landed.
+    private func recordPreparationSubmission(
+        _ outcome: MigrationTransferResult,
+        prepared: PreparedMigrationTransfer,
+        accountUUID: AccountUUID
+    ) async {
+        switch outcome {
+        case MigrationTransferResult.success:
+            failureRoutingStorage.markHadBroadcast(for: accountUUID)
+            do {
+                try await sdkSynchronizer.recordMigrationPreparationBroadcast(accountUUID, prepared, outcome)
+            } catch {
+                let reason = error.toZcashError()
+                LoggerProxy.event(
+                    "\(Self.logTag) preparation \(prepared.txid.toHexStringTxId()) submitted; engine mark failed — \(reason); scan promotes it"
+                )
+            }
+
+        case MigrationTransferResult.networkError:
+            // Transport-class non-acceptance: no record anywhere — see the doc above.
+            break
+
+        case MigrationTransferResult.invalidNote, MigrationTransferResult.expired:
+            do {
+                try await sdkSynchronizer.recordMigrationPreparationBroadcast(accountUUID, prepared, outcome)
+                LoggerProxy.event(
+                    "\(Self.logTag) ⚠ preparation \(prepared.id) permanently rejected (\(outcome)) — recorded; the next crank adjudicates"
+                )
+            } catch {
+                let reason = error.toZcashError()
+                LoggerProxy.event(
+                    """
+                    \(Self.logTag) ⚠ preparation \(prepared.id) permanently rejected (\(outcome)); \
+                    engine record failed — \(reason); the next submit attempt re-reports it
+                    """
+                )
+            }
+        }
+    }
+
+    /// The zcashd `sendrawtransaction` error code for a transaction the node already knows
+    /// (`RPC_VERIFY_ALREADY_IN_CHAIN`) — on a rejection it identifies a DUPLICATE re-submission:
+    /// the transaction landed on a previous attempt whose response was lost. Mirrors the SDK's
+    /// `MigrationBroadcaster.duplicateSubmissionErrorCode` (that type is internal to the SDK, so
+    /// its classification is mirrored here rather than imported).
+    static let duplicateSubmissionErrorCode = -27
+
+    /// Lowercased message fragments identifying a duplicate re-submission when the server does not
+    /// use `duplicateSubmissionErrorCode` — the SDK's
+    /// `MigrationBroadcaster.duplicateSubmissionMessageFragments`, mirrored.
+    static let duplicateSubmissionMessageFragments = [
+        "already in block chain",
+        "already in blockchain",
+        "txn-already-in-mempool",
+        "already in mempool",
+        "txn-already-known"
+    ]
+
+    /// Lowercased message fragments identifying an expiry-class rejection — the expiry test of the
+    /// SDK's `MigrationBroadcaster.map(outcome:successTxId:)`, mirrored.
+    static let expiryMessageFragments = ["expired", "tx-expiring-soon"]
+
     /// The app's ordinary submission result read as the migration engine's outcome vocabulary.
     ///
-    /// Anything short of an acceptance is reported as a RETRYABLE network error rather than a
-    /// verdict about the transaction: this lane submits raw bytes and sees transport outcomes, not
-    /// the engine's own rejection classification, and a retryable network error is the one outcome
-    /// that records nothing and leaves the row offered. Guessing `invalidNote` or `expired` from a
-    /// server code here would put words in the engine's mouth.
+    /// A `.grpcFailure` is TRANSPORT: no server verdict exists (every endpoint was unreachable,
+    /// timed out, or the attempt was cancelled), so nothing is known about the transaction itself
+    /// — it maps to the retryable network error, the one outcome that records nothing and leaves
+    /// the row offered for the next pass.
+    ///
+    /// A `.failure` is a SERVER'S VERDICT: `mapSubmissionOutcomes` produces it from a `.rejected`
+    /// submission outcome alone, so the submit RPC completed and the server answered. It is
+    /// classified by the same rules the SDK's own delivery ceremony applies to a rejection
+    /// (`MigrationBroadcaster.map`, whose constants are mirrored above): a duplicate
+    /// re-submission means the transaction already landed on an earlier attempt — an acceptance;
+    /// an expiry-related message is `.expired`; anything else is `.invalidNote`. The
+    /// InvalidNote/Expired split is best-effort, exactly as the SDK's own doc concedes —
+    /// lightwalletd's rejection reasons do not cleanly distinguish the two, and the engine's
+    /// record path treats both as the same dated terminal report. Collapsing every rejection to a
+    /// retryable network error instead — as this function did at first — left a permanently
+    /// rejected preparation re-taken and re-submitted by every pass until ZIP 203 expiry, with
+    /// the engine never told why nothing moved.
+    ///
     /// Internal rather than private so its arms can be pinned directly — the `.partial` arm in
     /// particular is unreachable through `submitProvedPreparations`.
     static func transferResult(
@@ -571,8 +650,17 @@ extension MigrationManagerImpl {
             // Unreachable for the single transaction this lane submits (`.partial` needs both an
             // acceptance and a failure), but an acceptance is an acceptance.
             return MigrationTransferResult.success(txId: txIds.first ?? "")
-        case SDKSynchronizerClient.CreateProposedTransactionsResult.failure,
-             SDKSynchronizerClient.CreateProposedTransactionsResult.grpcFailure:
+        case let SDKSynchronizerClient.CreateProposedTransactionsResult.failure(txIds, code, description):
+            let lowered = description.lowercased()
+            if code == Self.duplicateSubmissionErrorCode
+                || Self.duplicateSubmissionMessageFragments.contains(where: { lowered.contains($0) }) {
+                return MigrationTransferResult.success(txId: txIds.first ?? "")
+            }
+            if Self.expiryMessageFragments.contains(where: { lowered.contains($0) }) {
+                return MigrationTransferResult.expired
+            }
+            return MigrationTransferResult.invalidNote
+        case SDKSynchronizerClient.CreateProposedTransactionsResult.grpcFailure:
             return MigrationTransferResult.networkError(retryable: true)
         }
     }

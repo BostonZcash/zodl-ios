@@ -485,13 +485,15 @@ import ComposableArchitecture
         )
     }
 
-    /// THE MARK IS FOR ACCEPTANCES ONLY. A submission the servers rejected maps to the engine's
-    /// retryable network error, which records nothing by design — so the app makes no engine mark
-    /// at all and the row stays exactly as re-servable as silence would leave it. The app-side
-    /// ledger still sees the attempt; the engine does not.
-    @Test func provePassDoesNotMarkTheEngineWhenTheSubmissionIsRejected() async {
+    /// A PERMANENT REJECTION IS RECORDED (2026-08-08). A server that answers the submit RPC with a
+    /// non-duplicate, non-expiry rejection has issued a VERDICT about the transaction, not a
+    /// transport hiccup — the engine must be told (`.invalidNote`), so its next crank
+    /// re-adjudicates and can raise attention. Recording nothing here — the pre-fix behavior —
+    /// left the row re-servable, and every prove pass and 30-second tick re-took and re-submitted
+    /// the same doomed preparation until ZIP 203 expiry.
+    @Test func provePassRecordsAPermanentRejectionOnTheEngine() async {
         Self.installCandidateAccount()
-        let engineMarks = LockIsolated<Int>(0)
+        let engineMarks = LockIsolated<[MigrationTransferResult]>([])
         let submissions = LockIsolated<Int>(0)
         let preparationTxid = Data(repeating: 0x3B, count: 32)
 
@@ -514,10 +516,10 @@ import ComposableArchitecture
                 },
                 submitMigrationPreparation: { _ in
                     submissions.withValue { $0 += 1 }
-                    return .failure(txIds: [], code: -25, description: "rejected")
+                    return .failure(txIds: [], code: -25, description: "bad-txns-inputs-spent")
                 },
-                recordMigrationPreparationBroadcast: { _, _, _ in
-                    engineMarks.withValue { $0 += 1 }
+                recordMigrationPreparationBroadcast: { _, _, result in
+                    engineMarks.withValue { $0.append(result) }
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -533,7 +535,10 @@ import ComposableArchitecture
 
         #expect(verdict == .proved(count: 1), "a rejected submission is not a failure of the pass, got \(verdict)")
         #expect(submissions.value == 1, "the submission was attempted")
-        #expect(engineMarks.value == 0, "a non-acceptance must never be marked on the engine")
+        #expect(
+            engineMarks.value == [.invalidNote],
+            "a permanent rejection is recorded as the real verdict, got \(engineMarks.value)"
+        )
     }
 
     /// ONE BAD PREPARATION DOES NOT ABORT THE PASS. A retrieval that is refused — a txid whose row
@@ -770,13 +775,32 @@ import ComposableArchitecture
             "an acceptance with no txid still reports success, with an empty id"
         )
         #expect(
-            MigrationManagerImpl.transferResult(from: .failure(txIds: [], code: -25, description: "no"))
-                == .networkError(retryable: true),
-            "a server rejection is reported as retryable — this lane sees transport, not verdicts"
+            MigrationManagerImpl.transferResult(from: .failure(txIds: [], code: -25, description: "bad-txns-inputs-spent"))
+                == .invalidNote,
+            "a server rejection is a verdict about the transaction — the default rejection class is invalidNote"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(
+                from: .failure(txIds: ["abc"], code: -27, description: "transaction already in block chain")
+            ) == .success(txId: "abc"),
+            "the duplicate-submission CODE means the transaction landed on an earlier attempt"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(
+                from: .failure(txIds: ["abc"], code: -26, description: "18: txn-already-in-mempool")
+            ) == .success(txId: "abc"),
+            "a duplicate-submission MESSAGE identifies the same landed transaction without the code"
+        )
+        #expect(
+            MigrationManagerImpl.transferResult(
+                from: .failure(txIds: [], code: -26, description: "tx-expiring-soon: expiry height is too close")
+            ) == .expired,
+            "an expiry-class rejection reports expired, the engine's own vocabulary for it"
         )
         #expect(
             MigrationManagerImpl.transferResult(from: .grpcFailure(txIds: [], reason: .timeout))
-                == .networkError(retryable: true)
+                == .networkError(retryable: true),
+            "a transport failure carries no server verdict — retryable, records nothing"
         )
     }
 
