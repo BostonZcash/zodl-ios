@@ -553,7 +553,23 @@ extension MigrationCoordFlow {
                     state.path[id: reviewId] = .reviewTransfer(reviewState)
                     return .none
                 }
-                state.path.append(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1)))
+                // THE REVIEW ELEMENT IS GONE (the user backed past it before the submit answered),
+                // so there is no sheet to arm — but the REMEDY is unchanged, and so is the screen
+                // that offers it. Push a FRESH immediate Review carrying the same commit-failure
+                // sheet: `.immediate` re-proposes for itself on appear (the idiom
+                // `.migrateAnywayUnlocked` already uses), and Retry on a `.commit` failure re-runs
+                // the immediate ceremony from a fresh PCZT + redact — exactly what
+                // `submitImmediateKeystoneTransaction`'s doc promises and what the arm above does.
+                //
+                // This used to push a Sending screen instead. That screen carries no
+                // `immediateProposal`, so its Retry ran the scheduled-run delivery branch and
+                // attempted an ENGINE drive for an engine-EXTERNAL immediate sweep failure — a
+                // silent wrong-lane retry. (The defect predates this branch: upstream's fallback
+                // had the same shape through `executeNextPendingMigrationTransfer`.)
+                var reviewState = MigrationReviewTransfer.State(mode: .immediate)
+                reviewState.isFailurePresented = true
+                reviewState.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+                state.path.append(.reviewTransfer(reviewState))
                 return .none
 
                 // MARK: - PHASE 7: Keystone ceremony — the BATCH round-trip (scheduled lane)

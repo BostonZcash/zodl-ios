@@ -231,12 +231,22 @@ struct MigrationSending {
                 return executeNextTransfer(account: account, immediateProposal: state.immediateProposal)
 
             case .onAppear:
-                // MOB-1496 (W-B): a screen pushed ALREADY showing a failure (the "Migrate anyway"
-                // propose/unlock-failure fallback — see `MigrationCoordFlowCoordinator`'s
-                // `.complete(.delegate(.migrateAnyway))` handler) has nothing to execute — the
-                // failure already happened before this screen ever appeared; an explicit Retry is
-                // the only way out. Every production push in every other lane defaults
-                // `isFailurePresented` to `false`, so this is a no-op for them.
+                // A screen pushed ALREADY showing a failure has nothing to execute — the failure
+                // happened before this screen appeared.
+                //
+                // NO PRODUCTION PUSH DOES THIS ANY MORE (2026-08-07). The one that did was the
+                // Keystone immediate lane's `.keystoneImmediateSubmitFailed` fallback, taken when
+                // the Review element was gone after the scan/sign pop; it now pushes a fresh
+                // immediate Review with the commit-failure sheet instead, so Retry re-attempts the
+                // ceremony that actually failed rather than driving the scheduled lane. (The
+                // comment here used to attribute this state to the "Migrate anyway"
+                // propose/unlock failure. That was never true: `.migrateAnywayUnlocked` pushes a
+                // Review, and `.migrateAnywayFailed` only clears the Complete screen's spinner —
+                // neither ever pushed this screen.)
+                //
+                // The guard stays as a belt: the initializer still takes `isFailurePresented`
+                // (the view's preview uses it), and executing under an already-open failure sheet
+                // would be wrong for any future producer.
                 guard !state.isFailurePresented else { return .none }
                 // MOB-1513 (R10): a screen pushed ALREADY in `.success` (the Keystone immediate lane —
                 // its broadcast happens in the coordinator BEFORE this screen is pushed) has nothing to
