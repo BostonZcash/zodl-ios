@@ -8665,24 +8665,6 @@
         }
       }
     },
-    "ironwoodAnnouncement.learnMore" : {
-      "comment" : "Secondary button. NOTE: this Spanish is NOT from MOB-1533 — that ticket describes only the inline guide link and the primary button, so it carries no translation for this one. \"Más información\" is the standard iOS Spanish for this label and should be confirmed by a translator.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Learn more"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Más información"
-          }
-        }
-      }
-    },
     "ironwoodAnnouncement.title" : {
       "comment" : "Copy and Spanish translation from MOB-1533.",
       "extractionState" : "manual",
