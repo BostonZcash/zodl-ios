@@ -66,8 +66,14 @@ struct MigrationPoolFlowHeader: View {
 
             // Same formatter as the timeline rows below this card (`MigrationTransferTimeline`),
             // so an amount reads identically in both places.
+            //
+            // ONE line, always (Lukas, 2026-08-08): a full-precision mainnet amount
+            // ("0.19992363 ZEC") wrapped the unit onto its own line inside the half-width
+            // column. Shrink-to-fit down to half size instead of wrapping.
             Text("\(amount.decimalString()) ZEC")
                 .zFont(.semiBold, size: 18, style: Design.Text.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
 
             if let currencyConversion {
                 Text(currencyConversion.convert(amount))
