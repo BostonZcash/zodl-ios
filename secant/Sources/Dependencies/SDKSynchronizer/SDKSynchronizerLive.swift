@@ -126,11 +126,14 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
             },
             performMigrationBroadcast: { accountUUID, instruction, options in
-                try await synchronizer.performMigrationBroadcast(
-                    accountUUID: accountUUID,
-                    instruction,
-                    options: options
-                )
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.performMigrationBroadcast(
+                        accountUUID: accountUUID,
+                        instruction,
+                        options: options
+                    )
+                }
             },
             hasOverdueMigrationTransfers: { accountUUID, useEstimatedTip in
                 try await synchronizer.hasOverdueMigrationTransfers(
