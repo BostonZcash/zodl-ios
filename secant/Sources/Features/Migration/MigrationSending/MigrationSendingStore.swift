@@ -325,13 +325,21 @@ struct MigrationSending {
     }
 
     /// This is `MigrationCommitPipeline.commitImmediateSoftware`'s ONLY foreground executor with
-    /// failure UX (R7-T3 §6 disposition): the immediate lane and the scheduled lane share this SAME
-    /// broadcast `do`/`catch` below, so the classify-then-route wiring covers both without any
-    /// separate treatment. `ZcashError.migrationRecordFailedAfterBroadcast` means the broadcast DID
-    /// land and only recording failed (the engine self-heals later) — routed to a success-like
-    /// result so the UX doesn't offer a needless retry or imply failure for something that worked;
-    /// `txId` is a placeholder (the error carries no payload to recover the real one from). Untouched
-    /// by R7-T3's classification (MOB-1497): a landed broadcast is never a failure to route.
+    /// failure UX (R7-T3 §6 disposition). The dedicated
+    /// `ZcashError.migrationRecordFailedAfterBroadcast` catch that stood between the `do` and the
+    /// generic catch below left 2026-08-08 as dead code: it served the DELETED scheduled-run
+    /// delivery arm — `performMigrationBroadcast`, whose record step can throw it (the SDK's only
+    /// throw site is `OrchardMigration.broadcastAndRecord`, reachable solely through
+    /// `performMigrationBroadcast`/`submitNoteSplit`) — while the immediate lane's whole pipeline
+    /// (`createAndSubmitProposedTransactions` -> the raw multi-server submit, with
+    /// `recordImmediateMigration` wrapped in its own never-throwing best-effort catch) never
+    /// touches the engine's record path at all. The arm had also gone WRONG in place: it skipped
+    /// the `refreshMigrationSyncGate()` nudge on a path where `stopSyncBeforeMigrationBroadcast()`
+    /// had already run — its justification (the engine's own gate transitioned on the record)
+    /// left with the engine lane — so had it ever been hit, no path would have restarted sync for
+    /// the rest of the foreground session. Were the error somehow thrown again, the generic catch
+    /// handles it soundly: `classify(error:)` deliberately maps it to no route, and the nudge
+    /// fires because sync WAS stopped.
     ///
     /// R9-T4 (MOB-1497 review remediation, finding 5): the immediate lane's USK derivation is
     /// hoisted ABOVE the broadcast `do`/`catch` below, in its own `do`/`catch` — see the hoist's
@@ -442,10 +450,6 @@ struct MigrationSending {
                 // just as a non-success outcome does. (The engine-lane branch that skipped the
                 // nudge here went with the scheduled-run delivery arm; this lane always nudges.)
                 await migrationManager.refreshMigrationSyncGate()
-            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
-                // The broadcast DID land; only recording failed — treated as landed (like `.success`),
-                // so no nudge either.
-                await send(.transferResult(MigrationTransferResult.success(txId: "")))
             } catch {
                 if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
                     await send(.broadcastFailureRouted(route))

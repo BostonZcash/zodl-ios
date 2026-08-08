@@ -46,10 +46,12 @@ enum MigrationBroadcastFailureClass: Equatable, Sendable {
     ///
     /// - `ZcashError.migrationTorUnavailable` -> `.torUnavailable`.
     /// - `ZcashError.migrationRecordFailedAfterBroadcast` -> `nil`: the broadcast LANDED and only
-    ///   the engine's own recording of it failed — callers already route this to their existing
-    ///   success-like handling (see `MigrationSendingStore`/`MigrationNoteSplitStore`/
-    ///   `RootInitialization`'s identical dedicated `catch` clauses for this case) and this
-    ///   classifier must never swallow that distinction.
+    ///   the engine's own recording of it failed — the one caller that can still draw it
+    ///   (`MigrationManagerImpl.broadcastOneTransfer`, via `performMigrationBroadcast`) already
+    ///   routes it to its success-like handling in a dedicated `catch`, and this classifier must
+    ///   never swallow that distinction. (The sibling dedicated catches in `MigrationSendingStore`/
+    ///   `MigrationNoteSplitStore`/`RootInitialization` left with their lanes, the last on
+    ///   2026-08-08 — see `MigrationSendingStore.executeNextTransfer`'s doc.)
     /// - R9-T7 (MOB-1497 review remediation, finding 9): `ZcashError.migrationBroadcastDuringSync`
     ///   (ZRUST0126) -> `nil`: a pure pre-flight rejection — the SDK throws this as the literal
     ///   first statement of every broadcast entry point when the synchronizer is `.syncing`, before
