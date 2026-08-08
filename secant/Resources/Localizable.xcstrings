@@ -8552,7 +8552,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tus fondos en Orchard permanecen ahí hasta que los muevas. Puedes seguir gastándolos, pero el valor que sale de Orchard es público: al gastar se publica un monto en la cadena de bloques, y puede ser mayor que el que envías."
+            "value" : "Tus fondos en Orchard siguen siendo tuyos hasta que los muevas. Puedes seguir gastándolos, pero el valor que sale de Orchard es público: al gastar se publica un monto en la cadena de bloques, y puede ser mayor que el que envías."
           }
         }
       }
@@ -8570,7 +8570,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Una migración más privada llegará en una actualización posterior. Mueve tus fondos en partes de tamaño estándar que no te identifican, por eso recomendamos esperar."
+            "value" : "Ya puedes moverlos. Recomendamos la opción privada: divide tu saldo en transferencias más pequeñas repartidas en el tiempo, para que sean más difíciles de vincular contigo. Zodl te avisará cada vez que sea momento de abrir la app. O mueve todo de una vez en una sola transferencia."
           }
         }
       }
@@ -8624,7 +8624,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "nuestra guía"
+            "value" : "Nuestra guía"
           }
         }
       }
@@ -8642,7 +8642,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Si prefieres no esperar, "
+            "value" : "¿No sabes cuál elegir? "
           }
         }
       }
@@ -8660,7 +8660,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : " explica cómo mover los fondos manualmente."
+            "value" : " explica ambas opciones."
           }
         }
       }
@@ -8678,7 +8678,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Zcash se actualizó a Ironwood"
+            "value" : "Ironwood está listo"
           }
         }
       }
