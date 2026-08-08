@@ -503,15 +503,30 @@ extension MigrationManagerImpl {
         for txid in txids {
             do {
                 let prepared = try await sdkSynchronizer.takeMigrationPreparation(accountUUID, txid)
-                let result = try await sdkSynchronizer.submitMigrationPreparation(prepared)
-                LoggerProxy.event(
-                    "\(Self.logTag) preparation \(prepared.id) submitted: \(result)"
-                )
-                await recordPreparationSubmission(
-                    Self.transferResult(from: result),
-                    prepared: prepared,
-                    accountUUID: accountUUID
-                )
+                // The submit-to-record span wears the transfer session's own in-flight markers —
+                // the keep-open banner and the re-entry route's isMigrationWorkInFlight
+                // short-circuit both hang off them; see `withPreparationBroadcastMarkers`. `nil`
+                // means the account is already mid-broadcast: this row is skipped, the engine
+                // re-offers it on its next crank.
+                let submitted: Void? = try await withPreparationBroadcastMarkers(accountUUID: accountUUID, id: prepared.id) {
+                    let result = try await sdkSynchronizer.submitMigrationPreparation(prepared)
+                    LoggerProxy.event(
+                        "\(Self.logTag) preparation \(prepared.id) submitted: \(result)"
+                    )
+                    await recordPreparationSubmission(
+                        Self.transferResult(from: result),
+                        prepared: prepared,
+                        accountUUID: accountUUID
+                    )
+                }
+                if submitted == nil {
+                    LoggerProxy.event(
+                        """
+                        \(Self.logTag) preparation \(prepared.id) not submitted — account already \
+                        mid-broadcast; skipped, engine re-offers it
+                        """
+                    )
+                }
             } catch {
                 let reason = error.toZcashError()
                 LoggerProxy.event(

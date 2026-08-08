@@ -2565,6 +2565,48 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
+    /// THE PREP-SUBMIT MARKER WINDOW. Brackets ONE self-submitted preparation's submit-to-record
+    /// span with the same in-flight markers `runBroadcastSession` sets around a delivery —
+    /// `broadcastsInFlight`, the D6 `activeBroadcastTxIds` id, the AUD-3 keep-open banner map
+    /// (`preparationBroadcastsInFlight` — always: this window serves preparations only), and
+    /// `setMigrationWorkInFlight` — poked into the state stream on entry and again after the
+    /// clears, in that session's own order.
+    ///
+    /// The driver's prove pass submits proved preparations ITSELF (`submitProvedPreparations` —
+    /// the ordinary path, deliberately not a delivery ceremony), and without these markers the app
+    /// READ IDLE while a preparation's bytes were on the wire: `isPreparationBroadcastInFlight`
+    /// and `isBroadcastInFlight` both false, so no keep-open/"splitting balance" banner, and the
+    /// re-entry route's `isMigrationWorkInFlight` short-circuit never engaged — a user who
+    /// backgrounded or killed the app mid-broadcast stalled the split until a later pass re-proved
+    /// it. The markers are set BEFORE the bytes can reach the wire and cleared on EVERY exit —
+    /// success, failure and throw alike (the `defer` covers the throwing paths).
+    ///
+    /// Returns `nil`, WITHOUT invoking `body`, when the account is already mid-broadcast — the
+    /// same `broadcastsInFlight` re-entrancy guard `runBroadcastSession` takes, so a preparation
+    /// submit can never overlap a transfer's delivery (or another prep submit) for the same
+    /// account. The caller skips the row; the engine re-offers it on its next crank.
+    func withPreparationBroadcastMarkers<T>(
+        accountUUID: AccountUUID,
+        id: UInt32,
+        _ body: () async throws -> T
+    ) async rethrows -> T? {
+        guard broadcastsInFlight.withLock({ $0.insert(accountUUID).inserted }) else { return nil }
+        activeBroadcastTxIds.withLock { $0[accountUUID] = id }
+        preparationBroadcastsInFlight.withLock { _ = $0.insert(accountUUID) }
+        setMigrationWorkInFlight(true)
+        pokeStateEvent(for: accountUUID)
+        defer {
+            // Cleared BEFORE the closing poke, so that one derives fresh — it is the edge that
+            // reveals what this submission just changed. Same order as `runBroadcastSession`.
+            setMigrationWorkInFlight(false)
+            broadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+            activeBroadcastTxIds.withLock { $0[accountUUID] = nil }
+            preparationBroadcastsInFlight.withLock { _ = $0.remove(accountUUID) }
+            pokeStateEvent(for: accountUUID)
+        }
+        return try await body()
+    }
+
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 

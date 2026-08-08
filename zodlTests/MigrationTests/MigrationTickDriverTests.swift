@@ -541,6 +541,64 @@ import ComposableArchitecture
         )
     }
 
+    /// THE MARKER WINDOW (2026-08-08). While a preparation's bytes are on the wire the app must
+    /// READ BUSY — the keep-open banner map and the re-entry route's `isMigrationWorkInFlight`
+    /// short-circuit hang off the same in-flight markers `runBroadcastSession` sets, and the
+    /// prep-submit lane used to set none of them, so backgrounding mid-submit stalled the split.
+    /// Pinned through `isMigrationWorkInFlight`: true DURING the submit, false again after the
+    /// pass (cleared on every exit).
+    @Test func provePassWearsInFlightMarkersAroundThePreparationSubmit() async {
+        Self.installCandidateAccount()
+        let managerBox = LockIsolated<MigrationManagerImpl?>(nil)
+        let inFlightDuringSubmit = LockIsolated<Bool?>(nil)
+        let preparationTxid = Data(repeating: 0x5C, count: 32)
+
+        let verdict = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.activatedState() },
+                isSyncing: { false },
+                migrationAdvanceStep: { _ in
+                    MigrationAdvance(
+                        step: .prove(transactions: [MigrationProveTarget(id: 7, kind: .preparation(layer: 0, index: 0))]),
+                        next: nil
+                    )
+                },
+                migrationTransactionStatuses: { _ in [] },
+                proveMigrationTransactions: { _, _, _ in
+                    MigrationProveOutcome(totalProved: 1, preparationTxids: [preparationTxid])
+                },
+                takeMigrationPreparation: { _, txid in
+                    PreparedMigrationTransfer(id: 7, txid: txid, pczt: Data([0xEE]))
+                },
+                submitMigrationPreparation: { prepared in
+                    inFlightDuringSubmit.setValue(managerBox.value?.isMigrationWorkInFlight)
+                    return .success(txIds: [prepared.txid.toHexStringTxId()])
+                },
+                recordMigrationPreparationBroadcast: { _, _, _ in }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+            Self.stubUserNotifications(&$0)
+        } operation: {
+            let manager = MigrationManagerImpl(
+                gateStorage: Self.freshGateStorage(mode: .privateScheduled),
+                scheduleStorage: Self.freshScheduleStorage(),
+                sessionOrdinalProvider: { 1 }
+            )
+            managerBox.setValue(manager)
+            return await manager.advance(phase: .afterSync)
+        }
+
+        #expect(verdict == .proved(count: 1))
+        #expect(
+            inFlightDuringSubmit.value == true,
+            "the in-flight markers must be set before the bytes go on the wire, got \(String(describing: inFlightDuringSubmit.value))"
+        )
+        #expect(
+            managerBox.value?.isMigrationWorkInFlight == false,
+            "the markers must be cleared once the pass's submission window closes"
+        )
+    }
+
     /// ONE BAD PREPARATION DOES NOT ABORT THE PASS. A retrieval that is refused — a txid whose row
     /// is no longer servable, the seam's own readiness gate — is skipped and logged; the rest of
     /// the pass's preparations still go out, and the verdict still reports what was proved. The
