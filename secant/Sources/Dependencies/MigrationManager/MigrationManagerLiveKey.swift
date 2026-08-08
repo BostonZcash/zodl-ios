@@ -4214,6 +4214,7 @@ enum MigrationDerivations {
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
+                isAwaitingAnchorBoundary: seed.liveStatus?.blockedOn == MigrationTransactionStatus.Blocker.anchorBoundary,
                 // D4: real elapsed for the overdue caption (Figma B8 "Overdue · 5h ago").
                 overdueMinutesAgo: status == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: scheduledHeight, clock: clock)
@@ -4500,6 +4501,7 @@ enum MigrationDerivations {
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
+                isAwaitingAnchorBoundary: status.blockedOn == MigrationTransactionStatus.Blocker.anchorBoundary,
                 // D4: real elapsed for the overdue caption, W1-fallback lane.
                 overdueMinutesAgo: rowStatus == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: status.scheduledHeight, clock: clock)

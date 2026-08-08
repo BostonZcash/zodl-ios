@@ -401,6 +401,30 @@ struct MigrationStatusView: View {
             // check. The old `.active where isBroadcasting` arm this absorbed is gone: every
             // broadcast row is `.confirming` now.
             return String(localizable: .migrationStatusSent)
+        // MOB-1466 (Lukas's ruling, 2026-08-08): THE ONE ARRIVED ROW THAT KEEPS "Ready now".
+        //
+        // Every other row whose window has arrived now says "Recomputing ETA…" via the default arm
+        // below, which is true of them: the engine's overdue re-spread raises EVERY pending
+        // scheduled height on the next `advance_migration`, so a new time really is coming. It is
+        // NOT true here. The re-spread deliberately excludes an anchor-gated transfer —
+        // re-spreading on one "would shift the whole plan … every time the gate was waited out,
+        // chasing its own tail" (`zcash_pool_migration`, satisfiability.rs) — so this row's height
+        // sits in the past until its boundary block settles, and nothing will ever recompute it.
+        // Promising a recomputation the engine has decided never to perform is the same class of
+        // lie this whole change removes, pointing the other way.
+        //
+        // Lukas ruled the fallback rather than new copy: "keep it as 'ready now' (= unblocking you
+        // with fallback value rather than some new one)". So `migrationPlan.readyNow` survives with
+        // exactly ONE caller — this arm — instead of being the default answer for every passed row.
+        // What it should ideally say stays open for Andrea: this is a real waiting state that has
+        // never had its own frame.
+        //
+        // LAST before `default` on purpose. Every arm above describes something the row is doing
+        // that outranks its clock — submitting, proving, dependency-blocked, broadcast, or wearing
+        // the designed "Overdue · Nh ago" badge — and this must not steal any of them. It
+        // intercepts only what would otherwise reach the ETA caption.
+        case _ where row.isAwaitingAnchorBoundary && (row.forwardETAMinutes ?? Int.max) <= 0:
+            return String(localizable: .migrationPlanReadyNow)
         default:
             // Pending/queued-active rows: the shared forward-ETA granularity per the frames
             // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders

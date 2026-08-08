@@ -95,6 +95,27 @@ enum MigrationETA: Equatable, Sendable {
     /// A row with no forward time AT ALL (a finished one) must not reach here — it renders its green
     /// check and DONE label with no ETA line, per Lukas's ruling. That absence is the caller's to
     /// express, not this formatter's: "recomputing" on a completed transfer would be its own lie.
+    ///
+    /// MOB-1466 (Lukas's ruling, 2026-08-08): A POST-COMMIT ROW WHOSE WINDOW HAS ARRIVED SAYS
+    /// "Recomputing ETA…", NOT "Ready now". Checking the frames, "Ready now" appears in no
+    /// post-commit screen — only the `.replan` and expiry flows — because there is no such PHASE.
+    /// Lukas's own statement of the ladder: a prepared transfer says "~X", a passed one is overdue,
+    /// "there is no phase at all saying ready now". What put it on six rows at once was arithmetic,
+    /// not design: `bucketed` reads `<= 0` as `.readyNow`, and `minutesFromNow` clamps at zero, so
+    /// a height three hours behind the tip is indistinguishable from one due this second. Sleep
+    /// through part of a schedule and every passed row claims to be actionable — while ZIP 318
+    /// permits exactly one broadcast at a time, so all but one of those invitations is refused by
+    /// the engine.
+    ///
+    /// "Recomputing" is the TRUE word for that state rather than a softer one. The engine's overdue
+    /// re-spread ("at most one overdue transfer is released immediately; the rest are re-spread")
+    /// raises EVERY pending scheduled height by the lag, judged at the estimated target so it runs
+    /// before the wallet syncs — so on the very next `advance_migration` these rows really do get
+    /// new times. The label states the gap between opening the app and that shift landing.
+    ///
+    /// `.plan` keeps "Starts right away". It is PRE-COMMIT, its own committal tense, and a real
+    /// designed frame — see `Phrasing.plan`'s doc for why it exists. This ruling is about the
+    /// post-commit surfaces; deleting the plan screen's string with them would be collateral.
     static func caption(minutesFromNow minutes: Int?, phrasing: Phrasing) -> String {
         guard let minutes else {
             return String(localizable: .migrationPlanEtaRecomputing)
@@ -103,7 +124,7 @@ enum MigrationETA: Equatable, Sendable {
         case .readyNow:
             return phrasing == .plan
                 ? String(localizable: .migrationPlanStartsRightAway)
-                : String(localizable: .migrationPlanReadyNow)
+                : String(localizable: .migrationPlanEtaRecomputing)
         case .minutes(let mins):
             switch phrasing {
             case .inPrefixed:

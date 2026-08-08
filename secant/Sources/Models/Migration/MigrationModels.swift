@@ -182,6 +182,19 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// NOT part of `isInFlight`: nothing is running on this device for a dependency-blocked row,
     /// so it never earns the spinner or the keep-open ask.
     var isAwaitingRunDependencies: Bool
+    /// MOB-1466 (Lukas's ruling, 2026-08-08): the engine says this row is held by its drawn ANCHOR
+    /// BOUNDARY (`blockedOn == .anchorBoundary`) — the boundary block has not settled, so the
+    /// transfer cannot be proved against it yet. Straight from the row's joined live status;
+    /// `false` when no status joined (no guess), exactly like `isAwaitingRunDependencies`.
+    ///
+    /// It exists because this is the ONE arrived-window row whose time is not being recomputed.
+    /// The engine's overdue re-spread deliberately excludes anchor-gated transfers — re-spreading
+    /// on one "would shift the whole plan … every time the gate was waited out, chasing its own
+    /// tail" (`zcash_pool_migration`, satisfiability.rs) — so no shift will ever move this row's
+    /// scheduled height. Every OTHER arrived row says "Recomputing ETA…" truthfully, because a
+    /// shift really is coming for it; saying it here would promise a recomputation the engine has
+    /// decided never to perform.
+    var isAwaitingAnchorBoundary: Bool
     /// GROUND_RULES D4: minutes since this row's window passed — set only for `.overdue` rows
     /// (Figma B8: "Overdue · 5h ago"); nil elsewhere. The derivation populates it; a plain 0 hid
     /// real elapsed time behind "just overdue".
@@ -256,6 +269,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         isPreparing: Bool = false,
         isSubmitting: Bool = false,
         isAwaitingRunDependencies: Bool = false,
+        isAwaitingAnchorBoundary: Bool = false,
         overdueMinutesAgo: Int? = nil,
         kind: Kind = .transfer,
         isETAKnown: Bool = true
@@ -272,6 +286,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.isPreparing = isPreparing
         self.isSubmitting = isSubmitting
         self.isAwaitingRunDependencies = isAwaitingRunDependencies
+        self.isAwaitingAnchorBoundary = isAwaitingAnchorBoundary
         self.overdueMinutesAgo = overdueMinutesAgo
         self.kind = kind
     }
