@@ -18,28 +18,14 @@
 //  allocated" — surfaces it. `Reevaluate` is not a user-facing state at all; it is the engine
 //  saying "your chain view is behind the one that rejected my broadcast, go look again".
 //
-//  The libzcashlc conduit still speaks the retired vocabulary: `zcashlc_migration_advance_step`
-//  folds BOTH into `ZCASHLC_ADVANCE_STEP_ATTEND` and, because neither upstream step names a
-//  transaction, SYNTHESISES an id — scanning the status rows for a matching blocker and falling
-//  back to transfer `0` when none matches. The SDK decodes that to `.requiresAttention(id:)`.
-//  Two engine answers with opposite remedies arrive as one app-facing case carrying an id at
-//  least one of them never had. nuttycom is splitting them SDK-side (Lukas ↔ nuttycom,
-//  2026-08-07); this type is what lets the app's lanes be built, tested and reviewed before that
-//  lands, rather than after.
-//
-//  WHAT CHANGES WHEN IT LANDS. Exactly one function below — `init(step:)` — gains two arms, and
-//  `.attentionCollapsed` is deleted. Every consumer (the step plan's decision table, the driver's
-//  executors, the state derivation, the re-entry route, and their tests) already speaks `.replan`
-//  and `.reevaluate` today. Nothing downstream moves.
-//
-//  WHY THE INTERIM ARM STAYS AMBIGUOUS RATHER THAN GUESSING. It would be easy to map today's
-//  `.requiresAttention` to `.replan` — replan is the commoner cause, and it would make the new
-//  lane live immediately. That trade is wrong in the one direction that costs the user something:
-//  reading a `Reevaluate` as a replan tears down a live run over a rejection the very next sync
-//  would have adjudicated, and the run's remaining transfers are pre-signed artifacts that a
-//  re-plan discards. Reading a `Replan` as an ambiguous attention costs one wasted sync pass and
-//  lands on the same screen a beat later. So the ambiguous arm keeps the existing
-//  sync-then-escalate behaviour verbatim, and the precision arrives with the SDK, not before.
+//  THE SDK SPEAKS THE SPLIT VOCABULARY TOO (2026-08-08 — the landing this file was built to
+//  receive, one review cycle ahead of it). `zcashlc_migration_advance_step` marshals each upstream
+//  step onto its own BARE discriminant and `MigrationAdvanceStep` carries `.replan` /
+//  `.reevaluate` verbatim — no projection, no synthesised id. The interim `.attentionCollapsed`
+//  arm (the conduit's old Attend fold, deliberately routed as conservative sync-then-escalate
+//  because reading a `Reevaluate` as a replan would tear down a live run whose pre-signed
+//  transfers a re-plan discards) was deleted exactly as planned: `init(step:)` gained the two
+//  arms below, and nothing downstream moved.
 //
 
 import Foundation
@@ -78,18 +64,11 @@ enum MigrationEngineAnswer: Equatable, Sendable {
     case waiting
     /// The stored run is terminal — every transaction mined, or cancelled/failed/superseded.
     case complete
-    /// INTERIM, DELETE WITH THE SDK SPLIT: the conduit's collapsed `Attend` bucket, which is either
-    /// a `.replan` or a `.reevaluate` and carries a synthesised id that at most one of them ever
-    /// had. Consumers must treat it as the CONSERVATIVE reading (see the file header) — never as a
-    /// confirmed replan.
-    case attentionCollapsed(id: UInt32)
 }
 
 extension MigrationEngineAnswer {
-    /// The ONE translation from the SDK's step to the app's vocabulary.
-    ///
-    /// When the SDK grows `.replan` / `.reevaluate`, add the two arms here and delete
-    /// `.attentionCollapsed` — that is the whole migration of this change.
+    /// The ONE translation from the SDK's step to the app's vocabulary — 1:1 since the SDK split
+    /// `.replan` / `.reevaluate` out of the retired Attend collapse (2026-08-08).
     init(step: MigrationAdvanceStep) {
         switch step {
         case let MigrationAdvanceStep.prove(transactions):
@@ -98,14 +77,14 @@ extension MigrationEngineAnswer {
             self = MigrationEngineAnswer.broadcast(instruction: instruction)
         case let MigrationAdvanceStep.rebuild(id):
             self = MigrationEngineAnswer.rebuild(id: id)
+        case MigrationAdvanceStep.replan:
+            self = MigrationEngineAnswer.replan
+        case MigrationAdvanceStep.reevaluate:
+            self = MigrationEngineAnswer.reevaluate
         case MigrationAdvanceStep.waiting:
             self = MigrationEngineAnswer.waiting
         case MigrationAdvanceStep.complete:
             self = MigrationEngineAnswer.complete
-        case let MigrationAdvanceStep.requiresAttention(id):
-            // The collapsed bucket. NOT `.replan`: see the file header for why guessing here is
-            // the one guess that can destroy pre-signed work.
-            self = MigrationEngineAnswer.attentionCollapsed(id: id)
         }
     }
 }

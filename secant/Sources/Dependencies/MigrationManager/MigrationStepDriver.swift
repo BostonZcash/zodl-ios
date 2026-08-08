@@ -61,8 +61,6 @@ enum MigrationStepVerdict: Equatable, Sendable {
     case proved(count: Int)
     /// An expired transfer was rebuilt in place, without the user.
     case rebuilt(id: UInt32)
-    /// The engine wants more scanned data before it adjudicates. This session syncs and asks again.
-    case resyncing(id: UInt32)
     /// A broadcast this app made was rejected by a node whose chain view is ahead of this wallet's.
     /// This session syncs and the engine adjudicates on the next ask. Carries no id: upstream's
     /// `Reevaluate` names no transaction, and neither may we.
@@ -115,7 +113,6 @@ extension MigrationStepVerdict {
         case MigrationStepVerdict.broadcast,
              MigrationStepVerdict.proved,
              MigrationStepVerdict.rebuilt,
-             MigrationStepVerdict.resyncing,
              MigrationStepVerdict.reevaluating,
              MigrationStepVerdict.needsUser,
              MigrationStepVerdict.failed:
@@ -759,29 +756,9 @@ extension MigrationManagerImpl {
         case let MigrationStepAction.rebuild(id):
             return await executeRebuild(id: id, accountUUID: accountUUID)
 
-        case let MigrationStepAction.resync(id):
-            // The cheap automatic half of `.requiresAttention`: this session syncs (it is a sync
-            // session by construction — `.resync` is only ever produced at `.beforeSync`) and the
-            // driver asks the engine again at the edge, where the newly scanned data may well have
-            // cleared the obstruction with the user none the wiser.
-            LoggerProxy.event(
-                "\(Self.logTag) attention on transaction \(id) — syncing and re-asking before involving the user"
-            )
-            return MigrationStepVerdict.resyncing(id: id)
-
-        case let MigrationStepAction.escalateAttention(id):
-            // Attention survived a full sync. This is the honest hand-off: the run needs a decision
-            // the app cannot take, and the route/banner will carry the user to the one screen whose
-            // button discharges it.
-            LoggerProxy.event(
-                "\(Self.logTag) ⚠ attention on transaction \(id) SURVIVED a sync — the user must re-plan this run"
-            )
-            await reconcile()
-            return MigrationStepVerdict.needsUser(MigrationStepBlocker.attentionNeedsNewPlan(id: id))
-
         case MigrationStepAction.replan:
-            // The engine named it outright — no sync, no id, no inference. The hand-off is the same
-            // one `.escalateAttention` makes (the banner reads "Update migration plan" and the
+            // The engine named it outright — no sync, no id, no inference. The hand-off is the
+            // one the retired escalate arm used to make (the banner reads "Update migration plan" and the
             // re-entry route lands on the re-plan lane); what differs is that it happens on the
             // FIRST answer rather than after a wasted pass, and the log line can say why without
             // naming a transaction the engine never named.

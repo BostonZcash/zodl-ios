@@ -166,20 +166,20 @@ import Testing
         #expect(Self.banner(advanceStep: .rebuild(id: 1), transferRows: rows) == .transfersExpired(first: 1, last: 1))
     }
 
-    // MARK: - The engine's own attention step (SDK addendum §2)
+    // MARK: - The engine's own replan step (SDK addendum §2; split vocabulary 2026-08-08)
 
-    /// Upstream surfaces `.requiresAttention(id:)` FIRST, ahead of every actionable step, when a
-    /// transaction was marked dead by an observed event. The app honours that ordering rather than
-    /// re-deriving it — and lands on the same run-level banner the coverage signal produces, because
-    /// "your plan needs redoing" is a statement about the run either way.
-    @Test func theEnginesAttentionStepSurfacesAsUpdatePlan() {
-        #expect(Self.banner(advanceStep: .requiresAttention(id: 3), progress: Self.progress()) == .updatePlan)
+    /// Upstream surfaces `.replan` when the run's plan was undercut past its committed threshold.
+    /// The app honours that verdict rather than re-deriving it — and lands on the same run-level
+    /// banner the coverage signal produces, because "your plan needs redoing" is a statement about
+    /// the run either way.
+    @Test func theEnginesReplanStepSurfacesAsUpdatePlan() {
+        #expect(Self.banner(advanceStep: .replan, progress: Self.progress()) == .updatePlan)
     }
 
     /// It needs no help from the app's own invalidation read — the engine already decided.
-    @Test func theAttentionStepDoesNotNeedTheAppsOwnInvalidFlag() {
-        let withFlag = Self.banner(advanceStep: .requiresAttention(id: 3), hasInvalid: true)
-        let withoutFlag = Self.banner(advanceStep: .requiresAttention(id: 3), hasInvalid: false)
+    @Test func theReplanStepDoesNotNeedTheAppsOwnInvalidFlag() {
+        let withFlag = Self.banner(advanceStep: .replan, hasInvalid: true)
+        let withoutFlag = Self.banner(advanceStep: .replan, hasInvalid: false)
         #expect(withFlag == withoutFlag)
     }
 
@@ -266,7 +266,8 @@ import Testing
         .rebuild(id: 1),
         .waiting,
         .complete,
-        .requiresAttention(id: 1)
+        .replan,
+        .reevaluate
     ])
     func everyAdvanceStepProducesABanner(step: MigrationAdvanceStep) {
         #expect(Self.banner(advanceStep: step, progress: Self.progress()) != nil)

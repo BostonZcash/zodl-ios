@@ -1041,7 +1041,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: { Self.atTipState() },
                 isSyncing: { false },
-                migrationAdvanceStep: { _ in MigrationAdvance(step: .requiresAttention(id: 2), next: nil) },
+                migrationAdvanceStep: { _ in MigrationAdvance(step: .replan, next: nil) },
                 migrationTransactionStatuses: { _ in [] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
@@ -1060,12 +1060,13 @@ import ComposableArchitecture
                 gateStorage: Self.freshGateStorage(mode: .privateScheduled),
                 sessionOrdinalProvider: { 1 }
             )
-            // `.afterSync` — the phase whose plan escalates surviving attention to `.needsUser`.
+            // `.afterSync` — `.replan` answers `.needsUser(runNeedsReplan)` at any phase; the
+            // edge is simply where this test drives it.
             return await manager.advance(phase: .afterSync)
         }
 
         guard case .needsUser = verdict else {
-            Issue.record("attention at .afterSync must escalate to .needsUser, got \(verdict)")
+            Issue.record("replan at .afterSync must land on .needsUser, got \(verdict)")
             return
         }
         #expect(scheduled.value.count == 1, "the blocked run must arm exactly one poke")

@@ -157,12 +157,12 @@ import Testing
         #expect(route == .recovery(isExpired: true))
     }
 
-    /// …and the same for attention, which likewise had no automatic route to its own discharge.
-    @Test func anAttentionStepRoutesToRecovery() {
+    /// …and the same for replan, which likewise has no automatic route to its own discharge.
+    @Test func aReplanStepRoutesToRecovery() {
         let route = Self.route(
             state: .requiresAttention(.invalidTransfer),
             hasOverdue: false,
-            advanceStep: .requiresAttention(id: 2)
+            advanceStep: .replan
         )
 
         #expect(route == .recovery(isExpired: false))

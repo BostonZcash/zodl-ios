@@ -519,7 +519,7 @@ extension Root {
                 // already sends after a manual delivery (see `RootCoordinator.swift`) — harmless
                 // when nothing visibly changed, since the re-read just returns the same variant.
                 case MigrationStepVerdict.broadcast, MigrationStepVerdict.rebuilt, MigrationStepVerdict.needsUser,
-                     MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved,
+                     MigrationStepVerdict.failed, MigrationStepVerdict.proved,
                      MigrationStepVerdict.reevaluating:
                     return .send(.home(.smartBanner(.migrationReevaluationRequested)))
                 // Quiet: nothing changed, and arming/logging already handled the rest inside the
@@ -771,7 +771,7 @@ extension Root {
                             // THE DRIVER, on the sync branch too. `visitKind()` above answers only
                             // "may this session sync?"; this is where the engine's actual next step
                             // gets discharged. On a sync visit most steps defer to the post-sync
-                            // edge — but `.requiresAttention` and `.complete` are answered here, the
+                            // edge — but `.replan`/`.reevaluate` and `.complete` are answered here, the
                             // wake-ups are re-armed here, and, crucially, this open now LOGS a
                             // verdict whether or not it did anything. A session that did nothing and
                             // said nothing is indistinguishable from a frozen app.

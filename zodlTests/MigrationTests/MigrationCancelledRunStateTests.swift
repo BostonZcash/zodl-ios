@@ -116,7 +116,7 @@ import Testing
     }
 
     /// The flag never reaches a LIVE run. `hasInvalidTransfers` and the engine's own
-    /// `.requiresAttention` both answer ahead of the terminal arm, and a driving step never gets
+    /// `.replan` both answer ahead of the terminal arm, and a driving step never gets
     /// there at all — so a marker that somehow outlived its run cannot hijack an active migration.
     @Test func theFlagCannotAffectALiveRun() {
         #expect(
@@ -130,7 +130,7 @@ import Testing
         )
         #expect(
             MigrationState.derive(
-                advanceStep: .requiresAttention(id: 3),
+                advanceStep: .replan,
                 progress: nil,
                 statuses: [],
                 hasInvalidTransfers: false,
