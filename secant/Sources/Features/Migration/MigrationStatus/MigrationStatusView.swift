@@ -91,8 +91,9 @@ struct MigrationStatusView: View {
                         // restored). The values are the wallet's REAL per-pool balances off the
                         // same snapshot the timeline below renders from. Pool accounting and row
                         // status remain independent SDK facts, so no render gate or app-side
-                        // reconciliation is applied. `.progress` only: the resume and
-                        // re-scheduling frames don't draw it.
+                        // reconciliation is applied. EVERY presentation draws it (re-ruled by
+                        // Lukas, 2026-08-08 — omitting it on the resume frame was a bug, not a
+                        // design): the pool split is the run's standing fact, true in every frame.
                         // Handover O2: no session has published a snapshot yet (first open of the
                         // process while migration work holds the DB actor). The screen is HERE —
                         // title above, back arrow live — only the data zone waits. Anything is
@@ -101,14 +102,12 @@ struct MigrationStatusView: View {
                         if store.isEvaluating {
                             evaluatingNote
                         } else {
-                        if store.presentation == .progress {
-                            MigrationPoolFlowHeader(
-                                orchardRemaining: store.poolFlow.orchardRemaining,
-                                ironwoodHeld: store.poolFlow.ironwoodHeld,
-                                currencyConversion: currencyConversion
-                            )
-                            .padding(.bottom, 24)
-                        }
+                        MigrationPoolFlowHeader(
+                            orchardRemaining: store.poolFlow.orchardRemaining,
+                            ironwoodHeld: store.poolFlow.ironwoodHeld,
+                            currencyConversion: currencyConversion
+                        )
+                        .padding(.bottom, 24)
 
                         MigrationTransferTimeline(
                             rows: store.rows,
@@ -234,14 +233,18 @@ struct MigrationStatusView: View {
         }
     }
 
-    /// `nil` hides the description entirely — reached only by `.progress` when
-    /// `store.totalDurationHours` is unknown (a W1 fallback re-entry, MOB-1513): the sentence is a
+    /// `nil` hides the description entirely — reached only when `store.totalDurationHours` is
+    /// unknown (a W1 fallback re-entry, MOB-1513): the sentence is a
     /// single fixed-shape localized string carrying the duration as a numeric argument, so there is
     /// no in-sentence placeholder ("—") to substitute without inventing new copy: omitting the
     /// whole line is the honest option that doesn't imply a false duration.
     private var description: String? {
         switch store.presentation {
-        case .progress:
+        case .progress, .resume:
+            // `.resume` joined this arm 2026-08-08 (Lukas), closing the gap the 08-07 send-now
+            // retirement left empty: the resume frame states the SAME standing arrangement as
+            // progress — how the balance is split, and that we will call you — while the overdue
+            // "why" stays on the timeline's own row caption.
             guard let totalDurationHours = store.totalDurationHours else { return nil }
             // H-FORK (Lukas, 2026-08-07): same stem, three tails, chosen by the SAME
             // `MigrationBannerVariant` the banner renders from — never by a condition of this
@@ -253,7 +256,7 @@ struct MigrationStatusView: View {
             // (shared stem + tail) hands translators half-sentences AND needs interpolation to
             // dodge SwiftLint's `string_concatenation`.
             //
-            // Only these four variants reach `.progress`: `.checkingStatus` no longer opens this
+            // Only these four variants reach this arm: `.checkingStatus` no longer opens this
             // screen at all, and `hasInvalid` routes to `.recovery` ahead of every state arm, so
             // `.updatePlan`/`.transfersExpired` land there instead. `default` therefore states the
             // standing arrangement — true whenever nothing is running — rather than inventing an
@@ -280,12 +283,6 @@ struct MigrationStatusView: View {
             return String(
                 localizable: .migrationStatusDesc(store.rows.count, totalDurationHours, store.remainingCount)
             )
-        case .resume:
-            // 2026-08-07: the resume description ("…wasn't sent. Send it now.") retired with the
-            // Send-now surface — the copy instructed a control that no longer exists. The
-            // timeline's own "Overdue · Nh ago" row caption carries the why; what (if anything)
-            // replaces this line is product's (ERROR_HANDLING / B8-fate thread).
-            return nil
         case .rescheduleConfirmed(let first, let last):
             return String(localizable: .migrationStatusRescheduledDesc(first, last))
         }
