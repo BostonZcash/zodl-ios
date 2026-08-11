@@ -36,20 +36,14 @@ import Testing
         #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .beforeSync) == .nothing(.wrongPhase))
     }
 
-    /// `.requiresAttention` gets the CHEAP half of its discharge first — sync and ask again — because
-    /// the engine adjudicates against scanned data and the obstruction is often transient. Involving
-    /// the user before trying that is how an attention state becomes a support ticket.
-    @Test func attentionSyncsAndReAsksBeforeInvolvingTheUser() {
-        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .beforeSync) == .resync(id: 2))
-    }
-
-    /// …and only escalates once it has survived that sync. This is the pair that makes attention
-    /// self-clearing whenever it can be.
-    @Test func attentionEscalatesOnlyAfterItSurvivedASync() {
-        #expect(
-            MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .afterSync)
-                == .escalateAttention(id: 2)
-        )
+    /// The split vocabulary at the SDK-typed entry point (2026-08-08, replacing the retired
+    /// collapsed bucket's sync-then-escalate pair): `.replan` enters the re-plan lane in EVERY
+    /// phase — the verdict is persisted, no sync changes it — and `.reevaluate` syncs at
+    /// `.beforeSync`.
+    @Test func replanAndReevaluateRouteDirectlyAtTheSdkTypedEntryPoint() {
+        #expect(MigrationStepPlan.action(for: MigrationAdvanceStep.replan, phase: .beforeSync) == .replan)
+        #expect(MigrationStepPlan.action(for: MigrationAdvanceStep.replan, phase: .afterSync) == .replan)
+        #expect(MigrationStepPlan.action(for: MigrationAdvanceStep.reevaluate, phase: .beforeSync) == .reevaluate)
     }
 
     // MARK: - ZIP 318 session separation, enforced structurally
@@ -139,12 +133,13 @@ import Testing
         #expect(MigrationStepPlan.action(for: .broadcast(MigrationBroadcastInstruction(id: 5)), phase: .tick) == .broadcast(MigrationBroadcastInstruction(id: 5)))
     }
 
-    /// Proving, rebuilding, and attention all stay pinned to the two moments that bracket an actual
-    /// sync. A tick runs no sync of its own, so none of the three gains a new discharge here — only
-    /// the phase check stands between them and the open/edge that already owns them.
-    @Test func tickDefersRebuildAndAttentionToTheOpensAndEdges() {
+    /// Proving, rebuilding, and reevaluation all stay pinned to the two moments that bracket an
+    /// actual sync. A tick runs no sync of its own, so none of the three gains a new discharge
+    /// here — only the phase check stands between them and the open/edge that already owns them.
+    /// (`.replan` is the deliberate exception — phase-independent, pinned in the replan suite.)
+    @Test func tickDefersRebuildAndReevaluateToTheOpensAndEdges() {
         #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
-        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: MigrationAdvanceStep.reevaluate, phase: .tick) == .nothing(.wrongPhase))
     }
 
     // MARK: - The unconditional tick prove (FIND-5, 2026-08-05)
@@ -173,7 +168,7 @@ import Testing
 
         #expect(MigrationStepPlan.action(for: transfer, phase: .beforeSync) == .nothing(.wrongPhase))
         #expect(MigrationStepPlan.action(for: .rebuild(id: 7), phase: .tick) == .nothing(.wrongPhase))
-        #expect(MigrationStepPlan.action(for: .requiresAttention(id: 2), phase: .tick) == .nothing(.wrongPhase))
+        #expect(MigrationStepPlan.action(for: MigrationAdvanceStep.reevaluate, phase: .tick) == .nothing(.wrongPhase))
     }
 
     /// The two answers that never depended on a phase in the first place stay that way with a third
@@ -200,7 +195,8 @@ import Testing
             .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
             .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
             .rebuild(id: 1),
-            .requiresAttention(id: 1),
+            .replan,
+            .reevaluate,
             .waiting,
             .complete
         ]
@@ -248,7 +244,7 @@ import Testing
             [.waiting],
             [.broadcast(MigrationBroadcastInstruction(id: 1))],
             [.prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]), .broadcast(MigrationBroadcastInstruction(id: 2))],
-            [.rebuild(id: 1), .requiresAttention(id: 2)]
+            [.rebuild(id: 1), .replan]
         ]
 
         for steps in cases {

@@ -119,12 +119,6 @@ enum MigrationStepAction: Equatable, Sendable {
     /// Rebuild the expired transfer in place. `.afterSync` only: the rebuilt rows are re-anchored
     /// against the current tip, so a stale tip would rebuild them straight back into staleness.
     case rebuild(id: UInt32)
-    /// The engine wants more scanned data before it will adjudicate. Sync and ask again — this IS
-    /// the documented first discharge of `.requiresAttention`, and it costs the user nothing.
-    case resync(id: UInt32)
-    /// Attention SURVIVED a full sync: the obstruction is not transient and the run needs a
-    /// decision only the user can take. Surface it; never sit on it.
-    case escalateAttention(id: UInt32)
     /// The engine says the PLAN needs replacing (`MigrationEngineAnswer.replan`). Hand off to the
     /// re-plan lane immediately — no sync first, and NO transaction id, because the verdict is
     /// about the run rather than any one row.
@@ -161,13 +155,9 @@ enum MigrationStepBlocker: Equatable, Sendable {
     /// `.rebuild` on a Keystone account: the rebuilt rows come back unsigned and need the signing
     /// ceremony. Only the user can run it.
     case rebuildNeedsSignature(id: UInt32)
-    /// `.requiresAttention` survived a full sync: a funding note left the wallet, or a broadcast was
-    /// rejected outright. Amounts change, so a new plan needs the user's consent.
-    case attentionNeedsNewPlan(id: UInt32)
-    /// The engine answered `.replan` outright: the plan's unsatisfiable share passed its replan
-    /// threshold, or dead value would be stranded. Amounts change, so the new plan needs the
-    /// user's consent — same lane as `attentionNeedsNewPlan`, but named by the engine rather than
-    /// inferred from a survived sync, and carrying NO id (the verdict names no transaction).
+    /// The engine answered `.replan`: the plan's unsatisfiable share passed its replan threshold,
+    /// or dead value would be stranded. Amounts change, so the new plan needs the user's consent.
+    /// Carries NO id — the verdict names no transaction.
     case runNeedsReplan
     /// The engine reports rows as ready-to-prove and the sweep proves none of them, repeatedly.
     /// Staying in the app does not help, so the app must stop asking the user to.
@@ -210,11 +200,10 @@ enum MigrationStepPlan {
 
     /// The decision table itself, over the APP's answer vocabulary rather than the SDK's step.
     ///
-    /// The indirection buys one thing and costs nothing: `MigrationEngineAnswer` distinguishes
-    /// upstream's `Replan` and `Reevaluate`, which the conduit currently folds into a single
-    /// `.requiresAttention(id:)` (see `MigrationEngineAnswer`'s header). Their two rows below are
-    /// therefore REAL and TESTED now, and go live the moment the SDK splits the case — no table
-    /// change, no new tests, nothing to remember.
+    /// The two vocabularies are 1:1 since the SDK split `.replan` / `.reevaluate` out of the
+    /// retired Attend collapse (2026-08-08): the two rows below were built and tested against
+    /// exactly this moment and went live without a table change (see `MigrationEngineAnswer`'s
+    /// header).
     ///
     /// Still exhaustive with no `default:`, for the same reason as ever.
     static func action(
@@ -298,13 +287,12 @@ enum MigrationStepPlan {
             // a replan against state it has ALREADY persisted — the unsatisfiable share of planned
             // transfer value strictly exceeds the committed replan threshold, or dead value would
             // be stranded — so the answer cannot change because the wallet scanned more blocks.
-            // Routed through the collapsed attention bucket it cost the user a whole sync pass
-            // staring at a run that was already finished deciding.
+            // Routed through the retired collapsed attention bucket it used to cost the user a
+            // whole sync pass staring at a run that was already finished deciding.
             //
-            // Every phase answers the same, tick included. The tick deferral that `.rebuild` and
-            // the collapsed bucket below use exists to keep a 30s timer from re-anchoring work or
-            // ambushing the user with an escalation the next open would make anyway; neither
-            // applies here. The banner is ALREADY saying "Update migration plan" (the state
+            // Every phase answers the same, tick included. The tick deferral that `.rebuild`
+            // uses exists to keep a 30s timer from re-anchoring work behind a tip the tick has
+            // not moved; that does not apply here. The banner is ALREADY saying "Update migration plan" (the state
             // derivation reads the same answer), so a deferring tick would not spare the user
             // anything — it would only leave the driver's own record of WHY the run stopped
             // un-written until the next open.
@@ -330,26 +318,6 @@ enum MigrationStepPlan {
                 return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
             }
 
-        case let MigrationEngineAnswer.attentionCollapsed(id):
-            switch phase {
-            case MigrationOpenPhase.beforeSync:
-                // The SDK's own discharge, in two beats: SYNC and re-ask, because the engine
-                // adjudicates against scanned data and the obstruction is often transient; only if
-                // it survives that sync does the user get involved. Doing the cheap automatic half
-                // first is what keeps an attention state from becoming a support ticket.
-                //
-                // Under the collapse this is also the SAFE reading of an ambiguous answer: a
-                // reevaluate gets exactly what it asked for, and a replan pays one wasted pass.
-                // The reverse guess would discard a live run's pre-signed transfers.
-                return MigrationStepAction.resync(id: id)
-            case MigrationOpenPhase.afterSync:
-                return MigrationStepAction.escalateAttention(id: id)
-            case MigrationOpenPhase.tick:
-                // A tick cannot run the cheap sync-and-re-ask half (it has no sync of its own) and
-                // must not escalate to the user off the back of a 30s timer either — both remain
-                // the opens'/edge's business, exactly as `.prove`/`.rebuild` do above.
-                return MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
-            }
 
         case MigrationEngineAnswer.waiting:
             return MigrationStepAction.armWakeups

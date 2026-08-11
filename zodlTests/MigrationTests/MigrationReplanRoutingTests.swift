@@ -84,25 +84,27 @@ import Testing
     /// the broadcast — which can span sessions. Escalating it would tell the user to re-plan a
     /// perfectly live run whose transfers are all intact.
     @Test func reevaluateNeverEscalatesToTheUser() {
-        for phase in [MigrationOpenPhase.beforeSync, .afterSync, .tick] {
+        #expect(MigrationStepPlan.action(for: MigrationEngineAnswer.reevaluate, phase: .beforeSync) == .reevaluate)
+        for phase in [MigrationOpenPhase.afterSync, .tick] {
             let action = MigrationStepPlan.action(for: MigrationEngineAnswer.reevaluate, phase: phase)
-            if case MigrationStepAction.escalateAttention = action {
-                Issue.record("reevaluate escalated to the user at \(phase)")
-            }
+            #expect(
+                action == .nothing(.wrongPhase),
+                "reevaluate after a sync ends the session honestly — it never escalates"
+            )
             #expect(action != MigrationStepAction.replan, "reevaluate must never enter the re-plan lane")
         }
     }
 
-    /// NEITHER LANE CARRIES AN ID, because neither upstream step names a transaction — the conduit
-    /// synthesises one today (falling back to transfer `0`). The app's actions are id-free by
-    /// construction, so no invented id can reach a surface through them.
+    /// NEITHER LANE CARRIES AN ID, because neither upstream step names a transaction — the retired
+    /// collapsed conduit used to synthesise one (falling back to transfer `0`). The app's actions
+    /// are id-free by construction, so no invented id can reach a surface through them.
     @Test func neitherLaneCarriesATransactionId() {
         let replan = MigrationStepPlan.action(for: MigrationEngineAnswer.replan, phase: .beforeSync)
         let reevaluate = MigrationStepPlan.action(for: MigrationEngineAnswer.reevaluate, phase: .beforeSync)
 
         for action in [replan, reevaluate] {
             switch action {
-            case .rebuild(let id), .resync(let id), .escalateAttention(let id):
+            case .rebuild(let id):
                 Issue.record("an id-free engine answer produced an id-carrying action (\(id))")
             case .broadcast(let instruction):
                 // Since 2026-08-07 the broadcast action carries the crank's opaque instruction
@@ -218,8 +220,9 @@ import Testing
 
     // MARK: - The translation point, and the regression guard on it
 
-    /// Every step the SDK can hand us today maps VERBATIM. When `.replan`/`.reevaluate` land, the
-    /// two new arms join this list and `.attentionCollapsed` leaves it.
+    /// Every step the SDK can hand us maps VERBATIM — `.replan`/`.reevaluate` included since the
+    /// 2026-08-08 split (the two arms this suite was written to receive; `.attentionCollapsed`
+    /// left the list with the collapse).
     @Test func theTranslationIsVerbatim() {
         let target = MigrationProveTarget(id: 7, kind: .transfer(crossing: 1))
 
@@ -229,38 +232,8 @@ import Testing
         #expect(MigrationEngineAnswer(step: .rebuild(id: 4)) == .rebuild(id: 4))
         #expect(MigrationEngineAnswer(step: .waiting) == .waiting)
         #expect(MigrationEngineAnswer(step: .complete) == .complete)
+        #expect(MigrationEngineAnswer(step: .replan) == .replan)
+        #expect(MigrationEngineAnswer(step: .reevaluate) == .reevaluate)
     }
 
-    /// THE INTERIM CONTRACT, and a guess this suite explicitly forbids: today's collapsed answer is
-    /// NOT read as a replan. It could be either upstream step, and reading a `Reevaluate` as a
-    /// replan would discard a live run's pre-signed transfers over a rejection the next sync would
-    /// have adjudicated. So it stays ambiguous until the SDK can tell us which one it is.
-    @Test func theCollapsedBucketIsNotGuessedToBeAReplan() {
-        let answer = MigrationEngineAnswer(step: .requiresAttention(id: 9))
-
-        #expect(answer == .attentionCollapsed(id: 9))
-        #expect(answer != .replan, "an ambiguous attention answer must never be assumed to be a replan")
-    }
-
-    /// AND ITS BEHAVIOUR IS UNCHANGED. The collapsed bucket keeps the exact sync-then-escalate
-    /// table it had before this change, so nothing about today's builds moves until nuttycom's
-    /// split lands.
-    @Test func theCollapsedBucketKeepsItsOldBehaviourVerbatim() {
-        let collapsed = MigrationEngineAnswer.attentionCollapsed(id: 5)
-
-        #expect(MigrationStepPlan.action(for: collapsed, phase: .beforeSync) == MigrationStepAction.resync(id: 5))
-        #expect(
-            MigrationStepPlan.action(for: collapsed, phase: .afterSync)
-                == MigrationStepAction.escalateAttention(id: 5)
-        )
-        #expect(
-            MigrationStepPlan.action(for: collapsed, phase: .tick)
-                == MigrationStepAction.nothing(MigrationStepHold.wrongPhase)
-        )
-        #expect(
-            MigrationStepPlan.action(for: MigrationAdvanceStep.requiresAttention(id: 5), phase: .beforeSync)
-                == MigrationStepAction.resync(id: 5),
-            "the SDK-typed entry point must agree with the answer-typed one"
-        )
-    }
 }

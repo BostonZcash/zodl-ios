@@ -16,7 +16,6 @@ struct IronwoodAnnouncement {
 
     enum Action: BindableAction, Equatable {
         case binding(BindingAction<IronwoodAnnouncement.State>)
-        case learnMoreTapped
         case guideTapped
         case continueTapped
     }
@@ -33,15 +32,12 @@ struct IronwoodAnnouncement {
             case .binding:
                 return .none
 
-            case .learnMoreTapped:
-                state.isInAppBrowserOn = true
-                return .none
-
             case .guideTapped:
-                // Mirrors `learnMoreTapped` exactly: both just open the same article in the
-                // in-app browser. Opening the guide is deliberately NOT acknowledgement of the
-                // announcement — only `continueTapped` writes the keychain flag below, so this
-                // case must never touch `walletStorage`.
+                // The ONE route to the support article since the duplicate `learnMoreTapped`
+                // button was removed (2026-08-08) — the two arms were identical. Opening the
+                // guide is deliberately NOT acknowledgement of the announcement: only
+                // `continueTapped` writes the keychain flag below, so this case must never
+                // touch `walletStorage`.
                 state.isInAppBrowserOn = true
                 return .none
 

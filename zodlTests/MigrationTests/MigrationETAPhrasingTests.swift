@@ -26,10 +26,25 @@ import Testing
     // change this phrasing at all; pinned against both the generated accessor AND the literal
     // English copy, so a routing regression and an accidental catalog edit both fail loudly.
 
-    @Test func bareReadyNowIsUnprefixed() {
+    /// MOB-1466 (Lukas's ruling, 2026-08-08): an ARRIVED window on a post-commit surface says
+    /// "Recomputing ETA…", not "Ready now" — there is no "ready now" PHASE, and the frames have
+    /// the string only in the `.replan` and expiry flows. The engine's overdue re-spread gives
+    /// every pending row a new height on the next `advance_migration`, so this states a real gap
+    /// rather than inviting an action ZIP 318 permits only one row to take.
+    @Test func bareArrivedWindowSaysRecomputing() {
         let caption = MigrationETA.caption(minutesFromNow: 0, phrasing: .bare)
-        #expect(caption == String(localizable: .migrationPlanReadyNow))
-        #expect(caption == "Ready now")
+        #expect(caption == String(localizable: .migrationPlanEtaRecomputing))
+        #expect(caption == "Recomputing ETA…")
+    }
+
+    /// The same answer the UNKNOWN-TIP case gives, and deliberately so: both are "no forward time
+    /// to state, one is coming". If these ever diverge, one of the two situations has quietly
+    /// grown a second meaning.
+    @Test func arrivedAndUnknownTipGiveTheSameBareAnswer() {
+        #expect(
+            MigrationETA.caption(minutesFromNow: 0, phrasing: .bare)
+                == MigrationETA.caption(minutesFromNow: nil, phrasing: .bare)
+        )
     }
 
     @Test(arguments: [1, 30, 59]) func bareMinutesHasNoStartsOrInPrefix(minutes: Int) {
@@ -48,10 +63,11 @@ import Testing
     // MARK: - .inPrefixed — kept pinned as a real, still-supported case even though no screen calls
     // it with this phrasing after MOB-1466 rewires the pre-commit screen to `.plan`.
 
-    @Test func inPrefixedReadyNowIsUnprefixed() {
-        // The readyNow bucket has only one non-`.plan` rendering — "now" never takes an "in ~"
-        // prefix regardless of which of the other two phrasings asked for it.
-        #expect(MigrationETA.caption(minutesFromNow: 0, phrasing: .inPrefixed) == "Ready now")
+    @Test func inPrefixedArrivedWindowSaysRecomputing() {
+        // The arrived bucket has only one non-`.plan` rendering, and it takes no "in ~" prefix:
+        // there is no number to prefix. Same answer whichever of the two post-commit phrasings
+        // asked for it.
+        #expect(MigrationETA.caption(minutesFromNow: 0, phrasing: .inPrefixed) == "Recomputing ETA…")
     }
 
     @Test(arguments: [1, 30, 59]) func inPrefixedMinutesLeadsWithIn(minutes: Int) {

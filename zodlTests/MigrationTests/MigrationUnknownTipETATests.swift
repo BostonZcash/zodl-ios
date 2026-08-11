@@ -57,16 +57,15 @@ import Testing
         }
     }
 
-    /// And a real zero still says "Ready now"/"Starts right away" — the caption did not lose the
-    /// ability to state that a transfer's turn has genuinely arrived.
-    @Test func realZeroStillCaptionsAsReady() {
+    /// The PRE-COMMIT screen still says "Starts right away" for a real zero — that string is a
+    /// designed frame in its own committal tense (see `MigrationETA.Phrasing.plan`), and the
+    /// 2026-08-08 ruling that retired "Ready now" from the post-commit surfaces deliberately did
+    /// not touch it. If this ever flips to "Recomputing ETA…", the Transfer Plan screen has started
+    /// telling a user who has not yet confirmed anything that a calculation is under way.
+    @Test func planZeroStillStartsRightAway() {
         #expect(
             MigrationETA.caption(minutesFromNow: 0, phrasing: .plan)
                 == String(localizable: .migrationPlanStartsRightAway)
-        )
-        #expect(
-            MigrationETA.caption(minutesFromNow: 0, phrasing: .bare)
-                == String(localizable: .migrationPlanReadyNow)
         )
     }
 

@@ -61,8 +61,6 @@ enum MigrationStepVerdict: Equatable, Sendable {
     case proved(count: Int)
     /// An expired transfer was rebuilt in place, without the user.
     case rebuilt(id: UInt32)
-    /// The engine wants more scanned data before it adjudicates. This session syncs and asks again.
-    case resyncing(id: UInt32)
     /// A broadcast this app made was rejected by a node whose chain view is ahead of this wallet's.
     /// This session syncs and the engine adjudicates on the next ask. Carries no id: upstream's
     /// `Reevaluate` names no transaction, and neither may we.
@@ -115,7 +113,6 @@ extension MigrationStepVerdict {
         case MigrationStepVerdict.broadcast,
              MigrationStepVerdict.proved,
              MigrationStepVerdict.rebuilt,
-             MigrationStepVerdict.resyncing,
              MigrationStepVerdict.reevaluating,
              MigrationStepVerdict.needsUser,
              MigrationStepVerdict.failed:
@@ -276,6 +273,33 @@ extension MigrationManagerImpl {
             // `.noRun` — "the engine could not be asked" and "there is nothing to do" must not
             // share a verdict (the latter self-cancels the tick loop).
             verdict = MigrationStepVerdict.failed("engine step read failed: \(stepReadFailure)")
+        }
+
+        // REEVALUATE IS "SYNC, THEN DO NOTHING" — nuttycom, 2026-08-08, reviewing the split at SDK
+        // 93a11081: "this does reintroduce the sync-then-possibly-send identifiable behavior that
+        // we don't want. I would prefer that 'reevaluate' operate as 'sync, then do nothing.'"
+        //
+        // The whole content of a `.reevaluate` is "this wallet's chain view is behind the node that
+        // rejected a broadcast; let this session sync". It is only ever discharged at
+        // `.beforeSync`. Left alone, the sync-completion edge then drives `.afterSync` on the SAME
+        // open — and the engine, now holding the data it was waiting for, may well answer
+        // `.broadcast`. That is a sync followed within seconds by a submission over one wire: the
+        // same correlation SIGNATURE the deleted post-broadcast buffer was removed for, pointing
+        // the other way. Nothing about it is fixed by spacing, so nothing here is timed.
+        //
+        // The session therefore SPENDS its `.afterSync` credit, unused. The edge still fires and
+        // still syncs; R0's own gate answers `.skipped` when it asks to drive, and whatever the
+        // engine now wants is served by the next open — a session that has no sync attached to it.
+        // Burning the credit rather than adding a second suppression flag keeps one mechanism in
+        // charge of "may this lane drive?", which is the property R0 exists to hold.
+        if phase == MigrationOpenPhase.beforeSync,
+           verdict == MigrationStepVerdict.reevaluating,
+           let sessionOrdinal = sessionOrdinalProvider() {
+            openLaneCredits.withLock { $0.afterSyncSpentSession = sessionOrdinal }
+            LoggerProxy.event(
+                "\(Self.logTag) reevaluate: this session syncs and STOPS — the post-sync edge is spent, so nothing broadcasts behind the sync"
+            )
+            MigrationTrace.event("reevaluate — sync, then nothing (afterSync lane spent)")
         }
 
         // MOB-1466: LOG HYGIENE. A quiet `.tick` verdict — nothing changed, nothing needed the user
@@ -759,29 +783,9 @@ extension MigrationManagerImpl {
         case let MigrationStepAction.rebuild(id):
             return await executeRebuild(id: id, accountUUID: accountUUID)
 
-        case let MigrationStepAction.resync(id):
-            // The cheap automatic half of `.requiresAttention`: this session syncs (it is a sync
-            // session by construction — `.resync` is only ever produced at `.beforeSync`) and the
-            // driver asks the engine again at the edge, where the newly scanned data may well have
-            // cleared the obstruction with the user none the wiser.
-            LoggerProxy.event(
-                "\(Self.logTag) attention on transaction \(id) — syncing and re-asking before involving the user"
-            )
-            return MigrationStepVerdict.resyncing(id: id)
-
-        case let MigrationStepAction.escalateAttention(id):
-            // Attention survived a full sync. This is the honest hand-off: the run needs a decision
-            // the app cannot take, and the route/banner will carry the user to the one screen whose
-            // button discharges it.
-            LoggerProxy.event(
-                "\(Self.logTag) ⚠ attention on transaction \(id) SURVIVED a sync — the user must re-plan this run"
-            )
-            await reconcile()
-            return MigrationStepVerdict.needsUser(MigrationStepBlocker.attentionNeedsNewPlan(id: id))
-
         case MigrationStepAction.replan:
-            // The engine named it outright — no sync, no id, no inference. The hand-off is the same
-            // one `.escalateAttention` makes (the banner reads "Update migration plan" and the
+            // The engine named it outright — no sync, no id, no inference. The hand-off is the
+            // one the retired escalate arm used to make (the banner reads "Update migration plan" and the
             // re-entry route lands on the re-plan lane); what differs is that it happens on the
             // FIRST answer rather than after a wasted pass, and the log line can say why without
             // naming a transaction the engine never named.

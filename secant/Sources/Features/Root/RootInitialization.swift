@@ -519,7 +519,7 @@ extension Root {
                 // already sends after a manual delivery (see `RootCoordinator.swift`) — harmless
                 // when nothing visibly changed, since the re-read just returns the same variant.
                 case MigrationStepVerdict.broadcast, MigrationStepVerdict.rebuilt, MigrationStepVerdict.needsUser,
-                     MigrationStepVerdict.failed, MigrationStepVerdict.resyncing, MigrationStepVerdict.proved,
+                     MigrationStepVerdict.failed, MigrationStepVerdict.proved,
                      MigrationStepVerdict.reevaluating:
                     return .send(.home(.smartBanner(.migrationReevaluationRequested)))
                 // Quiet: nothing changed, and arming/logging already handled the rest inside the
@@ -771,7 +771,7 @@ extension Root {
                             // THE DRIVER, on the sync branch too. `visitKind()` above answers only
                             // "may this session sync?"; this is where the engine's actual next step
                             // gets discharged. On a sync visit most steps defer to the post-sync
-                            // edge — but `.requiresAttention` and `.complete` are answered here, the
+                            // edge — but `.replan`/`.reevaluate` and `.complete` are answered here, the
                             // wake-ups are re-armed here, and, crucially, this open now LOGS a
                             // verdict whether or not it did anything. A session that did nothing and
                             // said nothing is indistinguishable from a frozen app.
@@ -1279,7 +1279,22 @@ extension Root {
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
-                    .send(.loadSwapAPIAccess)
+                    .send(.loadSwapAPIAccess),
+                    // MOB-1466 (Lukas's ruling, 2026-08-09): THE MOMENT the banner has been waiting
+                    // for. Selecting the account above is what makes the migration question
+                    // answerable, and `SmartBanner.evaluatePriority1` now refuses to walk before it
+                    // (see that arm for the whole failure). The kick in
+                    // `.registerForSynchronizersUpdate` still serves every FOREGROUND pass, where the
+                    // account is already loaded; this is the cold-start counterpart, and it is the
+                    // same ordering discipline `.fetchTransactionsForTheSelectedAccount` above already
+                    // follows for the same reason — that call's own comment records this exact hazard
+                    // ("on a cold start `selectedWalletAccount` (in-memory) is nil until that
+                    // selection"). The banner's ladder simply never got the same treatment.
+                    //
+                    // Sent unconditionally: a duplicate walk is harmless (the ladder is idempotent —
+                    // it re-reads and re-seats the same occupant), while a missed one costs the whole
+                    // launch, which is precisely the bug.
+                    .send(.home(.smartBanner(.evaluatePriority1)))
                 )
 
             case .resolveMetadataEncryptionKeys:

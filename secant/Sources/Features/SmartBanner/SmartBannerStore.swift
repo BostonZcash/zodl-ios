@@ -669,6 +669,39 @@ struct SmartBanner {
 
                 // disconnected
             case .evaluatePriority1:
+                // MOB-1466 (Lukas's ruling, 2026-08-09) — THE LADDER WAITS FOR THE RIGHT MOMENT.
+                //
+                // Reported by almost everybody: at cold launch Currency Conversion appears first and
+                // migration replaces it 2-3 s later (Lukas), or 30 s and 80 s later (Andrea).
+                // Backgrounding and foregrounding raises migration instantly.
+                //
+                // `selectedWalletAccount` is `@Shared(.inMemory(...))`, seeded nil and populated only
+                // when Root's `.loadedWalletAccounts` selects an account. The ladder used to be kicked
+                // from `.registerForSynchronizersUpdate`, which is not ordered after that load — so on
+                // a cold start `.evaluatePriorityMigration` asked `bannerVariant(nil)`, the manager's
+                // own guard answered "no banner: no account selected", and that nil is a DECLINE
+                // indistinguishable from "this wallet has nothing to migrate". The walk continued to
+                // priority8 and currency conversion took the slot. The R3 claim gate could not save it
+                // either — it requires a NON-nil variant — so the user did not even get "Checking
+                // status…". Nothing re-ran the ladder when the account landed: `.walletAccountChanged`
+                // is sent only by `accountSwitchedEffect`, a SWITCH signal, not a LOADED one.
+                //
+                // Lukas: "it's a bug to ask migration without accounts being loaded … it's better to
+                // prolong time before any banner is rendered … simply wait for the right moment."
+                //
+                // GATING THE ONE ENTRY IS ENOUGH, and that is why this sits here rather than on the
+                // migration rung. The ladder is ORDERED — migration is asked before currency
+                // conversion by construction — so holding the single entry until the question is
+                // answerable makes every lower banner wait too, without teaching any of them about
+                // migration. Nothing seats early, so nothing has to be replaced.
+                //
+                // FAIL-CLOSED, deliberately: no account means no walk at all, not a walk that skips
+                // migration. A banner seated from an incomplete evaluation is the bug being fixed.
+                // Root re-sends this the moment accounts are known (`.loadedWalletAccounts`).
+                guard state.selectedWalletAccount != nil else {
+                    MigrationTrace.event("banner ladder HELD — no account yet; waiting for accounts to load")
+                    return .none
+                }
                 return .send(.evaluatePriority2)
 
                 // syncing error
@@ -1125,12 +1158,19 @@ struct SmartBanner {
         }
     }
 
-    /// THE BANNER MAP (Lukas, 2026-08-06): IDLE 1 (`.idle`, the notify line) is TERMINATION —
-    /// entered only when a pending state (`.transferSending`/`.preparing`) resolves to the quiet
-    /// at-open answer (`.idleCounts`) within one foreground session, and sticky until a non-idle
-    /// variant (or the next session's Evaluating) replaces it. The map, verbatim: *"NEVER rendered
-    /// as a result of any next_step calls or zodl open — always the transition pending state A →
-    /// finished; 'ok, I finished, now you can leave zodl'."* The derivation never returns `.idle`;
+    /// THE BANNER MAP (Lukas, 2026-08-06) as AMENDED 2026-08-08 (Andrea via Lukas): IDLE 1
+    /// (`.idle`, the notify line) is TERMINATION — entered only when a PREPARING pending state
+    /// resolves to the quiet at-open answer (`.idleCounts`) within one foreground session, and
+    /// sticky until a non-idle variant (or the next session's Evaluating) replaces it. The map,
+    /// verbatim: *"NEVER rendered as a result of any next_step calls or zodl open — always the
+    /// transition pending state A → finished; 'ok, I finished, now you can leave zodl'."*
+    ///
+    /// THE AMENDMENT reverses the map's own SENDING example: *"if preparation of send is in
+    /// progress and finishes, we say we'll notify you when to send, while if we're sending and
+    /// that finishes, we stay generic — N of M done."* So `.transferSending` termination passes
+    /// through untouched and settles on the counts idle: the notify promise is about the NEXT
+    /// send, and it is the prepare-then-wait rhythm that has one to promise — a finished send's
+    /// honest close-out is the progress readout. The derivation never returns `.idle`;
     /// this helper is its single production entry point, applied at both variant-apply sites.
     ///
     /// Only `.idleCounts` is convertible, deliberately: the split phase's resting counts arrive as
@@ -1178,7 +1218,7 @@ struct SmartBanner {
     ) -> MigrationBannerVariant {
         guard case .idleCounts = variant else { return variant }
         switch previous {
-        case .transferSending, .preparing:
+        case .preparing:
             return .idle
         case .idle:
             // Sticky: re-derivations keep answering `.idleCounts` for the rest of the session,

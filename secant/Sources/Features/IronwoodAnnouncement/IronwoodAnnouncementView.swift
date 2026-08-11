@@ -105,15 +105,14 @@ struct IronwoodAnnouncementView: View {
                 // the ScrollView above take over and scroll) when the content overflows.
                 Spacer()
 
-                // 9. Buttons, 12pt apart, pinned outside the scroll view.
-                VStack(alignment: .leading, spacing: Design.Spacing._lg) {
-                    ZashiButton(String(localizable: .ironwoodAnnouncementLearnMore), type: .tertiary) {
-                        store.send(.learnMoreTapped)
-                    }
-
-                    ZashiButton(String(localizable: .ironwoodAnnouncementContinue)) {
-                        store.send(.continueTapped)
-                    }
+                // 9. The screen's ONLY button, pinned outside the scroll view, and the only
+                // way to acknowledge the announcement. "Learn more" stood above it until
+                // 2026-08-08 (Lukas): it opened the very same support article the inline guide
+                // link opens — the store's own arms were byte-identical — so the duplicate was
+                // removed and the guide link is now the single route to the article. What
+                // remains is one dismiss.
+                ZashiButton(String(localizable: .ironwoodAnnouncementContinue)) {
+                    store.send(.continueTapped)
                 }
                 .padding(.bottom, Design.Spacing._3xl)
             }

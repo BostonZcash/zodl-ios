@@ -142,8 +142,6 @@ extension MigrationState {
         }
 
         switch advanceStep {
-        case .attentionCollapsed:
-            return .requiresAttention(.invalidTransfer)
         case .replan:
             // The engine says the PLAN needs replacing. `MigrationAttentionReason` names the
             // REMEDY, not the cause — `.invalidTransfer`'s remedy is "re-plan the remaining

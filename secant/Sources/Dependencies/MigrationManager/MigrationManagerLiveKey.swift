@@ -3780,11 +3780,8 @@ enum MigrationDerivations {
             // THE RE-PLAN LANE, named by the engine. Never `isExpired` — a replan is about the
             // plan's coverage, not about any transfer's expiry, so it lands on the notes-spent
             // screen (Figma C5) whose Continue discharges the run and re-plans. No
-            // `isTransferExpired` consultation: that read exists to disambiguate the COLLAPSED
-            // answer below, and there is nothing to disambiguate here.
+            // `isTransferExpired` consultation: a replan needs no disambiguation.
             return MigrationReentryRoute.recovery(isExpired: false)
-        case MigrationEngineAnswer.attentionCollapsed?:
-            return MigrationReentryRoute.recovery(isExpired: isTransferExpired(state))
         case MigrationEngineAnswer.reevaluate?:
             // DELIBERATELY NOT A ROUTE. The engine wants a sync, not a user — routing here would
             // hand the user a "re-plan this run" button for a live run whose transfers are all
@@ -4217,6 +4214,7 @@ enum MigrationDerivations {
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(seed.liveStatus, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
+                isAwaitingAnchorBoundary: seed.liveStatus?.blockedOn == MigrationTransactionStatus.Blocker.anchorBoundary,
                 // D4: real elapsed for the overdue caption (Figma B8 "Overdue · 5h ago").
                 overdueMinutesAgo: status == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: scheduledHeight, clock: clock)
@@ -4503,6 +4501,7 @@ enum MigrationDerivations {
                 minutesFromNow: minutesFromNow,
                 isPreparing: isPreparing(status, isProvingStalled: isProvingStalled),
                 isAwaitingRunDependencies: isAwaitingRunDependencies,
+                isAwaitingAnchorBoundary: status.blockedOn == MigrationTransactionStatus.Blocker.anchorBoundary,
                 // D4: real elapsed for the overdue caption, W1-fallback lane.
                 overdueMinutesAgo: rowStatus == MigrationTransferRow.Status.overdue
                     ? MigrationETA.overdueMinutes(scheduledHeight: status.scheduledHeight, clock: clock)

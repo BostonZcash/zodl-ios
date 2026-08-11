@@ -8546,13 +8546,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your Orchard funds stay until you move them. You can still spend them, but value leaving Orchard is public, so spending publishes an amount on-chain, and it can be larger than you send."
+            "value" : "Your Orchard funds stay yours until you move them. You can still spend them, but value leaving Orchard is public, so spending publishes an amount on-chain, and it can be larger than you send."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tus fondos en Orchard permanecen ahí hasta que los muevas. Puedes seguir gastándolos, pero el valor que sale de Orchard es público: al gastar se publica un monto en la cadena de bloques, y puede ser mayor que el que envías."
+            "state" : "needs_review",
+            "value" : "Tus fondos en Orchard siguen siendo tuyos hasta que los muevas. Puedes seguir gastándolos, pero el valor que sale de Orchard es público: al gastar se publica un monto en la cadena de bloques, y puede ser mayor que el que envías."
           }
         }
       }
@@ -8564,13 +8564,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A more private migration is coming in a later update. It moves your funds in standard-sized pieces that don't identify you, so we recommend waiting."
+            "value" : "You can move them now. We recommend the private option: it splits your balance into smaller transfers spread over time, so they're harder to link to you. Zodl will notify you whenever it's time to open the app. Or move everything at once in a single transfer."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Una migración más privada llegará en una actualización posterior. Mueve tus fondos en partes de tamaño estándar que no te identifican, por eso recomendamos esperar."
+            "state" : "needs_review",
+            "value" : "Ya puedes moverlos. Recomendamos la opción privada: divide tu saldo en transferencias más pequeñas repartidas en el tiempo, para que sean más difíciles de vincular contigo. Zodl te avisará cada vez que sea momento de abrir la app. O mueve todo de una vez en una sola transferencia."
           }
         }
       }
@@ -8618,13 +8618,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "our guide"
+            "value" : "Our guide"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "nuestra guía"
+            "state" : "needs_review",
+            "value" : "Nuestra guía"
           }
         }
       }
@@ -8636,13 +8636,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If you'd rather not wait, "
+            "value" : "Not sure which to choose? "
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Si prefieres no esperar, "
+            "state" : "needs_review",
+            "value" : "¿No sabes cuál elegir? "
           }
         }
       }
@@ -8654,31 +8654,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : " explains how to move funds manually."
+            "value" : " explains both options."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : " explica cómo mover los fondos manualmente."
-          }
-        }
-      }
-    },
-    "ironwoodAnnouncement.learnMore" : {
-      "comment" : "Secondary button. NOTE: this Spanish is NOT from MOB-1533 — that ticket describes only the inline guide link and the primary button, so it carries no translation for this one. \"Más información\" is the standard iOS Spanish for this label and should be confirmed by a translator.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Learn more"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Más información"
+            "state" : "needs_review",
+            "value" : " explica ambas opciones."
           }
         }
       }
@@ -8690,13 +8672,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zcash Upgraded to Ironwood"
+            "value" : "Ironwood Is Ready"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zcash se actualizó a Ironwood"
+            "state" : "needs_review",
+            "value" : "Ironwood está listo"
           }
         }
       }
