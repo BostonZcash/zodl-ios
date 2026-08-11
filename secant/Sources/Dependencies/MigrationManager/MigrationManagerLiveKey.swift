@@ -3328,6 +3328,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
+    /// MOB-1630: the smallest Orchard balance a fresh migration is offered for — ZIP 318's
+    /// `MAX_RESIDUAL_VALUE` (0.01 ZEC/TAZ), the minimum migratable denomination. Below it the
+    /// engine can never form a single migratable note, so `proposeMigrationTransfers` answers an
+    /// EMPTY schedule (its "nothing to migrate") and an offer could only lead to a dead end: a
+    /// permanent "Migration Required" banner whose tap ends on the propose-failure sheet.
+    ///
+    /// The floor guards the OFFER, deliberately not the run: every other banner arm describes a
+    /// run that already exists, and the post-completion re-offer is gated on the engine's own
+    /// answer (`isMigrationRemainderPending`) rather than on this balance read.
+    static let minimumOfferableOrchardBalance = Zatoshi(1_000_000)
+
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
     /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
@@ -3451,7 +3462,9 @@ enum MigrationDerivations {
 
         switch state {
         case MigrationState.notStarted:
-            return orchardBalance > Zatoshi.zero ? MigrationBannerVariant.required : nil
+            // MOB-1630: "below 0.01 → no offer", not "any balance → offer" — see
+            // `minimumOfferableOrchardBalance`'s doc for why zero was the wrong floor.
+            return orchardBalance >= minimumOfferableOrchardBalance ? MigrationBannerVariant.required : nil
 
         case MigrationState.splitPendingConfirmation:
             // MOB-1513 (B4): a committed run whose preps haven't all mined reads as PROGRESS — the
