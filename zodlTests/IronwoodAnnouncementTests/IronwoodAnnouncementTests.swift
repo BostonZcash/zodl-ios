@@ -5,8 +5,10 @@
 //  Created by Michal Fousek on 25.07.2026.
 //
 //  Covers Features/IronwoodAnnouncement/IronwoodAnnouncementStore.swift: showing the
-//  in-app browser for "Learn more", and that "Continue" persists the acknowledgement
-//  flag exactly once and never traps the user even if the keychain write fails.
+//  in-app browser for the inline guide link (the screen's only route to the support
+//  article since the duplicate "Learn more" button was removed), and that "Go to Zodl"
+//  persists the acknowledgement flag exactly once and never traps the user even if the
+//  keychain write fails.
 //
 
 import Testing
@@ -16,18 +18,6 @@ import ComposableArchitecture
 
 @Suite struct IronwoodAnnouncementTests {
     private struct KeychainWriteFailure: Error { }
-
-    @MainActor @Test func learnMoreTappedShowsInAppBrowser() async {
-        let store = TestStore(initialState: IronwoodAnnouncement.State()) {
-            IronwoodAnnouncement()
-        }
-
-        await store.send(.learnMoreTapped) {
-            $0.isInAppBrowserOn = true
-        }
-
-        await store.finish()
-    }
 
     @MainActor @Test func guideTappedShowsInAppBrowser() async {
         let store = TestStore(initialState: IronwoodAnnouncement.State()) {

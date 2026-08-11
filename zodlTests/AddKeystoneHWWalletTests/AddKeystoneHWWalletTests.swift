@@ -130,13 +130,17 @@ import ComposableArchitecture
         var state = AddKeystoneHWWallet.State()
         state.zcashAccounts = ZcashAccounts.testFixture()
         let importCount = LockIsolated(0)
+        // The mock parks on this instead of a real-time sleep, and the test releases it only
+        // after the re-tap below has already been sent -- so "while import is in flight" holds
+        // by construction, not by racing a timer against however busy the main actor is.
+        let (releaseImport, releaseImportContinuation) = AsyncStream<Void>.makeStream()
         let store = TestStore(initialState: state) {
             AddKeystoneHWWallet()
         } withDependencies: {
             $0.sdkSynchronizer = .mocked(
                 importAccount: { _, _, _, _, _, _, _ in
                     importCount.withValue { $0 += 1 }
-                    try await Task.sleep(for: .milliseconds(100))
+                    for await _ in releaseImport { break }
                     return AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
                 },
                 walletAccounts: { [] }
@@ -146,6 +150,8 @@ import ComposableArchitecture
 
         await store.send(.unlockTapped(nil)) { $0.isImportingAccount = true }
         await store.send(.unlockTapped(nil))
+        releaseImportContinuation.yield(())
+        releaseImportContinuation.finish()
         await store.receive(\.accountImportSucceeded, timeout: .seconds(2))
         await store.finish()
 

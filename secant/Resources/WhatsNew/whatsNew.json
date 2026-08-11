@@ -1,6 +1,22 @@
 {
     "releases": [
         {
+            "version": "3.9.1",
+            "date": "09-08-2026",
+            "timestamp": 1786300755,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added Move to Ironwood, a guided migration that moves your Orchard funds into the new Ironwood shielded pool.",
+                        "We added two ways to migrate: a private option that splits your balance into smaller transfers spread over time, or an immediate single transfer.",
+                        "For migration, we added Tor protection, step-by-step notifications, Keystone support, and a home screen banner for tracking your migration.",
+                        "Nothing sends on its own — we'll notify you when it's your turn to open Zodl. Opening the app promptly at each step keeps your migration on track."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.8.1",
             "date": "28-07-2026",
             "timestamp": 1785268466,

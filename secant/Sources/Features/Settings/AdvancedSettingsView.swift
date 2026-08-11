@@ -81,6 +81,18 @@ struct AdvancedSettingsView: View {
                             store.send(.operationAccessCheck(.torSetup))
                         }
 
+                        // MOB-1466: the stuck-run escape hatch. Present only while a migration is
+                        // IN PROGRESS (`isMigrationInProgress`) — see `AdvancedSettings.State`.
+                        // `coinsSwap` is the migration glyph every other migration surface uses.
+                        if store.isMigrationInProgress {
+                            ActionRow(
+                                icon: Asset.Assets.Icons.coinsSwap.image,
+                                title: String(localizable: .migrationRestartTitle)
+                            ) {
+                                store.send(.operationAccessCheck(.restartMigration))
+                            }
+                        }
+
                         if store.isKeystoneConnected {
                             ActionRow(
                                 icon: Asset.Assets.Icons.hardDrive.image,
@@ -146,6 +158,7 @@ struct AdvancedSettingsView: View {
             }
         }
         .applyScreenBackground()
+        .onAppear { store.send(.onAppear) }
         .listStyle(.plain)
         .navigationBarTitleDisplayMode(.inline)
         .zashiBack()

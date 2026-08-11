@@ -85,9 +85,23 @@ extension Settings {
                     state.path.append(.resyncWallet(ResyncWallet.State.initial))
                 case .resetZashi:
                     state.path.append(.resetZashi(DeleteWallet.State.initial))
+                case .restartMigration:
+                    state.path.append(.migrationRestart(MigrationRestart.State.initial))
                 }
                 return .none
-                
+
+                // MARK: - Restart Migration
+
+                // MOB-1466: the run is cancelled — pop back to Advanced Settings (Lukas,
+                // 2026-08-07: "in case of success return a user back to the Advanced Settings for
+                // now"). Popping rather than routing onward is deliberate: the restart discards the
+                // engine's fresh preview, so there is no committed plan to show — the migration
+                // banner picks the run back up from `.required` and the user re-enters the normal
+                // flow. See `MigrationRestartStore`'s header.
+            case .path(.element(id: _, action: .migrationRestart(.delegate(.restarted)))):
+                let _ = state.path.popLast()
+                return .none
+
                 // MARK: - Resync Wallet
 
             case .path(.element(id: _, action: .resyncWallet(.changeBirthdayTapped))):

@@ -13,11 +13,30 @@
 //  switcher only invalidated Home's mini transaction list, not the "See All" screen's.
 //
 //  Mirrors `FlexaTests/FlexaSecurityTests.swift`'s established pattern for Root-level tests: a
-//  plain `Store` (not `TestStore`) driven with `LockIsolated` spies and polling -- Root's init
-//  effects are too heavy for exhaustive `TestStore` assertion. Keeps its own private
-//  `waitForRootStore` polling helper and `baseNoOpDependencies` no-op dependency baseline,
-//  file-scoped rather than shared, the same way that file keeps its own private
-//  `waitForFlexaStore` helper local to itself.
+//  plain `Store` (not `TestStore`) driven with `LockIsolated` spies -- Root's init effects are too
+//  heavy for exhaustive `TestStore` assertion. Keeps its own `baseNoOpDependencies` no-op
+//  dependency baseline, file-scoped rather than shared, the same way that file keeps its own
+//  private helpers local to itself.
+//
+//  NOTHING here waits on the clock. An earlier version of this file polled shared state behind
+//  wall-clock budgets (3-5s), which made it load-sensitive: measured on a contended box, the whole
+//  suite went from 1.4s to 23.1s and `earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult`
+//  alone from 0.099s to 7.384s -- a 75x stretch that walks right up to a 5s budget, and past it on
+//  a busier machine. The stretch is not specific to the waits: `staleFetchFromPreviousAccountIsDroppedAfterSwitch`,
+//  which awaits nothing at all, still went 0.079s -> 2.236s, because TCA runs every `.run` effect
+//  body on the MAIN ACTOR (`Core.swift`'s `Task(name:priority:) { @MainActor ... }`), so every
+//  effect in every parallel suite queues behind the same actor. Widening the budgets would only
+//  move the cliff, so the waits are gone instead:
+//
+//   - "a fetch has entered the mock" is an `AsyncStream` the mocked `getAllTransactions` yields to;
+//   - "this dispatch is completely finished" is `StoreTask.finish()`, which awaits the whole effect
+//     tree including effects of actions the effect itself sent (`Core.swift` appends those nested
+//     tasks to the same list the returned task awaits);
+//   - "call #1 may now return" is an `AsyncStream` the test yields to, not a polled flag.
+//
+//  A machine 100x slower runs these to the same verdict, just later. `.timeLimit` is the only clock
+//  left, and it exists purely so a genuinely never-resolving condition fails instead of hanging
+//  forever -- it is an outer bound, never a thing correct runs close to.
 //
 //  `.serialized`: constructing/driving `Root.State` touches the process-global
 //  `@Shared(.inMemory(.selectedWalletAccount))` / `.inMemory(.transactions)` / `.inMemory(.walletAccounts)`
@@ -38,7 +57,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct RootTransactionsAccountSwitchTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootTransactionsAccountSwitchTests {
     private static func walletAccount(idByte: UInt8, keystone: Bool = false) -> WalletAccount {
         WalletAccount(
             Account(
@@ -132,6 +151,7 @@ import ComposableArchitecture
         let callsStarted = LockIsolated<[AccountUUID]>([])
         let aFetchCompleted = LockIsolated<Bool>(false)
         let aFetchCancelled = LockIsolated<Bool>(false)
+        let (fetchEntered, fetchEnteredContinuation) = AsyncStream<AccountUUID>.makeStream()
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = accountA }
@@ -144,6 +164,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 if let accountUUID {
                     callsStarted.withValue { $0.append(accountUUID) }
+                    fetchEnteredContinuation.yield(accountUUID)
                 }
                 if accountUUID == accountA.id {
                     do {
@@ -158,14 +179,20 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.fetchTransactionsForTheSelectedAccount)
-        await waitForRootStore(timeoutNanoseconds: 3_000_000_000) { callsStarted.value.contains(accountA.id) }
+        var entered = fetchEntered.makeAsyncIterator()
+
+        let aFetch = store.send(.fetchTransactionsForTheSelectedAccount)
+        #expect(await entered.next() == accountA.id)
 
         store.send(.home(.walletAccountTapped(accountB)))
-        await waitForRootStore(timeoutNanoseconds: 3_000_000_000) { aFetchCancelled.value }
+        // Ends A's effect tree one way or the other and needs no budget: cancelled, it unwinds at
+        // once; NOT cancelled, it runs the mocked 1s sleep out and reports `aFetchCompleted`. Both
+        // outcomes are reached by waiting, so the verdict below is the same on any machine.
+        await aFetch.finish()
 
         #expect(aFetchCancelled.value)
         #expect(!aFetchCompleted.value)
+        #expect(callsStarted.value.contains(accountA.id))
     }
 
     // MARK: - A later fetch dispatch during a sync must not starve an earlier one
@@ -187,28 +214,30 @@ import ComposableArchitecture
     /// This version replaces both the burst and the clock with explicit gates:
     ///  - the mocked `getAllTransactions` hands out a distinct call index per invocation (a
     ///    `LockIsolated<Int>` counter) and returns a transaction identified by that index alone
-    ///    (`"fetch-1"`, `"fetch-2"`, ...), recording which indices have STARTED in a
-    ///    `LockIsolated<Set<Int>>`;
-    ///  - call #1 BLOCKS on a `LockIsolated<Bool>` release flag, polled with the THROWING form of
-    ///    `Task.sleep` -- never `try?` here, or a cancellation of this effect would be silently
-    ///    swallowed instead of propagating out as the dropped result it needs to be;
+    ///    (`"fetch-1"`, `"fetch-2"`, ...), announcing each start on an `AsyncStream`;
+    ///  - call #1 PARKS on a second `AsyncStream` until the test releases it, then rethrows any
+    ///    cancellation via `Task.checkCancellation()` -- load-bearing, because if the shared-id bug
+    ///    cancels this effect the instant dispatch B registers, that cancellation has to leave this
+    ///    closure as a thrown error so the result is dropped rather than silently returned;
     ///  - call #2 (and any later call) returns immediately.
     ///
-    /// The sequence: dispatch A, wait for call #1 to start, dispatch B -- the exact moment the
-    /// shared-id bug would cancel A -- wait for call #2 to start, and only THEN release call #1.
-    /// Under the fix, A survives B untouched and, once released, lands `"fetch-1"`, overwriting
-    /// whatever B already wrote; the wait below finds it quickly regardless of machine load, so
-    /// giving it a generous budget costs nothing. Under the bug, A was cancelled the instant B was
-    /// dispatched, so `"fetch-1"` can NEVER land no matter how long the wait runs -- `"fetch-2"`
-    /// lands instead and stays there, which is exactly why the assertion names the id instead of
-    /// accepting any result. The pass/fail signal is never-versus-eventually: load can slow the
-    /// test down, but it can never flip the verdict.
+    /// The sequence: dispatch A, await call #1's start, dispatch B -- the exact moment the shared-id
+    /// bug would cancel A -- await call #2's start, await B's dispatch to FINISH (so B's `"fetch-2"`
+    /// is already written and A's write is unambiguously the later one), and only THEN release call
+    /// #1 and await A's own dispatch to finish. Under the fix, A survives B untouched and lands
+    /// `"fetch-1"` over what B wrote. Under the bug, A was cancelled the instant B was dispatched,
+    /// so `"fetch-1"` can never land -- `"fetch-2"` stays, which is exactly why the assertion names
+    /// the id instead of accepting any result.
+    ///
+    /// Every step above is a signal, not a duration -- no budget to blow. `StoreTask.finish()`
+    /// covers the whole effect tree, including the `.fetchedTransactions` each fetch sends back
+    /// into the store, so "A finished" really does mean "A's write has landed".
     @Test func earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult() async {
         let account = Self.walletAccount(idByte: 69)
 
         let callIndex = LockIsolated<Int>(0)
-        let callsStarted = LockIsolated<Set<Int>>([])
-        let releaseFirstCall = LockIsolated<Bool>(false)
+        let (callStarted, callStartedContinuation) = AsyncStream<Int>.makeStream()
+        let (releaseFirstCall, releaseFirstCallContinuation) = AsyncStream<Void>.makeStream()
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -223,15 +252,16 @@ import ComposableArchitecture
                     value += 1
                     return value
                 }
-                callsStarted.withValue { $0.insert(index) }
+                callStartedContinuation.yield(index)
 
                 if index == 1 {
-                    // Throwing sleep is load-bearing: if the shared-id bug cancels this effect
-                    // the moment dispatch B registers, that cancellation must propagate out of
-                    // this closure as a thrown error -- `try?` would swallow it and hang forever.
-                    while !releaseFirstCall.value {
-                        try await Task.sleep(nanoseconds: 10_000_000)
-                    }
+                    // Parks until the test releases this call -- no polling, no flag, no clock.
+                    // Cancellation is load-bearing: if the shared-id bug cancels this effect the
+                    // moment dispatch B registers, the stream ends without ever yielding and
+                    // `checkCancellation` rethrows it, so this call drops its result instead of
+                    // returning one. Swallowing it (a `try?`) would hide the very bug under test.
+                    for await _ in releaseFirstCall { break }
+                    try Task.checkCancellation()
                 }
 
                 let transaction = TransactionState(
@@ -244,20 +274,24 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.fetchTransactionsForTheSelectedAccount)
-        await waitForRootStore(timeoutNanoseconds: 5_000_000_000) { callsStarted.value.contains(1) }
+        var started = callStarted.makeAsyncIterator()
+
+        let earlierDispatch = store.send(.fetchTransactionsForTheSelectedAccount)
+        #expect(await started.next() == 1)
 
         // The exact moment the shared-id/`cancelInFlight` bug would cancel call #1.
-        store.send(.fetchTransactionsForTheSelectedAccount)
-        await waitForRootStore(timeoutNanoseconds: 5_000_000_000) { callsStarted.value.contains(2) }
+        let laterDispatch = store.send(.fetchTransactionsForTheSelectedAccount)
+        #expect(await started.next() == 2)
+        // B is completely done -- `"fetch-2"` is in `state.transactions` -- BEFORE call #1 is
+        // released, so A's write is unambiguously the last one. (The old wall-clock version left
+        // the two writes free to race: B landing after A would have overwritten `"fetch-1"` and
+        // failed the assertion for a reason that had nothing to do with the bug under test.)
+        await laterDispatch.finish()
+        #expect(store.state.transactions.contains { $0.id == "fetch-2" })
 
-        releaseFirstCall.setValue(true)
-
-        // Generous on purpose: under the fix this resolves almost immediately, and under the bug
-        // it can never resolve at all, so a wide budget only ever costs time in the broken case.
-        await waitForRootStore(timeoutNanoseconds: 10_000_000_000) {
-            store.state.transactions.contains { $0.id == "fetch-1" }
-        }
+        releaseFirstCallContinuation.yield(())
+        releaseFirstCallContinuation.finish()
+        await earlierDispatch.finish()
 
         #expect(store.state.transactions.contains { $0.id == "fetch-1" })
     }
@@ -325,12 +359,12 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == "keystone-tx" } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == "keystone-tx" } }
         // `getAccountsBalances` is ALSO called independently by SmartBanner's own priority
         // evaluation (`SmartBannerStore.swift:551`), so `balanceRequests > 0` alone can't prove
         // `.home(.walletBalances(.updateBalances))` specifically fired -- wait for its OWN
         // observable effect (the balance actually landing in `walletBalancesState`) too.
-        await waitForRootStore { store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(!requestedAccounts.value.contains(zashiAccount.id))
@@ -422,7 +456,7 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == keystoneTxId } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == keystoneTxId } }
 
         guard let landedTransaction = store.state.transactions[id: keystoneTxId] else {
             Issue.record("expected the Keystone transaction to have landed in state.transactions")
@@ -506,10 +540,10 @@ import ComposableArchitecture
             )
         )
 
-        await waitForRootStore { store.state.transactions.contains { $0.id == "keystone-settings-tx" } }
+        await waitForRootState(store) { $0.transactions.contains { $0.id == "keystone-settings-tx" } }
         // See the sibling test's comment: `getAccountsBalances` is ALSO called independently by
         // SmartBanner's own priority evaluation, so wait for the update to actually land too.
-        await waitForRootStore { store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(balanceRequests.value > 0)
@@ -576,12 +610,7 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.home(.walletAccountTapped(accountB)))
-
-        await waitForRootStore(timeoutNanoseconds: 3_000_000_000) {
-            !store.state.homeState.transactionListState.isInvalidated
-                && !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated
-        }
+        await store.send(.home(.walletAccountTapped(accountB))).finish()
 
         #expect(!store.state.homeState.transactionListState.isInvalidated)
         #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
@@ -612,11 +641,13 @@ import ComposableArchitecture
             }
         }
 
-        store.send(.home(.walletAccountTapped(account)))
-
-        // A same-account "switch" must dispatch no effect at all -- give a wrongly-fired async
-        // fetch a brief moment to land, then confirm nothing changed.
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        // A same-account "switch" must dispatch no effect at all. `finish()` is the exact assertion
+        // that wants making: it returns immediately when the reducer returned `.none`, and if an
+        // effect WERE wrongly dispatched it waits for that effect to run to completion -- so
+        // `fetchCalls` below is read after any wrongly-fired fetch has necessarily landed. The old
+        // fixed 200ms sleep could only ever be too short, and a too-short sleep here passes the
+        // test while proving nothing.
+        await store.send(.home(.walletAccountTapped(account))).finish()
 
         #expect(fetchCalls.value == 0)
         #expect(store.state.transactions == existingTransactions)
@@ -627,6 +658,32 @@ import ComposableArchitecture
 /// Shared no-op dependency baseline for every test in this file. Kept as a private, file-scoped
 /// helper rather than something shared globally, the same way `FlexaTests/FlexaSecurityTests.swift`
 /// keeps its own private `waitForFlexaStore` helper local to that file.
+/// Event-driven wait on store state, for the dispatches where `StoreTask.finish()` cannot be used.
+///
+/// The plain account switch (`.home(.walletAccountTapped)`) does settle, so those tests can and do
+/// await the dispatch itself. The Keystone-connect and Settings arms cannot: on top of the same
+/// switch reaction they `.merge` `.loadContacts` with a `.concatenate` of
+/// `.resolveMetadataEncryptionKeys` and `.loadUserMetadata`, and that added tree never completes
+/// under this file's no-op dependencies. Awaiting the whole dispatch there hangs outright -- an
+/// earlier draft did exactly that and sat until the time limit -- so these tests await the state
+/// they actually assert on instead.
+///
+/// Still no clock: `Store.publisher` emits on every state change, so this resumes on the change
+/// itself, at whatever speed the machine happens to be running. The suite's `.timeLimit` is the
+/// only outer bound, and only a condition that never becomes true can reach it.
+@MainActor
+private func waitForRootState(
+    _ store: StoreOf<Root>,
+    until condition: @escaping @MainActor (Root.State) -> Bool
+) async {
+    if condition(store.state) {
+        return
+    }
+    for await state in store.publisher.values where condition(state) {
+        return
+    }
+}
+
 @MainActor
 private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.databaseFiles = .noOp
@@ -641,17 +698,4 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.userMetadataProvider.load = { _ in }
     values.walletStorage = .noOp
     values.zcashSDKEnvironment = .testnet
-}
-
-@MainActor
-private func waitForRootStore(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
-    sourceLocation: SourceLocation = #_sourceLocation,
-    condition: @escaping @MainActor () -> Bool
-) async {
-    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
-    #expect(condition(), "Timed out waiting for Root transactions/account-switch store state", sourceLocation: sourceLocation)
 }

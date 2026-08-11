@@ -12,7 +12,7 @@ Usage: Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n
   --version     marketing version you intend to ship (X.Y.Z)
   --build       build number (integer)
   --dry-run     run all preflight checks, then stop before building
-  --yes         skip the confirmation prompt
+  -y, --yes     skip the confirmation prompt
   --skip-tests  skip the unit-test step
   -h, --help    show this help
 EOF
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="$2" ; shift 2 ;;
     --build) BUILD="$2" ; shift 2 ;;
     --dry-run) DRY_RUN=true ; shift ;;
-    --yes) YES=true ; shift ;;
+    -y|--yes) YES=true ; shift ;;
     --skip-tests) SKIP_TESTS=true ; shift ;;
     -h|--help) usage ; exit 0 ;;
     *) echo "error: unknown argument: $1" >&2 ; usage >&2 ; exit 2 ;;

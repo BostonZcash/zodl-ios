@@ -16,6 +16,7 @@ struct WalletBalances {
     struct State: Equatable {
         var CancelStateId = UUID()
         var CancelRateId = UUID()
+        var CancelMigrationSnapshotId = UUID()
         var autoShieldingThreshold: Zatoshi = .zero
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var fiatCurrencyResult: FiatCurrencyResult?
@@ -104,6 +105,7 @@ struct WalletBalances {
 
     @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.walletStorage) var walletStorage
@@ -122,6 +124,13 @@ struct WalletBalances {
                 } else {
                     state.isExchangeRateFeatureOn = false
                 }
+                // M3 Part B: the migration snapshot channel is the push half of the pool-truth
+                // correction — a prove stores a transaction (correction grows) or a transfer
+                // wallet-mines (correction shrinks) during windows where no sync event fires, and
+                // the corrected pool cards must move on that clock too. Subscribed for the account
+                // selected NOW; `.balanceUpdated` always reads the CURRENT account's snapshot at
+                // apply time, so a stale trigger channel can never apply stale values.
+                let snapshotAccountUUID = state.selectedWalletAccount?.id
                 return .merge(
                     .send(.updateBalances),
                     .publisher {
@@ -136,14 +145,21 @@ struct WalletBalances {
                             .map(Action.exchangeRateEvent)
                             .receive(on: mainQueue)
                     }
-                    .cancellable(id: state.CancelRateId, cancelInFlight: true)
+                    .cancellable(id: state.CancelRateId, cancelInFlight: true),
+                    .publisher {
+                        migrationManager.migrationSnapshotEvents(snapshotAccountUUID)
+                            .map { _ in Action.updateBalances }
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.CancelMigrationSnapshotId, cancelInFlight: true)
                 )
 
             case .onDisappear:
                 // __LD2 TESTED
                 return .merge(
                     .cancel(id: state.CancelStateId),
-                    .cancel(id: state.CancelRateId)
+                    .cancel(id: state.CancelRateId),
+                    .cancel(id: state.CancelMigrationSnapshotId)
                 )
                 
             case .availableBalanceTapped:
@@ -217,6 +233,10 @@ struct WalletBalances {
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                 state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
+
+                // Display the SDK's pool summary without interpreting migration-engine status.
+                // The pinned SDK updates wallet accounting when it stores the transaction at the
+                // broadcast seam; confirmation only changes the balance's pending classifications.
                 state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
                 state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero

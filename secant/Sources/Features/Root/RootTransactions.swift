@@ -69,8 +69,16 @@ extension Root {
                 // provenance guard below still drops any payload for an account other than the one
                 // currently selected.
                 return .run { send in
-                    if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
+                    do {
+                        let transactions = try await sdkSynchronizer.getAllTransactions(accountUUID)
                         await send(.fetchedTransactions(accountUUID, transactions))
+                    } catch {
+                        // A failed fetch must never be silent: a wallet whose every row failed to
+                        // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
+                        // rendered as an EMPTY transaction list with no trace anywhere, reading as
+                        // data loss. The list keeps its previous contents; the error goes to the
+                        // log where the next investigation can find it.
+                        LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
                     }
                 }
                 .cancellable(id: state.CancelTransactionsFetchId)
@@ -85,6 +93,27 @@ extension Root {
                 guard accountUUID == state.selectedWalletAccount?.id else {
                     return .none
                 }
+
+                // ZIP 318 labels: Activity now PRESENTS migration transactions instead of hiding
+                // them — a stored-but-unmined row renders as "Migrating…"/"Splitting Balance…"
+                // with the coins-swap glyph (Figma "Transaction Statuses/Labels — Final Designs"),
+                // so the store-at-prove rows that once looked like phantom "Sending…" sends now
+                // tell the true in-flight story right on the list. This supersedes the M3 Part A
+                // filter that removed them. This is still the single canonical list build, so
+                // every consumer of the shared `$transactions` sees the same truth.
+                //
+                // M3 B2 (unchanged): the SAME rows are what the SDK's pending-balance lanes count
+                // for the whole prove→mine window, so their received value is still published
+                // beside the canonical list — one pass, one clock — for the balance-breakdown
+                // sheet to remove from its displayed "Pending" row. `totalReceived` is exactly a
+                // migration transaction's contribution to the pending lanes (all its real outputs
+                // are internal, and its spent side never enters them); a nil reads as zero, which
+                // under-corrects — conservative, never future-tense.
+                let unminedMigrationPending = transactions
+                    .filter { $0.isUnminedMigrationTransaction }
+                    .reduce(Zatoshi.zero) { $0 + ($1.totalReceived ?? Zatoshi.zero) }
+                state.$unminedMigrationPendingValue.withLock { $0 = unminedMigrationPending }
+
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
                 // Resolve Swaps

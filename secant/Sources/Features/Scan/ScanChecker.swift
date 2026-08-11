@@ -126,6 +126,25 @@ struct KeystoneVotingDelegationPcztScanChecker: ScanChecker, Equatable {
 }
 #endif
 
+/// PHASE 7 — migration Keystone batch signing. Unlike every other checker in this file, this one
+/// does NOT run the accumulate-with-progress dance itself: the batch-signing bridge
+/// (`Synchronizer.decodeKeystoneSignBatchPart(_:expectedRequestId:)`) owns its OWN multi-part decode
+/// session over the raw scanned frame strings, so `keystoneHandler`'s BC-UR fountain decoder (used
+/// by every other Keystone checker above) plays no part here. `checkQRCode` cannot await that call
+/// (`ScanChecker.checkQRCode` is a synchronous, dependency-only, `state`-free function), so it hands
+/// the raw frame straight back as `.keystoneBatchPartScanned` — `Scan.body` runs the decode as an
+/// effect and reports progress/completion/failure from there.
+///
+/// Always matches (never `nil`): every scanned string during this ceremony is a candidate frame, and
+/// the decode call itself is what validates it.
+struct KeystoneMigrationBatchScanChecker: ScanChecker, Equatable {
+    let id = 6
+
+    func checkQRCode(_ qrCode: String) -> Scan.Action? {
+        .keystoneBatchPartScanned(qrCode)
+    }
+}
+
 struct ScanCheckerWrapper: Equatable, Sendable {
     let checker: any ScanChecker
 
@@ -137,6 +156,7 @@ struct ScanCheckerWrapper: Equatable, Sendable {
     #if VOTING_ENABLED
     static let keystoneVotingDelegationPCZTScanChecker = ScanCheckerWrapper(KeystoneVotingDelegationPcztScanChecker())
     #endif
+    static let keystoneMigrationBatchScanChecker = ScanCheckerWrapper(KeystoneMigrationBatchScanChecker())
 
     static func == (lhs: ScanCheckerWrapper, rhs: ScanCheckerWrapper) -> Bool {
         return lhs.checker.id == rhs.checker.id

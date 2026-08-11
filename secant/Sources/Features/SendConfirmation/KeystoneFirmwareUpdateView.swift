@@ -43,7 +43,7 @@ struct KeystoneFirmwareUpdateView: View {
 /// of the gate can reuse it.
 struct KeystoneFirmwareUpdateContent: View {
     let illustration: Image
-    let detectedVersion: KeystoneFirmwareVersion?
+    let detectedVersion: KeystoneDisplayFirmwareVersion?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,11 +69,11 @@ struct KeystoneFirmwareUpdateContent: View {
             return String(
                 localizable: .keystoneFirmwareUpdateBody(
                     detectedVersion.versionString,
-                    KeystoneFirmwareVersion.minimumSupported.versionString
+                    KeystoneDisplayFirmwareVersion.minimumSupported.versionString
                 )
             )
         }
-        return String(localizable: .keystoneFirmwareUpdateLegacyBody(KeystoneFirmwareVersion.minimumSupported.versionString))
+        return String(localizable: .keystoneFirmwareUpdateLegacyBody(KeystoneDisplayFirmwareVersion.minimumSupported.versionString))
     }
 }
 

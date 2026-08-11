@@ -8,8 +8,11 @@
 import Foundation
 @preconcurrency import Combine
 import ComposableArchitecture
+import os
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
+
+private let slipstreamLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
@@ -51,18 +54,28 @@ extension SDKSynchronizerClient: DependencyKey {
             isExchangeRateEnabled: isRateEnabled
         )
         
-        let synchronizer = SDKSynchronizer(initializer: initializer)
+        // [#1755] slipstream: engine selection from the synchronously-readable flag cache (the async
+        // WalletConfigProvider.load() can't be awaited here; the cache is the early-construction shortcut).
+        let useSlipstream = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
+
+        let synchronizer: any Synchronizer
+        if useSlipstream {
+            slipstreamLogger.info("[#1755] SlipstreamSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=true)")
+            synchronizer = SlipstreamSynchronizer(initializer: initializer)
+        } else {
+            slipstreamLogger.info("[#1755] SDKSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=false)")
+            synchronizer = SDKSynchronizer(initializer: initializer)
+        }
 
         return SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
             eventStream: { synchronizer.eventStream },
             exchangeRateUSDStream: { synchronizer.exchangeRateUSDStream },
             latestState: { synchronizer.latestState },
-            prepareWith: { seedBytes, walletBirtday, walletMode, name, keySource in
+            prepareWith: { seedBytes, walletBirtday, name, keySource in
                 return try await synchronizer.prepare(
                     with: seedBytes,
                     walletBirthday: walletBirtday,
-                    for: walletMode,
                     name: name,
                     keySource: keySource
                 )
@@ -84,6 +97,166 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             deleteAccount: { accountUUID in
                 try await synchronizer.deleteAccount(accountUUID)
+            },
+            migrationAdvanceStep: { accountUUID in
+                try await synchronizer.migrationAdvanceStep(accountUUID: accountUUID)
+            },
+            proposeMigrationTransfers: { accountUUID in
+                try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID)
+            },
+            proposeImmediateMigration: { accountUUID in
+                try await synchronizer.proposeImmediateMigration(accountUUID: accountUUID)
+            },
+            recordImmediateMigration: { accountUUID, txid in
+                try await synchronizer.recordImmediateMigration(accountUUID: accountUUID, txid: txid)
+            },
+            restartCurrentMigrationStep: { accountUUID in
+                try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID)
+            },
+            estimateMigrationRunCount: { accountUUID in
+                try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.count
+            },
+            estimateMigrationPreparationCount: { accountUUID in
+                try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID).runs.first?.preparationTransactions
+            },
+            migrationTransactionStatuses: { accountUUID in
+                try await synchronizer.migrationTransactionStatuses(accountUUID: accountUUID)
+            },
+            signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
+                try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
+            },
+            performMigrationBroadcast: { accountUUID, instruction, options in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.performMigrationBroadcast(
+                        accountUUID: accountUUID,
+                        instruction,
+                        options: options
+                    )
+                }
+            },
+            hasOverdueMigrationTransfers: { accountUUID, useEstimatedTip in
+                try await synchronizer.hasOverdueMigrationTransfers(
+                    accountUUID: accountUUID,
+                    useEstimatedTip: useEstimatedTip
+                )
+            },
+            proveMigrationTransactions: { accountUUID, instruction, maxProofs in
+                try await synchronizer.proveMigrationTransactions(
+                    accountUUID: accountUUID,
+                    instruction,
+                    maxProofs: maxProofs
+                )
+            },
+            takeMigrationPreparation: { accountUUID, txid in
+                try await synchronizer.takeMigrationPreparation(accountUUID: accountUUID, byTxid: txid)
+            },
+            submitMigrationPreparation: { prepared in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    // The bytes are a FINALIZED CONSENSUS TRANSACTION the migration engine already
+                    // built, extracted and recorded (the accessor's own seam did that), so there is
+                    // nothing to create here — only to submit. Everything below the
+                    // `CreatedTransaction` is the app's existing raw-submission machinery,
+                    // unchanged and shared with `createAndSubmitProposedTransactions`: the same
+                    // one-at-a-time submit (so the SDK records a retry plan per transaction), the
+                    // same connection-mode endpoint selection, the same outcome mapping.
+                    //
+                    // No expiry height: the engine owns the preparation's ZIP 203 expiry and the
+                    // app never re-derives it. The SDK's background resubmission uses it only to
+                    // stop retrying, and this transaction is already recorded in the wallet's own
+                    // tables with the engine's expiry on it.
+                    let transaction = CreatedTransaction(txId: prepared.txid, raw: prepared.pczt, expiryHeight: nil)
+
+                    return await Self.submitCreatedTransactions(
+                        [transaction],
+                        logPrefix: "[MigrationPrep]",
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment,
+                        submit: { createdTransactions, endpoints in
+                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                            }
+                        }
+                    )
+                }
+            },
+            recordMigrationPreparationBroadcast: { accountUUID, prepared, result in
+                try await synchronizer.recordMigrationPreparationBroadcast(
+                    accountUUID: accountUUID,
+                    prepared,
+                    result: result
+                )
+            },
+            migrationSyncWakeups: { accountUUID in
+                try await synchronizer.migrationSyncWakeups(accountUUID: accountUUID)
+            },
+            estimatedMigrationChainTip: {
+                // Addendum §4: wallet-scoped, not per-account — the projection reads the shared
+                // blocks table, so one answer serves every account.
+                try await synchronizer.estimatedMigrationChainTip()
+            },
+            estimatedMigrationSecondsPerBlock: {
+                try await synchronizer.estimatedMigrationSecondsPerBlock()
+            },
+            isMigrationSyncBlocked: {
+                await synchronizer.isMigrationSyncBlocked()
+            },
+            migrationSyncBlockedStream: {
+                synchronizer.migrationSyncBlockedStream
+            },
+            getMigrationProgress: { accountUUID in
+                try await synchronizer.migrationProgress(accountUUID: accountUUID)
+            },
+            hasInvalidMigrationTransfers: { accountUUID in
+                try await synchronizer.hasInvalidMigrationTransfers(accountUUID: accountUUID)
+            },
+            residualAfterMigration: { accountUUID in
+                try await synchronizer.residualAfterMigration(accountUUID: accountUUID)
+            },
+            lockMigrationResidual: { accountUUID in
+                try await synchronizer.lockMigrationResidual(accountUUID: accountUUID)
+            },
+            unlockMigrationResidual: { accountUUID in
+                try await synchronizer.unlockMigrationResidual(accountUUID: accountUUID)
+            },
+            // PHASE 7 — the Keystone lane. Thin forwards, exactly like the migration closures above;
+            // see `SDKSynchronizerInterface` for why none of these takes `transactionGuard`.
+            proposeNoteSplitPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID, for: schedule)
+            },
+            storeSignedNoteSplits: { accountUUID, signed in
+                // The returned `PreparedMigrationTransfer` is a storage receipt with a zeroed txid —
+                // the broadcastable value comes from `performMigrationBroadcast`'s instruction.
+                _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
+            },
+            proposeMigrationPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedMigrationTransferPCZTs(accountUUID: accountUUID, for: schedule)
+            },
+            storeSignedMigrationTransactions: { accountUUID, signed in
+                try await synchronizer.storeSignedMigrationSchedulePCZTs(accountUUID: accountUUID, signed)
+            },
+            batchMigrationPcztsForSigning: { pczts, maxActionsPerSession in
+                try await synchronizer.batchMigrationPcztsForSigning(pczts, maxActionsPerSession: maxActionsPerSession)
+            },
+            buildKeystoneSignBatchQRParts: { requestId, pczts, maxFragmentLen in
+                try await synchronizer.buildKeystoneSignBatchQRParts(
+                    requestId: requestId,
+                    pczts: pczts,
+                    maxFragmentLen: maxFragmentLen
+                )
+            },
+            resetKeystoneSignBatchDecoder: {
+                await synchronizer.resetKeystoneSignBatchDecoder()
+            },
+            decodeKeystoneSignBatchPart: { part, expectedRequestId in
+                try await synchronizer.decodeKeystoneSignBatchPart(part, expectedRequestId: expectedRequestId)
+            },
+            applyKeystoneBatchSignatures: { pczts, batchSignResponse in
+                try await synchronizer.applyKeystoneBatchSignatures(pczts: pczts, batchSignResponse: batchSignResponse)
+            },
+            refreshStaleMigrationTransfers: { accountUUID, usk in
+                try await synchronizer.refreshStaleMigrationTransfers(accountUUID: accountUUID, usk: usk)
             },
             rescanFrom: { blockHeight in
                 try await synchronizer.rescanFrom(height: blockHeight)
@@ -260,7 +433,9 @@ extension SDKSynchronizerClient: DependencyKey {
                 await synchronizer.isTorSuccessfullyInitialized()
             },
             httpRequestOverTor: { request in
-                try await synchronizer.httpRequestOverTor(for: request)
+                // [#1755] slipstream: retryLimit passed explicitly — protocol default arguments aren't
+                // callable through the `any Synchronizer` existential.
+                try await synchronizer.httpRequestOverTor(for: request, retryLimit: 3)
             },
             debugDatabaseSql: { query in
                 synchronizer.debugDatabase(sql: query)
@@ -502,7 +677,8 @@ extension SDKSynchronizerClient {
     static func transactionStatesFromZcashTransactions(
         accountUUID: AccountUUID?,
         zcashTransactions: [ZcashTransaction.Overview],
-        synchronizer: SDKSynchronizer
+        // [#1755] slipstream: existential, so this helper serves whichever engine was constructed.
+        synchronizer: any Synchronizer
     ) async throws -> IdentifiedArrayOf<TransactionState> {
         guard let accountUUID else {
             return []

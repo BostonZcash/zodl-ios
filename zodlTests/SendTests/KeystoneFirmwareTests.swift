@@ -3,7 +3,7 @@
 //  zodlTests
 //
 //  Covers MOB-1510 (Keystone minimum-firmware check): the `Data.keystoneFirmwareStamp()`
-//  byte-scan reader, the raw-to-displayed normalization in `KeystoneFirmwareVersion.fromStamp`,
+//  byte-scan reader, the raw-to-displayed normalization in `KeystoneDisplayFirmwareVersion.fromStamp`,
 //  `Comparable`, and the `SendConfirmationStore` gate at `.foundPCZT` that blocks
 //  below-minimum/unstamped firmware before `createTransactionFromPCZT` ever schedules.
 //
@@ -20,6 +20,13 @@ import Foundation
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
+
+// A21: the alias that used to live here is gone. The app's type is now
+// `KeystoneDisplayFirmwareVersion` (DISPLAYED numbering — `fromStamp` subtracts Keystone's
+// `stampedMajorOffset`, so a device reading 3.0.1 stamps `[13, 0, 1]`), and the SDK's
+// `KeystoneFirmwareVersion` is the RAW triple off the batch-signing envelope. Distinct names, so
+// nothing shadows anything and comparing one against the other no longer compiles by accident —
+// which is what would have silently mis-gated the minimum-firmware check.
 
 // MARK: - Data.keystoneFirmwareStamp() reader
 
@@ -90,7 +97,7 @@ import ComposableArchitecture
     }
 }
 
-// MARK: - KeystoneFirmwareVersion.fromStamp normalization
+// MARK: - KeystoneDisplayFirmwareVersion.fromStamp normalization
 
 @Suite struct KeystoneFirmwareNormalizationTests {
     /// The defect this whole change exists for: a device displaying 3.0.1 stamps `[13, 0, 1]`,
@@ -98,21 +105,21 @@ import ComposableArchitecture
     @Test func stampedMajorIsOffsetFromTheDisplayedMajor() {
         let stamp = KeystoneFirmwareStamp(major: 13, minor: 0, build: 1)
 
-        #expect(KeystoneFirmwareVersion.fromStamp(stamp) == KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
+        #expect(KeystoneDisplayFirmwareVersion.fromStamp(stamp) == KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
     }
 
     @Test func twoPointXLineNormalizes() {
         let stamp = KeystoneFirmwareStamp(major: 12, minor: 4, build: 6)
 
-        #expect(KeystoneFirmwareVersion.fromStamp(stamp) == KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6))
+        #expect(KeystoneDisplayFirmwareVersion.fromStamp(stamp) == KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6))
     }
 
     /// A 3.0.1 device must read as below a 3.0.3 minimum, not above it — the exact comparison
     /// that was inverted. Written against literals so it holds whatever `minimumSupported` is.
     @Test func threeZeroOneDeviceIsBelowThreeZeroThree() {
-        let detected = KeystoneFirmwareVersion.fromStamp(KeystoneFirmwareStamp(major: 13, minor: 0, build: 1))
+        let detected = KeystoneDisplayFirmwareVersion.fromStamp(KeystoneFirmwareStamp(major: 13, minor: 0, build: 1))
 
-        #expect(detected < KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 3))
+        #expect(detected < KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 3))
     }
 
     /// Guards the second arm: if Keystone ever applies the offset firmware-side, a stamp already
@@ -120,53 +127,53 @@ import ComposableArchitecture
     @Test func rawMajorBelowTheOffsetIsTakenAsAlreadyNormalized() {
         let stamp = KeystoneFirmwareStamp(major: 3, minor: 0, build: 1)
 
-        #expect(KeystoneFirmwareVersion.fromStamp(stamp) == KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
+        #expect(KeystoneDisplayFirmwareVersion.fromStamp(stamp) == KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
     }
 
     @Test(arguments: [
-        (KeystoneFirmwareStamp(major: 10, minor: 0, build: 0), KeystoneFirmwareVersion(displayMajor: 0, minor: 0, build: 0)),
-        (KeystoneFirmwareStamp(major: 9, minor: 9, build: 9), KeystoneFirmwareVersion(displayMajor: 9, minor: 9, build: 9))
+        (KeystoneFirmwareStamp(major: 10, minor: 0, build: 0), KeystoneDisplayFirmwareVersion(displayMajor: 0, minor: 0, build: 0)),
+        (KeystoneFirmwareStamp(major: 9, minor: 9, build: 9), KeystoneDisplayFirmwareVersion(displayMajor: 9, minor: 9, build: 9))
     ])
-    func offsetBoundaryNormalizes(stamp: KeystoneFirmwareStamp, expected: KeystoneFirmwareVersion) {
-        #expect(KeystoneFirmwareVersion.fromStamp(stamp) == expected)
+    func offsetBoundaryNormalizes(stamp: KeystoneFirmwareStamp, expected: KeystoneDisplayFirmwareVersion) {
+        #expect(KeystoneDisplayFirmwareVersion.fromStamp(stamp) == expected)
     }
 
     @Test func minorAndBuildAreNeverOffset() {
         let stamp = KeystoneFirmwareStamp(major: 13, minor: 12, build: 11)
 
-        #expect(KeystoneFirmwareVersion.fromStamp(stamp) == KeystoneFirmwareVersion(displayMajor: 3, minor: 12, build: 11))
+        #expect(KeystoneDisplayFirmwareVersion.fromStamp(stamp) == KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 12, build: 11))
     }
 }
 
-// MARK: - KeystoneFirmwareVersion.Comparable
+// MARK: - KeystoneDisplayFirmwareVersion.Comparable
 
 @Suite struct KeystoneFirmwareVersionComparableTests {
     @Test func lowerMajorIsBelowMinimum() {
-        #expect(KeystoneFirmwareVersion(displayMajor: 2, minor: 9, build: 9) < KeystoneFirmwareVersion.minimumSupported)
+        #expect(KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 9, build: 9) < KeystoneDisplayFirmwareVersion.minimumSupported)
     }
 
     @Test func minimumIsExactlyThreeZeroOne() {
-        #expect(KeystoneFirmwareVersion.minimumSupported == KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
+        #expect(KeystoneDisplayFirmwareVersion.minimumSupported == KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 1))
     }
 
     @Test func minimumIsNotBelowItself() {
-        #expect(!(KeystoneFirmwareVersion.minimumSupported < KeystoneFirmwareVersion.minimumSupported))
+        #expect(!(KeystoneDisplayFirmwareVersion.minimumSupported < KeystoneDisplayFirmwareVersion.minimumSupported))
     }
 
     @Test func higherBuildIsAboveMinimum() {
-        #expect(KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 2) > KeystoneFirmwareVersion.minimumSupported)
+        #expect(KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 2) > KeystoneDisplayFirmwareVersion.minimumSupported)
     }
 
     @Test func comparisonIsLexicographicOnMajorThenMinorThenBuild() {
         // A higher minor must not be shadowed by comparing major alone.
         #expect(
-            KeystoneFirmwareVersion(displayMajor: 2, minor: 99, build: 99)
-            < KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 0)
+            KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 99, build: 99)
+            < KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 0)
         )
         // A higher build must not be shadowed by comparing major/minor alone.
         #expect(
-            KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 0)
-            < KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1)
+            KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 0)
+            < KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 1)
         )
     }
 }
@@ -223,7 +230,7 @@ import ComposableArchitecture
         } operation: {
             let store = makeStore()
             let pczt = signedPczt(stamp: (major, minor, build))
-            let expected = KeystoneFirmwareVersion.fromStamp(
+            let expected = KeystoneDisplayFirmwareVersion.fromStamp(
                 KeystoneFirmwareStamp(major: major, minor: minor, build: build)
             )
 
@@ -250,7 +257,7 @@ import ComposableArchitecture
 
             await store.send(.foundPCZT(signedPczt(stamp: (12, 4, 6)))) {
                 $0.isKeystoneCodeFound = true
-                $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
+                $0.detectedKeystoneFirmware = KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
             }
             await store.receive(.keystoneFirmwareUpdateRequired)
             await store.finish()
@@ -309,7 +316,7 @@ import ComposableArchitecture
 
             await store.send(.foundPCZT(pczt)) {
                 $0.isKeystoneCodeFound = true
-                $0.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
+                $0.detectedKeystoneFirmware = KeystoneDisplayFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
             }
             await store.receive(.keystoneFirmwareUpdateRequired)
 

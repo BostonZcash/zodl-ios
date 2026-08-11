@@ -1,12 +1,12 @@
 //
-//  KeystoneFirmwareVersion.swift
+//  KeystoneDisplayFirmwareVersion.swift
 //  Zashi
 //
 //  MOB-1510: device firmware stamps `global.proprietary["keystone:fw_version"]` (3 raw bytes)
 //  into every signed PCZT; KeystoneSDK 0.8.6 exposes no firmware API of its own.
 //
 //  Two numberings are in play and must never be mixed — hence two types. `KeystoneFirmwareStamp`
-//  is what the wire carries, `KeystoneFirmwareVersion` is what the device screen shows and what
+//  is what the wire carries, `KeystoneDisplayFirmwareVersion` is what the device screen shows and what
 //  the minimum is written in. `fromStamp` is the only bridge between them.
 //
 
@@ -15,7 +15,7 @@ import Foundation
 /// The three bytes exactly as the device wrote them, before any normalization.
 ///
 /// This is the firmware's *internal* major, which is not what the device displays — see
-/// `KeystoneFirmwareVersion.stampedMajorOffset`. Kept distinct from `KeystoneFirmwareVersion` so
+/// `KeystoneDisplayFirmwareVersion.stampedMajorOffset`. Kept distinct from `KeystoneDisplayFirmwareVersion` so
 /// a raw triple can never be compared against the minimum by accident.
 struct KeystoneFirmwareStamp: Equatable, Sendable {
     let major: Int
@@ -27,7 +27,7 @@ struct KeystoneFirmwareStamp: Equatable, Sendable {
     }
 }
 
-struct KeystoneFirmwareVersion: Equatable, Comparable, Sendable {
+struct KeystoneDisplayFirmwareVersion: Equatable, Comparable, Sendable {
     /// Keystone's `src/config/version.h` carries `SOFTWARE_VERSION_MAJOR` as the displayed major
     /// plus `SOFTWARE_VERSION_MAJOR_OFFSET` (10, unchanged across every firmware tag from 2.2.8
     /// through 3.0.0), and `src/config/version.c` renders `MAJOR - OFFSET` on the device. The
@@ -42,7 +42,7 @@ struct KeystoneFirmwareVersion: Equatable, Comparable, Sendable {
     /// Minimum Keystone firmware this app will accept a signature from — set by product
     /// (MOB-1510), in the numbering the device displays. Single point of change if the minimum is
     /// ever raised. Always enforced — there is no "0.0.0 disables the check" escape hatch.
-    static let minimumSupported = KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1)
+    static let minimumSupported = KeystoneDisplayFirmwareVersion(displayMajor: 3, minor: 0, build: 1)
 
     let major: Int
     let minor: Int
@@ -62,22 +62,22 @@ struct KeystoneFirmwareVersion: Equatable, Comparable, Sendable {
     }
 }
 
-extension KeystoneFirmwareVersion {
+extension KeystoneDisplayFirmwareVersion {
     /// Normalizes a raw device stamp into the displayed numbering.
     ///
     /// A raw major below `stampedMajorOffset` is taken as already normalized. That arm exists so
     /// that if Keystone ever starts applying the offset firmware-side, this gate degrades to
     /// correct rather than rejecting every device — a corrected stamp of 3 would otherwise read
     /// as -7. It is ambiguous only for a device whose *displayed* major reaches 10.
-    static func fromStamp(_ stamp: KeystoneFirmwareStamp) -> KeystoneFirmwareVersion {
-        KeystoneFirmwareVersion(
+    static func fromStamp(_ stamp: KeystoneFirmwareStamp) -> KeystoneDisplayFirmwareVersion {
+        KeystoneDisplayFirmwareVersion(
             displayMajor: stamp.major >= stampedMajorOffset ? stamp.major - stampedMajorOffset : stamp.major,
             minor: stamp.minor,
             build: stamp.build
         )
     }
 
-    static func < (lhs: KeystoneFirmwareVersion, rhs: KeystoneFirmwareVersion) -> Bool {
+    static func < (lhs: KeystoneDisplayFirmwareVersion, rhs: KeystoneDisplayFirmwareVersion) -> Bool {
         (lhs.major, lhs.minor, lhs.build) < (rhs.major, rhs.minor, rhs.build)
     }
 }
@@ -89,7 +89,7 @@ extension Data {
     /// scanned in order; a truncated or wrong-length-prefix one is skipped, not fatal. `nil` when
     /// no valid occurrence exists.
     ///
-    /// Returns the bytes as written. Use `KeystoneFirmwareVersion.fromStamp` to compare the
+    /// Returns the bytes as written. Use `KeystoneDisplayFirmwareVersion.fromStamp` to compare the
     /// result against anything.
     func keystoneFirmwareStamp() -> KeystoneFirmwareStamp? {
         let key = Data("keystone:fw_version".utf8)

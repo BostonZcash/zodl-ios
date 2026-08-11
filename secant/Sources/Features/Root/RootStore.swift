@@ -16,6 +16,7 @@ struct Root {
         enum Path {
             case addKeystoneHWWalletCoordFlow
             case currencyConversionSetup
+            case migrationCoordFlow
             case receive
             case requestZecCoordFlow
             case scanCoordFlow
@@ -62,6 +63,40 @@ struct Root {
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
         var staleWalletHealedAlertCancelId = UUID()
+        var migrationSyncGateCancelId = UUID()
+        /// MOB-1466: the foreground migration TICK LOOP's cancel id — one recurring 30s wake-up,
+        /// started/restarted at `.initializationSuccessfullyDone`/`.appDelegate(.willEnterForeground)`
+        /// (`cancelInFlight: true`, so a fresh foreground always resets the countdown to zero) and
+        /// cancelled at `.appDelegate(.didEnterBackground)`. See `migrationTickLoopEffect(state:)`.
+        var migrationTickCancelId = UUID()
+        /// MOB-1466: the blocked-edge stop's attribution-probe cancel id — cancelled on the gate's
+        /// false edge, since the probe's work is moot once sync is no longer blocked. See
+        /// `.migrationSyncGateChanged`'s stop half.
+        var migrationGateStopProbeCancelId = UUID()
+        /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
+        /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
+        var startFailureRetryCancelId = UUID()
+        /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
+        /// the second failure waits for the next external trigger (foreground, gate emission).
+        var didScheduleStartFailureRetry = false
+        /// MOB-1466: how many `.migrationTick` wake-ups THIS loop instance has seen — effect-adjacent
+        /// bookkeeping for the heartbeat log line (`.migrationTick`'s handler), not itself read by any
+        /// decision. Deliberately never reset except by a fresh `Root.State` — an occasional
+        /// heartbeat drifting relative to a JUST-restarted countdown is harmless; the log line only
+        /// ever claims "the loop is alive", never a precise wall-clock cadence.
+        var migrationTickCount = 0
+        /// The last value `.migrationSyncGateChanged` saw, for dedupe — a genuine transition is what
+        /// triggers a migration reconcile.
+        var lastMigrationSyncGateBlocked = false
+        /// Set when a start was refused by the migration privacy gate (`.migrationGateDeferredSyncStart`,
+        /// sent from both `start()` call sites' refusal handling), so the gate's clearing edge knows to
+        /// replay that deferred start. This is what makes the buffer-shape refusal — nothing due to
+        /// broadcast, so `migrationStoppedSyncForBroadcast` never gets set either — resume in the SAME
+        /// session instead of waiting for the next foreground.
+        var syncDeferredByMigrationGate = false
+        /// Edge detector for the sync-completion hooks below — reconcile and the send-gate re-key
+        /// run ONCE per completed sync, not on every tick while already at the tip.
+        var wasSyncUpToDateForMigration = false
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -116,6 +151,7 @@ struct Root {
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         @Shared(.inMemory(.transactions)) var transactions: IdentifiedArrayOf<TransactionState> = []
         @Shared(.inMemory(.transactionMemos)) var transactionMemos: [String: [String]] = [:]
+        @Shared(.inMemory(.unminedMigrationPendingValue)) var unminedMigrationPendingValue: Zatoshi = .zero
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         var walletConfig: WalletConfig
         @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
@@ -138,6 +174,7 @@ struct Root {
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
+        var migrationCoordFlowState = MigrationCoordFlow.State.initial
         var sendCoordFlowState = SendCoordFlow.State.initial
         var settingsState = Settings.State.initial
         var signWithKeystoneCoordFlowState = SignWithKeystoneCoordFlow.State.initial
@@ -171,7 +208,11 @@ struct Root {
             // it; if voting ever gets its own `Path` case, move the sensitivity there.
             case .settings:
                 return true
-            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
+            // `.migrationCoordFlow` classifies SENSITIVE for the same reason as `.sendCoordFlow`:
+            // the manual lane broadcasts a real send-max transaction from inside it, and an
+            // automatic server switch mid-broadcast is exactly what must not happen. #1930
+            // classifies it identically.
+            case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
@@ -267,6 +308,24 @@ struct Root {
         case serverSetupBindingUpdated(Bool)
         case splashFinished
         case splashRemovalRequested
+        /// The SDK's migration privacy gate flipped (or was re-pushed by the app-side feed). The
+        /// clearing edge is what RESUMES a sync a migration broadcast stopped — see the handler.
+        case migrationSyncGateChanged(Bool)
+        /// A `start()` was refused by the migration privacy gate — arms
+        /// `State.syncDeferredByMigrationGate` so the gate's clearing edge replays the start even
+        /// when no broadcast ran in between (the buffer-shape refusal). Sent from both refusal
+        /// handlers in RootInitialization before they run the broadcast session.
+        case migrationGateDeferredSyncStart
+        /// MOB-1466: one 30s wake-up of the foreground migration tick loop — see
+        /// `migrationTickLoopEffect(state:)`. Sent by the loop itself; the handler is what actually
+        /// calls `migrationManager.advance(.tick)` and interprets the result.
+        case migrationTick
+        /// The result of the `.migrationTick` handler's `advance(.tick)` call — a second action
+        /// rather than folding the decision into the `.run` effect directly, because deciding
+        /// whether to self-stop the loop (`.cancel(id:)`) or nudge the smart banner (`.send(...)`)
+        /// requires returning an `Effect` from the REDUCER, which a `.run` closure's body cannot do
+        /// on its own partway through.
+        case migrationTickAdvanced(MigrationStepVerdict)
         case synchronizerStateChanged(RedactableSynchronizerState)
         case transactionDetailsOpen(String)
         case updateStateAfterConfigUpdate(WalletConfig)
@@ -280,6 +339,7 @@ struct Root {
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
         case scanCoordFlow(ScanCoordFlow.Action)
         case sendAgainRequested(TransactionState)
+        case migrationCoordFlow(MigrationCoordFlow.Action)
         case sendCoordFlow(SendCoordFlow.Action)
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
@@ -341,6 +401,7 @@ struct Root {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.autolockHandler) var autolockHandler
+    @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
     @Dependency(\.date) var date
@@ -350,6 +411,8 @@ struct Root {
     @Dependency(\.flexaHandler) var flexaHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationTickInterval) var migrationTickInterval
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.pasteboard) var pasteboard
@@ -423,6 +486,10 @@ struct Root {
             RequestZecCoordFlow()
         }
         
+        Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
+            MigrationCoordFlow()
+        }
+
         Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
             SendCoordFlow()
         }
