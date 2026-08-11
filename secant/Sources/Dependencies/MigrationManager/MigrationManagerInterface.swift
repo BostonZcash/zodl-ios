@@ -2,9 +2,16 @@
 //  MigrationManagerInterface.swift
 //  Zashi
 //
-//  App-owned logic for the Orchard -> Ironwood migration (MOB-1466): persistence, the
-//  sync<->send privacy gate's app-owned half (MOB-1496 W3 — see `sendGate` below), and the
-//  banner-variant / re-entry-route derivations. The SDK only exposes raw state (`MigrationState`,
+//  App-owned logic for the Orchard -> Ironwood migration (MOB-1466): persistence and the
+//  banner-variant / re-entry-route derivations.
+//
+//  2026-08-07: the app-owned half of the sync<->send privacy gate (MOB-1496 W3's `sendGate` /
+//  `MigrationSendGate`) is GONE. It held a migration send for a fixed window after the last
+//  completed sync — the mirror image of the SDK's post-broadcast buffer, and the same identifiable
+//  pattern: a fixed delay between a sync and a broadcast is a correlation signature, not a defense
+//  against one. Both directions are now behavior-based; see `MigrationSyncGate`'s type doc in the
+//  SDK for the ruling. What survives is the SDK's own present-tense hold (a submission actually in
+//  flight) and this app's stop-sync-before-broadcast sequencing, neither of which is a timer. The SDK only exposes raw state (`MigrationState`,
 //  `MigrationProgress`, …) — this client is the single place that turns that state plus app-side
 //  flags into what the UI actually shows.
 //
@@ -118,8 +125,16 @@ struct MigrationManagerClient: Sendable {
     /// correlation ZIP 318 forbids. Sweeping here means a due transfer is already proven when its
     /// window opens and the send session has nothing to do but submit.
     ///
-    /// Returns the number of transactions proved across all accounts (0 is the normal case).
-    var runProveSweep: @Sendable () async -> Int = { 0 }
+    /// PER-ACCOUNT AND INSTRUCTION-TAKING (2026-08-07): the SDK's prove executor proves the rows
+    /// the crank's own batch names, so this takes that account's batch and a phase-chosen
+    /// `maxProofs` budget rather than sweeping the wallet with no payload.
+    ///
+    /// Returns the pass's `MigrationProveOutcome`: how many transactions were proved (0 is the
+    /// normal case — a skipped row does not spend the budget), plus the txids of the PREPARATIONS
+    /// among them. Those txids are the driver's handoff: a proved preparation is submitted by the
+    /// app, the ordinary way (see `MigrationStepDriver`'s prove arm).
+    var runProveSweep: @Sendable (AccountUUID, [MigrationProveTarget], Int) async -> MigrationProveOutcome
+        = { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) }
 
     /// THE BROADCAST SESSION — the other half of `visitKind() == .send`. Discharges the engine's
     /// `.broadcast` step headlessly, without the user ever navigating into the migration flow.
@@ -130,11 +145,15 @@ struct MigrationManagerClient: Sendable {
     ///
     /// Broadcasts AT MOST ONE transfer per call (ZIP 318: a session carries one broadcast, and the
     /// engine's own contract for `.broadcast` is "broadcast it and end the session") — a second
-    /// account with a due transfer waits for the next app-open. Skips manual-delivery accounts: the
-    /// user asked to press the button themselves, and this must never press it for them.
+    /// account with a due transfer waits for the next app-open.
+    ///
+    /// INSTRUCTION-TAKING (2026-08-07): it takes the account and the crank's own opaque
+    /// `MigrationBroadcastInstruction`. There is no un-instructed entry point any more — the
+    /// parameterless form used to crank a second time inside itself, which is exactly the
+    /// double-read the SDK's single-crank contract removes.
     ///
     /// Returns true iff something was actually broadcast.
-    var runBroadcastSession: @Sendable () async -> Bool = { false }
+    var runBroadcastSession: @Sendable (AccountUUID, MigrationBroadcastInstruction, Bool) async -> Bool = { _, _, _ in false }
 
     /// The chain-time frame migration ETAs are measured in — see `MigrationChainClock`. Reads the
     /// SDK's estimated tip and measured block rate; degrades to the scanned tip and Zcash's target
@@ -374,12 +393,6 @@ struct MigrationManagerClient: Sendable {
     // — this is called from `MigrationCoordFlowCoordinator.onAppear`, reached by nearly every
     // coordinator test in the suite, and from several Root-level teardown sites.
     var setMigrationFlowPresented: @Sendable (_ accountUUID: AccountUUID?, _ isPresented: Bool) -> Void = { _, _ in }
-    // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
-    // (W3): re-keyed off observed sync completions + the SDK's own buffer duration. 2026-08-07:
-    // the manual Send-now lanes that also consulted this are gone; the remaining consumer is the
-    // STEP DRIVER's transfer privacy-buffer hold (AUD-3 — a transfer due shortly after a completed
-    // sync waits the buffer out; preparations are exempt by ZIP 318).
-    var sendGate: @Sendable () async -> MigrationSendGate = { .allowed }
     // MOB-1496 (W3): written once per completed sync from Root's existing sync-completion edge
     // (`RootInitialization.swift`'s `.synchronizerStateChanged`, the same place `reconcile()` fires
     // on the false->true transition into `.upToDate`) — NOT on every tick. `= { }` mirrors
@@ -448,16 +461,6 @@ struct MigrationManagerClient: Sendable {
     /// which is the narrow test-only flags reset. See `MigrationManagerImpl.wipeAllMigrationState`.
     var wipeAllMigrationState: @Sendable () async -> Void = { }
     var resetPersistedFlags: @Sendable () -> Void
-}
-
-enum MigrationSendGate: Equatable, Sendable {
-    case allowed
-    // MOB-1496 (W3): `sdkSynchronizer.isSyncing()` == true right now.
-    case syncRequired
-    // MOB-1496 (W3): a sync completed < `migrationPrivacySyncBufferDuration()` ago; `Date` is when
-    // the gate clears (sync-completion timestamp + buffer). 2026-08-07: consumed by the step
-    // driver's transfer privacy-buffer hold only — the manual Send-now lanes are gone.
-    case waitUntil(Date)
 }
 
 enum MigrationReentryRoute: Equatable, Sendable {

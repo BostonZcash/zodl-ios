@@ -553,7 +553,23 @@ extension MigrationCoordFlow {
                     state.path[id: reviewId] = .reviewTransfer(reviewState)
                     return .none
                 }
-                state.path.append(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1)))
+                // THE REVIEW ELEMENT IS GONE (the user backed past it before the submit answered),
+                // so there is no sheet to arm — but the REMEDY is unchanged, and so is the screen
+                // that offers it. Push a FRESH immediate Review carrying the same commit-failure
+                // sheet: `.immediate` re-proposes for itself on appear (the idiom
+                // `.migrateAnywayUnlocked` already uses), and Retry on a `.commit` failure re-runs
+                // the immediate ceremony from a fresh PCZT + redact — exactly what
+                // `submitImmediateKeystoneTransaction`'s doc promises and what the arm above does.
+                //
+                // This used to push a Sending screen instead. That screen carries no
+                // `immediateProposal`, so its Retry ran the scheduled-run delivery branch and
+                // attempted an ENGINE drive for an engine-EXTERNAL immediate sweep failure — a
+                // silent wrong-lane retry. (The defect predates this branch: upstream's fallback
+                // had the same shape through `executeNextPendingMigrationTransfer`.)
+                var reviewState = MigrationReviewTransfer.State(mode: .immediate)
+                reviewState.isFailurePresented = true
+                reviewState.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+                state.path.append(.reviewTransfer(reviewState))
                 return .none
 
                 // MARK: - PHASE 7: Keystone ceremony — the BATCH round-trip (scheduled lane)
@@ -806,7 +822,10 @@ extension MigrationCoordFlow {
                         await send(.rescheduleResultReady(id: id, rows: currentRows, totalDurationHours: nil))
                         return
                     }
-                    _ = try? await sdkSynchronizer.pendingMigrationTransferProposal(accountUUID)
+                    // (A discarded `pendingMigrationTransferProposal` read sat here as a
+                    // reconcile-nudge. Deleted 2026-08-07 with the accessor: the engine performs
+                    // that reconcile inside every `migrationAdvanceStep` crank now, and the
+                    // `reconcile()` on the next line was always the real work.)
                     await migrationManager.reconcile()
                     let rows = await migrationManager.migrationTransfers(accountUUID)
                     let summary = await migrationManager.migrationSummary(accountUUID)

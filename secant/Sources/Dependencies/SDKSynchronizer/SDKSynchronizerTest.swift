@@ -45,17 +45,23 @@ extension SDKSynchronizerClient: TestDependencyKey {
         estimateMigrationPreparationCount: unimplemented("\(Self.self).estimateMigrationPreparationCount", placeholder: nil),
         migrationTransactionStatuses: unimplemented("\(Self.self).migrationTransactionStatuses", placeholder: []),
         signAndStoreMigrationSchedule: unimplemented("\(Self.self).signAndStoreMigrationSchedule"),
-        executeNextPendingMigrationTransfer:
-            unimplemented("\(Self.self).executeNextPendingMigrationTransfer", placeholder: .nothingDue),
+        performMigrationBroadcast:
+            unimplemented("\(Self.self).performMigrationBroadcast", placeholder: .success(txId: "")),
         hasOverdueMigrationTransfers: unimplemented("\(Self.self).hasOverdueMigrationTransfers", placeholder: false),
-        pendingMigrationTransferProposal: unimplemented("\(Self.self).pendingMigrationTransferProposal", placeholder: nil),
-        finalizeReadyMigrationTransfers: unimplemented("\(Self.self).finalizeReadyMigrationTransfers", placeholder: 0),
+        proveMigrationTransactions:
+            unimplemented("\(Self.self).proveMigrationTransactions", placeholder: MigrationProveOutcome(totalProved: 0, preparationTxids: [])),
+        takeMigrationPreparation:
+            unimplemented("\(Self.self).takeMigrationPreparation", placeholder: PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data())),
+        submitMigrationPreparation: unimplemented(
+            "\(Self.self).submitMigrationPreparation",
+            placeholder: CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented")
+        ),
+        recordMigrationPreparationBroadcast: unimplemented("\(Self.self).recordMigrationPreparationBroadcast"),
         migrationSyncWakeups: unimplemented("\(Self.self).migrationSyncWakeups", placeholder: []),
         estimatedMigrationChainTip: unimplemented("\(Self.self).estimatedMigrationChainTip", placeholder: 0),
         estimatedMigrationSecondsPerBlock: unimplemented("\(Self.self).estimatedMigrationSecondsPerBlock", placeholder: 75),
         isMigrationSyncBlocked: unimplemented("\(Self.self).isMigrationSyncBlocked", placeholder: false),
         migrationSyncBlockedStream: unimplemented("\(Self.self).migrationSyncBlockedStream", placeholder: Empty().eraseToAnyPublisher()),
-        migrationPrivacySyncBufferDuration: unimplemented("\(Self.self).migrationPrivacySyncBufferDuration", placeholder: 0),
         getMigrationProgress: unimplemented("\(Self.self).getMigrationProgress", placeholder: nil),
         hasInvalidMigrationTransfers: unimplemented("\(Self.self).hasInvalidMigrationTransfers", placeholder: false),
         residualAfterMigration: unimplemented("\(Self.self).residualAfterMigration", placeholder: nil),
@@ -144,16 +150,17 @@ extension SDKSynchronizerClient {
         estimateMigrationPreparationCount: { _ in nil },
         migrationTransactionStatuses: { _ in [] },
         signAndStoreMigrationSchedule: { _, _, _ in },
-        executeNextPendingMigrationTransfer: { _, _, _ in .nothingDue },
+        performMigrationBroadcast: { _, _, _ in .success(txId: "") },
         hasOverdueMigrationTransfers: { _, _ in false },
-        pendingMigrationTransferProposal: { _ in nil },
-        finalizeReadyMigrationTransfers: { _ in 0 },
+        proveMigrationTransactions: { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) },
+        takeMigrationPreparation: { _, _ in PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data()) },
+        submitMigrationPreparation: { _ in CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented") },
+        recordMigrationPreparationBroadcast: { _, _, _ in },
         migrationSyncWakeups: { _ in [] },
         estimatedMigrationChainTip: { 0 },
         estimatedMigrationSecondsPerBlock: { 75 },
         isMigrationSyncBlocked: { false },
         migrationSyncBlockedStream: { Empty().eraseToAnyPublisher() },
-        migrationPrivacySyncBufferDuration: { 0 },
         getMigrationProgress: { _ in nil },
         hasInvalidMigrationTransfers: { _ in false },
         residualAfterMigration: { _ in nil },
@@ -242,19 +249,27 @@ extension SDKSynchronizerClient {
         estimateMigrationPreparationCount: @escaping @Sendable (AccountUUID) async throws -> Int? = { _ in nil },
         migrationTransactionStatuses: @escaping @Sendable (AccountUUID) async throws -> [MigrationTransactionStatus] = { _ in [] },
         signAndStoreMigrationSchedule: @escaping @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void = { _, _, _ in },
-        executeNextPendingMigrationTransfer:
-            @escaping @Sendable (AccountUUID, MigrationNetworkPrivacyOptions, Bool) async throws -> MigrationTransferAttempt
-            = { _, _, _ in .nothingDue },
+        performMigrationBroadcast:
+            @escaping @Sendable (AccountUUID, MigrationBroadcastInstruction, MigrationNetworkPrivacyOptions)
+            async throws -> MigrationTransferResult = { _, _, _ in .success(txId: "") },
         hasOverdueMigrationTransfers: @escaping @Sendable (AccountUUID, Bool) async throws -> Bool = { _, _ in false },
-        pendingMigrationTransferProposal:
-            @escaping @Sendable (AccountUUID) async throws -> MigrationTransferProposal? = { _ in nil },
-        finalizeReadyMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Int = { _ in 0 },
+        proveMigrationTransactions:
+            @escaping @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> MigrationProveOutcome
+            = { _, _, _ in MigrationProveOutcome(totalProved: 0, preparationTxids: []) },
+        takeMigrationPreparation:
+            @escaping @Sendable (AccountUUID, Data) async throws -> PreparedMigrationTransfer
+            = { _, _ in PreparedMigrationTransfer(id: 0, txid: Data(), pczt: Data()) },
+        submitMigrationPreparation:
+            @escaping @Sendable (PreparedMigrationTransfer) async throws -> CreateProposedTransactionsResult
+            = { _ in CreateProposedTransactionsResult.failure(txIds: [], code: -1, description: "unimplemented") },
+        recordMigrationPreparationBroadcast:
+            @escaping @Sendable (AccountUUID, PreparedMigrationTransfer, MigrationTransferResult) async throws -> Void
+            = { _, _, _ in },
         migrationSyncWakeups: @escaping @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup] = { _ in [] },
         estimatedMigrationChainTip: @escaping @Sendable () async throws -> BlockHeight = { 0 },
         estimatedMigrationSecondsPerBlock: @escaping @Sendable () async throws -> Double = { 75 },
         isMigrationSyncBlocked: @escaping @Sendable () async -> Bool = { false },
         migrationSyncBlockedStream: @escaping @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() },
-        migrationPrivacySyncBufferDuration: @escaping @Sendable () -> TimeInterval = { 0 },
         getMigrationProgress: @escaping @Sendable (AccountUUID) async throws -> MigrationProgress? = { _ in nil },
         hasInvalidMigrationTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         residualAfterMigration: @escaping @Sendable (AccountUUID) async throws -> Zatoshi? = { _ in nil },
@@ -407,16 +422,17 @@ extension SDKSynchronizerClient {
             estimateMigrationPreparationCount: estimateMigrationPreparationCount,
             migrationTransactionStatuses: migrationTransactionStatuses,
             signAndStoreMigrationSchedule: signAndStoreMigrationSchedule,
-            executeNextPendingMigrationTransfer: executeNextPendingMigrationTransfer,
+            performMigrationBroadcast: performMigrationBroadcast,
             hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
-            pendingMigrationTransferProposal: pendingMigrationTransferProposal,
-            finalizeReadyMigrationTransfers: finalizeReadyMigrationTransfers,
+            proveMigrationTransactions: proveMigrationTransactions,
+            takeMigrationPreparation: takeMigrationPreparation,
+            submitMigrationPreparation: submitMigrationPreparation,
+            recordMigrationPreparationBroadcast: recordMigrationPreparationBroadcast,
             migrationSyncWakeups: migrationSyncWakeups,
             estimatedMigrationChainTip: estimatedMigrationChainTip,
             estimatedMigrationSecondsPerBlock: estimatedMigrationSecondsPerBlock,
             isMigrationSyncBlocked: isMigrationSyncBlocked,
             migrationSyncBlockedStream: migrationSyncBlockedStream,
-            migrationPrivacySyncBufferDuration: migrationPrivacySyncBufferDuration,
             getMigrationProgress: getMigrationProgress,
             hasInvalidMigrationTransfers: hasInvalidMigrationTransfers,
             residualAfterMigration: residualAfterMigration,

@@ -97,9 +97,7 @@ import ComposableArchitecture
             client.migrationSnapshotEvents = { _ in Empty().eraseToAnyPublisher() }
             $0.migrationManager = client
 
-            $0.sdkSynchronizer = .mocked(
-                migrationPrivacySyncBufferDuration: { 600 }
-            )
+            $0.sdkSynchronizer = .mocked()
         }
         store.exhaustivity = .off
 

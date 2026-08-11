@@ -51,12 +51,14 @@ enum MigrationNotification: Equatable, Sendable {
     /// re-plan. Which one it is depends on state at open time, so this poke deliberately promises
     /// none of them; it just says the migration can move.
     ///
-    /// One step per open is not a simplification, it is the privacy property: the ~600 s buffer in
-    /// `sendGate` exists so a sync and a send are never adjacent enough to be linked by an
-    /// observer. That holds however long the user was away — waking up nine hours late does not
-    /// earn the right to batch two actions.
+    /// One step per open is not a simplification, it is the privacy property: a sync and a send
+    /// should not be adjacent enough to be linked by an observer. That holds however long the user
+    /// was away — waking up nine hours late does not earn the right to batch two actions.
+    /// 2026-08-07: this used to name a ~600 s post-sync buffer as the mechanism; that buffer is
+    /// deleted (a fixed delay is itself the pattern an observer keys on), so the one-step-per-open
+    /// shape carries the property on its own.
     ///
-    /// So there is exactly one moment worth poking about: when the NEXT step becomes permissible.
+    /// So there is exactly one moment worth poking about: when the NEXT step becomes due.
     /// No number, no account: by the time the user opens, state may have moved, and naming a
     /// transfer or an account in the poke would be a promise the app might not keep.
     case stepReady

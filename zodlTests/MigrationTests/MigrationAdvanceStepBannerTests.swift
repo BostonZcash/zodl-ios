@@ -17,7 +17,7 @@
 
 import Foundation
 import Testing
-import ZcashLightClientKit
+@_spi(Testing) import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationAdvanceStepBannerTests {
@@ -188,7 +188,7 @@ import ZcashLightClientKit
     /// The precedence that A28 made reachable. The engine can still report a perfectly live
     /// `.waiting` for a run whose funding notes were spent elsewhere — it has no way to know until
     /// the app's invalidation sweep tells it — so a live-looking step must not mask a dead run.
-    @Test(arguments: [MigrationAdvanceStep.waiting, .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]), .broadcast(id: 1)])
+    @Test(arguments: [MigrationAdvanceStep.waiting, .prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]), .broadcast(MigrationBroadcastInstruction(id: 1))])
     func invalidationOutranksALiveStep(step: MigrationAdvanceStep) {
         #expect(Self.banner(advanceStep: step, hasInvalid: true) == .updatePlan)
     }
@@ -248,7 +248,7 @@ import ZcashLightClientKit
     /// A13: the engine says broadcast, the app is broadcasting, the banner says so.
     @Test func aDrivenBroadcastReadsAsSending() {
         let variant = Self.banner(
-            advanceStep: .broadcast(id: 1),
+            advanceStep: .broadcast(MigrationBroadcastInstruction(id: 1)),
             progress: Self.progress(),
             isBroadcastInFlight: true
         )
@@ -262,7 +262,7 @@ import ZcashLightClientKit
     @Test(arguments: [
         MigrationAdvanceStep.prove(transactions: [MigrationProveTarget(id: 1, kind: .transfer(crossing: 0))]),
         .prove(transactions: [MigrationProveTarget(id: 1, kind: .preparation(layer: 0, index: 0))]),
-        .broadcast(id: 1),
+        .broadcast(MigrationBroadcastInstruction(id: 1)),
         .rebuild(id: 1),
         .waiting,
         .complete,

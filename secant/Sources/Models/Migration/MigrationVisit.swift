@@ -62,7 +62,7 @@ extension MigrationVisit {
     /// transfer — the conservative pre-AUD-3 behavior.
     static func decide(advanceSteps: [MigrationAdvanceStep?], preparationIds: Set<UInt32> = []) -> MigrationVisit {
         let hasDueTransferBroadcast = advanceSteps.contains { step in
-            if case let .broadcast(id) = step { return !preparationIds.contains(id) }
+            if case let .broadcast(instruction) = step { return !preparationIds.contains(instruction.id) }
             return false
         }
         return hasDueTransferBroadcast ? .send : .sync

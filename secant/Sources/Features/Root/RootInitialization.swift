@@ -549,17 +549,20 @@ extension Root {
                     : .none
 
                 // MOB-1466 (foreground wedge, field-caught 2026-08-02): THE STOP HALF of this
-                // handler's pair. `blocked == true` means "this wallet should not be syncing" —
-                // a ready broadcast is waiting, or a post-broadcast buffer is running — but the
-                // SDK enforces that only on a NEW start(); an already-running engine keeps
-                // completing passes, and every completion re-arms the app-side send window
-                // (`sendGate`'s network-scaled buffer — up to 600 s mainnet, 180 s testnet —
-                // measured from `lastSyncCompletedAt`) before it can expire. The tick lane then
-                // holds forever: nine `broadcast(id:)` reads over 15+ minutes, every tick
-                // `held(privacy buffer until …)` with a sliding deadline — up to ~10 minutes of
-                // paused sync on mainnet before the tick lane can send. Stopping the running sync
-                // here is what makes the silence the gate is waiting for actually arrive; the
-                // window expires within one buffer and the tick lane broadcasts.
+                // handler's pair. `blocked == true` means "this wallet should not be syncing", but
+                // the SDK enforces that only on a NEW start() — an already-running engine keeps
+                // completing passes right through it. Stopping the running sync here is what makes
+                // the engine actually observe the refusal.
+                //
+                // 2026-08-07: the wedge this was FIRST written for is gone. Back then `blocked`
+                // could mean "a post-broadcast buffer is running", and every completed pass
+                // re-armed the app-side post-sync send window before it could expire, so the tick
+                // lane held forever behind a sliding deadline (nine `broadcast(id:)` reads over
+                // 15+ minutes). Both timed windows have since been deleted as identifiable
+                // patterns, so there is no sliding deadline left to outrun. What remains is
+                // narrow and still worth doing: `blocked` now means a submission is genuinely in
+                // flight, and letting a running engine sync across it is exactly the adjacency
+                // the SDK is refusing a start for.
                 //
                 // Scoped to the runs whose broadcasts RIDE ticks: `.privateScheduled` with manual
                 // delivery off. An `.immediate` run delivers from the open lanes and a manual-

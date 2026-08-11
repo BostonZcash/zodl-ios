@@ -55,8 +55,14 @@ import Foundation
 enum MigrationEngineAnswer: Equatable, Sendable {
     /// The whole provable set, earliest-ready first. Never empty (SDK contract).
     case prove(transactions: [MigrationProveTarget])
-    /// This proven transaction is due for delivery.
-    case broadcast(id: UInt32)
+    /// This proven transaction is due for delivery, carrying the crank's own opaque instruction.
+    ///
+    /// NOT a bare id (2026-08-07): the SDK's `.broadcast` step now carries a
+    /// `MigrationBroadcastInstruction` the app cannot construct, so possession of one IS the proof
+    /// that the app cranked. Re-expressing it as an id here would launder that capability away and
+    /// leave the executor un-instructable — this type re-expresses the engine's answer, it does
+    /// not weaken it.
+    case broadcast(instruction: MigrationBroadcastInstruction)
     /// This transfer expired unmined and must be re-signed in place.
     case rebuild(id: UInt32)
     /// The PLAN needs replacing — its unsatisfiable share passed the engine's replan threshold, or
@@ -88,8 +94,8 @@ extension MigrationEngineAnswer {
         switch step {
         case let MigrationAdvanceStep.prove(transactions):
             self = MigrationEngineAnswer.prove(transactions: transactions)
-        case let MigrationAdvanceStep.broadcast(id):
-            self = MigrationEngineAnswer.broadcast(id: id)
+        case let MigrationAdvanceStep.broadcast(instruction):
+            self = MigrationEngineAnswer.broadcast(instruction: instruction)
         case let MigrationAdvanceStep.rebuild(id):
             self = MigrationEngineAnswer.rebuild(id: id)
         case MigrationAdvanceStep.waiting:

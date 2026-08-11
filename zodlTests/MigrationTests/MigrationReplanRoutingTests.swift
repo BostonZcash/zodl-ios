@@ -22,7 +22,7 @@
 
 import Foundation
 import Testing
-import ZcashLightClientKit
+@_spi(Testing) import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationReplanRoutingTests {
@@ -102,10 +102,14 @@ import ZcashLightClientKit
 
         for action in [replan, reevaluate] {
             switch action {
-            case .broadcast(let id), .rebuild(let id), .resync(let id), .escalateAttention(let id):
+            case .rebuild(let id), .resync(let id), .escalateAttention(let id):
                 Issue.record("an id-free engine answer produced an id-carrying action (\(id))")
-            case .prove(let id, _):
-                Issue.record("an id-free engine answer produced a prove action (\(id))")
+            case .broadcast(let instruction):
+                // Since 2026-08-07 the broadcast action carries the crank's opaque instruction
+                // rather than a bare id; an id-free answer must still never produce one.
+                Issue.record("an id-free engine answer produced a broadcast action (\(instruction.id))")
+            case .prove(let instruction):
+                Issue.record("an id-free engine answer produced a prove action (\(instruction.map(\.id)))")
             case .replan, .reevaluate, .armWakeups, .finish, .nothing:
                 break
             }
@@ -220,7 +224,8 @@ import ZcashLightClientKit
         let target = MigrationProveTarget(id: 7, kind: .transfer(crossing: 1))
 
         #expect(MigrationEngineAnswer(step: .prove(transactions: [target])) == .prove(transactions: [target]))
-        #expect(MigrationEngineAnswer(step: .broadcast(id: 3)) == .broadcast(id: 3))
+        let instruction = MigrationBroadcastInstruction(id: 3)
+        #expect(MigrationEngineAnswer(step: .broadcast(instruction)) == .broadcast(instruction: instruction))
         #expect(MigrationEngineAnswer(step: .rebuild(id: 4)) == .rebuild(id: 4))
         #expect(MigrationEngineAnswer(step: .waiting) == .waiting)
         #expect(MigrationEngineAnswer(step: .complete) == .complete)

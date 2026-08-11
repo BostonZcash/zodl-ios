@@ -14,7 +14,7 @@
 //  MOB-1513 (Lane A2 — send-max immediate migration): immediate mode used to propose+display an
 //  ENGINE-HELD, single-transfer `MigrationSchedule` (`proposeImmediateMigration() ->
 //  MigrationSchedule`), sign+store it HERE via `signAndStoreMigrationSchedule` before delegating, and
-//  broadcast it LATER, on the Sending screen, via `executeNextPendingMigrationTransfer` — despite the
+//  broadcast it LATER, on the Sending screen, via `performMigrationBroadcast` — despite the
 //  screen's own historical doc already claiming "single-transfer engine semantics", that schedule was
 //  in fact just an engine-internal implementation detail with its own plan-cache/run bookkeeping. That
 //  claim is genuinely true now, via the real SDK's send-max surface:

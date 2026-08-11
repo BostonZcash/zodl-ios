@@ -109,32 +109,77 @@ struct SDKSynchronizerClient: Sendable {
     /// account's USK). THE commit — one call signs the whole run, preparation layers included,
     /// straight from the plan cache the schedule's own propose already wrote.
     let signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
-    /// BROADCAST ONLY — never proves. The three outcomes are distinct and the app must not collapse
-    /// them: `.nothingDue` ends the session, `.awaitingProof(id:)` means the due transaction has no
-    /// proof yet (run `finalizeReadyMigrationTransfers` at the next SYNC visit, then come back), and
-    /// `.executed` carries the recorded result. Broadcast-bearing: guarded by the transaction guard
-    /// in the LiveKey.
+    /// THE BROADCAST EXECUTOR. Submits the already-proven transaction `instruction` names and
+    /// returns the recorded result directly. Broadcast-bearing: guarded by the transaction guard in
+    /// the LiveKey.
     ///
-    /// `useEstimatedTip` belongs to SEND visits: a broadcast session deliberately does not sync, so
-    /// the scanned tip is stale by construction and would report "nothing due" for a transfer that
-    /// genuinely is. Estimates only ACCELERATE due-ness — expiry and invalidity always use the
-    /// scanned tip.
-    let executeNextPendingMigrationTransfer: @Sendable (
-        AccountUUID, MigrationNetworkPrivacyOptions, Bool
-    ) async throws -> MigrationTransferAttempt
+    /// There are no outcome cases left to collapse. The instruction is the payload of a
+    /// `.broadcast` step a crank handed out, so "nothing due" cannot arise, and a due-but-unproved
+    /// row arrives as a `.prove` batch entry rather than as a delivery outcome. No `useEstimatedTip`
+    /// either — the conduit always projects the estimate, so the acceleration is applied once, at
+    /// the crank.
+    ///
+    /// Throws `ZcashError.rustMigrationTakeBroadcastTransaction` when the instruction went STALE
+    /// between crank and submit: crank `migrationAdvanceStep` again, never retry the executor.
+    let performMigrationBroadcast: @Sendable (
+        AccountUUID, MigrationBroadcastInstruction, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult
     /// Whether the account has a scheduled transfer past its send height but not yet broadcast.
     /// `useEstimatedTip` as above — pass `true` on SEND visits and launch checks.
     let hasOverdueMigrationTransfers: @Sendable (AccountUUID, Bool) async throws -> Bool
-    /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
-    /// Read-only readback — nothing about the plan is mutated (the old name said otherwise).
-    let pendingMigrationTransferProposal: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
-    /// THE PROVE SWEEP. Proves every transfer whose anchor boundary has settled and returns how many
-    /// it proved. Call on every SYNC visit once sync reaches the tip.
+    /// THE PROVE EXECUTOR. Proves up to `maxProofs` of the transactions the instruction batch
+    /// names and returns a `MigrationProveOutcome`: how many were proved (`0` is the ordinary
+    /// "nothing in this batch is provable right now" answer) and THE TXIDS OF THE PREPARATIONS it
+    /// proved. Run at SYNC visits once sync reaches the tip, NEVER in a broadcast session.
     ///
-    /// Proving has no deadline — boundary checkpoints are durably retained until the transfer is
-    /// broadcast — so this is not a race. It is what keeps SEND visits sync-free: everything is
-    /// already proven by the time a broadcast window opens, leaving nothing but the submission.
-    let finalizeReadyMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
+    /// The batch is the payload of a `.prove` step a crank handed out — this executor never asks
+    /// the engine what to prove. There is no loop inside it: proving can unblock rows the batch did
+    /// not name, so a host draining the run cranks again. A skipped row (already proved, anchor
+    /// unresolvable) does NOT spend the budget, and acting on a stale batch is safe.
+    ///
+    /// `maxProofs` must be >= 1 or the call throws `rustMigrationProveTransactions`. Proving has no
+    /// deadline — boundary checkpoints are durably retained until the transfer is broadcast — so a
+    /// bounded budget only defers work, never loses it.
+    ///
+    /// The returned txids are the handoff to `takeMigrationPreparation`: a proved preparation is
+    /// submitted by the APP, the ordinary way. Transfers are never named, so the caller makes no
+    /// kind judgement of its own.
+    let proveMigrationTransactions: @Sendable (AccountUUID, [MigrationProveTarget], Int) async throws -> MigrationProveOutcome
+    /// THE PREPARATION ACCESSOR. Serves the proved preparation `txid` names — one the outcome of
+    /// `proveMigrationTransactions` just returned — for submission.
+    ///
+    /// A proved preparation is a complete PCZT; preparations are ZIP 318-exempt and the engine's
+    /// contract is that one is broadcast as soon as it is proved, so its submission is the app's
+    /// ORDINARY path rather than a delivery session. THE ACCESSOR IS THE SEAM: the wallet's own
+    /// record of the transaction binds AT RETRIEVAL, in the same database transaction that hands
+    /// the bytes back, and re-retrieving after a crash serves the same bytes over the same record —
+    /// so call it AT SUBMISSION TIME, never eagerly.
+    ///
+    /// PREPARATION-GATED: a transfer's txid is refused with
+    /// `ZcashError.rustMigrationTakePreparation`, as an unknown or not-yet-proved one is. The
+    /// returned `PreparedMigrationTransfer.id` is the ENGINE TRANSFER ID the record path keys on;
+    /// its `pczt` is a finalized consensus transaction, submittable as-is.
+    let takeMigrationPreparation: @Sendable (AccountUUID, Data) async throws -> PreparedMigrationTransfer
+    /// Submits an already-finalized migration preparation through the app's ORDINARY
+    /// raw-transaction submission machinery — the same `submitCreatedTransactions` /
+    /// `Broadcaster.submit(transaction:to:)` path, endpoint selection and result mapping that
+    /// `createAndSubmitProposedTransactions` uses, entered with bytes the migration engine built
+    /// instead of ones the proposal path did. Not a parallel submit lane: nothing here is
+    /// migration-specific except where the bytes came from.
+    let submitMigrationPreparation: @Sendable (PreparedMigrationTransfer) async throws -> CreateProposedTransactionsResult
+    /// CLOSES THE SEAM: records the ENGINE-side outcome of a preparation this app retrieved and
+    /// submitted itself. `takeMigrationPreparation` bound the wallet's own record at retrieval,
+    /// but the engine's per-row `Proved -> Broadcast` mark is what `performMigrationBroadcast`
+    /// makes on its success arm — a path a self-submitted preparation never travels.
+    ///
+    /// Takes the `PreparedMigrationTransfer` the accessor returned (its `id` is the engine
+    /// transfer id the record path keys on) and is preparation-gated in the same register: a
+    /// transfer's id is refused with `ZcashError.rustMigrationRecordTransferResult`, since that
+    /// lane records its own outcome. Call it on an ACCEPTANCE only — the engine's network-error
+    /// outcome records nothing by design.
+    let recordMigrationPreparationBroadcast: @Sendable (
+        AccountUUID, PreparedMigrationTransfer, MigrationTransferResult
+    ) async throws -> Void
     /// The minimal set of heights at which to wake, sync and prove. Jitter is re-drawn per call, so
     /// these must be recomputed after any state change rather than cached.
     let migrationSyncWakeups: @Sendable (AccountUUID) async throws -> [MigrationSyncWakeup]
@@ -150,9 +195,6 @@ struct SDKSynchronizerClient: Sendable {
     /// Wallet-scope stream of `isMigrationSyncBlocked()`. Root subscribes this to drive the
     /// stop/resume pair — see `stopSyncBeforeMigrationBroadcast()` below.
     var migrationSyncBlockedStream: @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() }
-    /// The post-broadcast privacy buffer duration (the SDK's own 600 s gate), mirrored app-side by
-    /// `MigrationSendGate` on the send side.
-    var migrationPrivacySyncBufferDuration: @Sendable () -> TimeInterval = { 0 }
     /// The run's live progress (completed/total transfers), or `nil` when no run is stored. Feeds
     /// the in-progress banner variant and the re-entry route.
     let getMigrationProgress: @Sendable (AccountUUID) async throws -> MigrationProgress?
@@ -174,7 +216,7 @@ struct SDKSynchronizerClient: Sendable {
     // PHASE 7 — the Keystone lane (REBUILD_PLAN D15). Two groups: the PCZT serve/store pair that
     // creates and completes a hardware-signed run, and the batch-signing bridge that carries one
     // ceremony's PCZTs to the device and its signatures back. None of the six is broadcast-bearing
-    // (the actual broadcast still rides `executeNextPendingMigrationTransfer` for the scheduled lane
+    // (the actual broadcast still rides `performMigrationBroadcast` for the scheduled lane
     // and `createAndSubmitTransactionFromPCZT` for the immediate one), so none takes the transaction
     // guard in the LiveKey.
 
@@ -193,7 +235,7 @@ struct SDKSynchronizerClient: Sendable {
     /// array is applied together. Order-independent with `storeSignedMigrationTransactions` — both
     /// are per-transaction signature applications over the SAME already-created run (see
     /// `proposeNoteSplitPCZTs`). The returned storage receipt is discarded; the broadcastable value
-    /// comes from the next-due lane, `executeNextPendingMigrationTransfer`.
+    /// comes from the instruction a `migrationAdvanceStep` crank hands to `performMigrationBroadcast`.
     let storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     /// Serves the run's TRANSFER PCZTs unsigned. Handle-free: it resumes the run
     /// `proposeNoteSplitPCZTs` created rather than committing a new one.

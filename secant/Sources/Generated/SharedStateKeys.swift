@@ -52,7 +52,6 @@ public extension String {
     static let migrationBroadcastEpisode = "sharedStateKey_migrationBroadcastEpisode"
     static let migrationTorHold = "sharedStateKey_migrationTorHold"
     static let migrationPendingTorPrompt = "sharedStateKey_migrationPendingTorPrompt"
-    static let migrationLastSyncCompletedAt = "sharedStateKey_migrationLastSyncCompletedAt"
     // Read/written by storage the manager carries whole from #1930; their SCREENS are Phase 6.
     static let migrationCompleteAcknowledged = "sharedStateKey_migrationCompleteAcknowledged"
     static let migrationRemainderPending = "sharedStateKey_migrationRemainderPending"
